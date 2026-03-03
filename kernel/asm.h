@@ -58,4 +58,9 @@ static inline void hlt(void)
     __asm__ volatile ("hlt");
 }
 
+static inline void magic_break(void)
+{
+    __asm__ volatile ("xchgw %bx, %bx");
+}
+
 #endif /* ASM_H */

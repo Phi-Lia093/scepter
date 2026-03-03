@@ -127,55 +127,7 @@ void isr_init(void)
 }
 
 /* =========================================================================
- * Paging - map a single 4 KB page
+ * Paging
  * ========================================================================= */
-
-/*
- * Static pool of page tables.  Each page table is 4 KB (1024 x 4-byte PTEs).
- * We pre-allocate enough tables to cover the address space we care about.
- * Each page table covers 4 MB (1024 pages * 4 KB).
- * PT_POOL_SIZE = 128 supports up to 512 MB of mapped memory.
- */
-#define PT_POOL_SIZE 128
-
-static pte_t pt_pool[PT_POOL_SIZE][1024] __attribute__((aligned(4096)));
-static int   pt_pool_used = 0;
-
-static pte_t *alloc_page_table(void)
-{
-    if (pt_pool_used >= PT_POOL_SIZE) {
-        return NULL;   /* out of static pool */
-    }
-    pte_t *pt = pt_pool[pt_pool_used++];
-    /* zero the new table */
-    for (int i = 0; i < 1024; i++)
-        pt[i] = 0;
-    return pt;
-}
-
-void map_page(pde_t *page_dir, uint32_t virt, uint32_t phys, uint32_t flags)
-{
-    uint32_t pdi = virt >> 22;               /* page directory index */
-    uint32_t pti = (virt >> 12) & 0x3FF;    /* page table index     */
-
-    pte_t *pt;
-
-    if (page_dir[pdi] & PAGE_PRESENT) {
-        /* PDE stores the physical address of the page table.
-         * Add KERNEL_VMA (0xC0000000) to get the virtual address. */
-        pt = (pte_t *)((page_dir[pdi] & ~0xFFF) + 0xC0000000);
-    } else {
-        pt = alloc_page_table();
-        if (!pt) {
-            /* Out of page tables - this is a critical error */
-            extern void panic(const char *msg);
-            panic("Out of page tables in map_page()");
-        }
-        /* The page table pool lives in .bss (virtual 0xC01xxxxx).
-         * Subtract KERNEL_VMA to get the physical address for the PDE. */
-        page_dir[pdi] = ((uint32_t)pt - 0xC0000000) | PAGE_PRESENT | PAGE_WRITE;
-    }
-
-    /* Set the page table entry */
-    pt[pti] = (phys & ~0xFFF) | (flags & 0xFFF);
-}
+// global var for page physical addr
+volatile uint32_t kernel_page_table;

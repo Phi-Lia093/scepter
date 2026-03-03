@@ -74,26 +74,20 @@ ISR_NOERR 31   /*      Reserved                      */
 irq\num:
     pusha
     movw  %ds, %ax
-    pushl %eax
     movw  %es, %ax
-    pushl %eax
     movw  %fs, %ax
-    pushl %eax
     movw  %gs, %ax
-    pushl %eax
     movw  $0x10, %ax
     movw  %ax, %ds
     movw  %ax, %es
     movw  %ax, %fs
     movw  %ax, %gs
+    movl  kernel_page_table, %eax
+    movl  %eax, %cr3
     call  \handler
-    popl  %eax
     movw  %ax, %gs
-    popl  %eax
     movw  %ax, %fs
-    popl  %eax
     movw  %ax, %es
-    popl  %eax
     movw  %ax, %ds
     popa
     iret
@@ -127,8 +121,8 @@ isr_common:
     movw  %ax, %gs
     movw  %ax, %ss
 
-    /* Switch to kernel page directory (physical 0x0) */
-    movl  $0x0, %eax
+    /* Switch to kernel page directory */
+    movl  kernel_page_table, %eax
     movl  %eax, %cr3
 
     /* Pass pointer to saved frame as argument to panic_isr */
