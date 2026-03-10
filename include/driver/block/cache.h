@@ -29,31 +29,34 @@ void cache_init(void);
  * Look up a block in the cache
  * 
  * @param prim_id Primary device ID
- * @param scnd_id Secondary device ID (block number)
+ * @param scnd_id Secondary device ID
+ * @param offset Block offset (block number relative to device)
  * @param buf Buffer to copy data into (if found)
  * @return 1 if found (cache hit), 0 if not found (cache miss)
  */
-int cache_lookup(int prim_id, int scnd_id, void *buf);
+int cache_lookup(int prim_id, int scnd_id, uint32_t offset, void *buf);
 
 /**
  * Insert a block into the cache
  * If cache is full, evicts the least recently used block
  * 
  * @param prim_id Primary device ID
- * @param scnd_id Secondary device ID (block number)
+ * @param scnd_id Secondary device ID
+ * @param offset Block offset (block number relative to device)
  * @param data Block data to cache
  * @return 0 on success, -1 on failure
  */
-int cache_insert(int prim_id, int scnd_id, const void *data);
+int cache_insert(int prim_id, int scnd_id, uint32_t offset, const void *data);
 
 /**
  * Mark a cached block as dirty (modified)
  * 
  * @param prim_id Primary device ID
- * @param scnd_id Secondary device ID (block number)
+ * @param scnd_id Secondary device ID
+ * @param offset Block offset (block number relative to device)
  * @return 0 on success, -1 if block not in cache
  */
-int cache_mark_dirty(int prim_id, int scnd_id);
+int cache_mark_dirty(int prim_id, int scnd_id, uint32_t offset);
 
 /**
  * Flush all dirty blocks to their devices
@@ -68,9 +71,10 @@ int cache_flush(void);
  * Writes back if dirty
  * 
  * @param prim_id Primary device ID
- * @param scnd_id Secondary device ID (block number)
+ * @param scnd_id Secondary device ID
+ * @param offset Block offset (block number relative to device)
  */
-void cache_invalidate(int prim_id, int scnd_id);
+void cache_invalidate(int prim_id, int scnd_id, uint32_t offset);
 
 /**
  * Get cache statistics

@@ -11,7 +11,8 @@
 
 typedef struct cache_entry {
     int prim_id;                    /* Device primary ID */
-    int scnd_id;                    /* Device secondary ID (block number) */
+    int scnd_id;                    /* Device secondary ID */
+    uint32_t offset;                /* Block offset (block number) */
     uint8_t *data;                  /* Block data (CACHE_BLOCK_SIZE bytes) */
     int dirty;                      /* 1 if modified, needs write-back */
     struct cache_entry *prev;       /* Previous in LRU list (more recent) */
@@ -105,12 +106,12 @@ static void lru_add_to_head(cache_entry_t *entry)
     }
 }
 
-/* Find entry in cache by device and block ID */
-static cache_entry_t *find_entry(int prim_id, int scnd_id)
+/* Find entry in cache by device and block offset */
+static cache_entry_t *find_entry(int prim_id, int scnd_id, uint32_t offset)
 {
     cache_entry_t *entry = cache.head;
     while (entry) {
-        if (entry->prim_id == prim_id && entry->scnd_id == scnd_id) {
+        if (entry->prim_id == prim_id && entry->scnd_id == scnd_id && entry->offset == offset) {
             return entry;
         }
         entry = entry->next;
@@ -125,8 +126,8 @@ static int writeback_entry(cache_entry_t *entry)
         return 0;  /* Not dirty, nothing to write */
     }
     
-    /* Write block back to device */
-    int ret = bwrite(entry->prim_id, entry->scnd_id, entry->data, CACHE_BLOCK_SIZE);
+    /* Write block back to device (1 block at offset) */
+    int ret = bwrite(entry->prim_id, entry->scnd_id, entry->data, entry->offset, 1);
     if (ret > 0) {
         entry->dirty = 0;
         return 0;
@@ -180,9 +181,9 @@ void cache_init(void)
            (CACHE_MAX_ENTRIES * CACHE_BLOCK_SIZE) / 1024);
 }
 
-int cache_lookup(int prim_id, int scnd_id, void *buf)
+int cache_lookup(int prim_id, int scnd_id, uint32_t offset, void *buf)
 {
-    cache_entry_t *entry = find_entry(prim_id, scnd_id);
+    cache_entry_t *entry = find_entry(prim_id, scnd_id, offset);
     
     if (entry) {
         /* Cache hit! */
@@ -202,10 +203,10 @@ int cache_lookup(int prim_id, int scnd_id, void *buf)
     return 0;
 }
 
-int cache_insert(int prim_id, int scnd_id, const void *data)
+int cache_insert(int prim_id, int scnd_id, uint32_t offset, const void *data)
 {
     /* Check if already in cache */
-    cache_entry_t *existing = find_entry(prim_id, scnd_id);
+    cache_entry_t *existing = find_entry(prim_id, scnd_id, offset);
     if (existing) {
         /* Update existing entry */
         cache_memcpy(existing->data, data, CACHE_BLOCK_SIZE);
@@ -236,6 +237,7 @@ int cache_insert(int prim_id, int scnd_id, const void *data)
     /* Initialize entry */
     entry->prim_id = prim_id;
     entry->scnd_id = scnd_id;
+    entry->offset = offset;
     entry->dirty = 0;
     cache_memcpy(entry->data, data, CACHE_BLOCK_SIZE);
     
@@ -246,9 +248,9 @@ int cache_insert(int prim_id, int scnd_id, const void *data)
     return 0;
 }
 
-int cache_mark_dirty(int prim_id, int scnd_id)
+int cache_mark_dirty(int prim_id, int scnd_id, uint32_t offset)
 {
-    cache_entry_t *entry = find_entry(prim_id, scnd_id);
+    cache_entry_t *entry = find_entry(prim_id, scnd_id, offset);
     if (!entry) {
         return -1;
     }
@@ -276,9 +278,9 @@ int cache_flush(void)
     return written;
 }
 
-void cache_invalidate(int prim_id, int scnd_id)
+void cache_invalidate(int prim_id, int scnd_id, uint32_t offset)
 {
-    cache_entry_t *entry = find_entry(prim_id, scnd_id);
+    cache_entry_t *entry = find_entry(prim_id, scnd_id, offset);
     if (!entry) {
         return;
     }

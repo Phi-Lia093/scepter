@@ -264,24 +264,29 @@ int ide_read_sectors(uint8_t disk_id, uint32_t lba, uint8_t count, void *buffer)
 
 /**
  * Block device read callback
- * prim_id: 0=hda, 1=hdb, 2=hdc, 3=hdd
- * scnd_id: LBA sector number
+ * prim_id: 0=hda, 1=hdb, 2=hdc, 3=hdd (disk selector)
+ * scnd_id: 0 (unused for raw disk access)
+ * offset: LBA sector number (block offset)
+ * count: Number of blocks to read
  */
-static int ide_block_read(int prim_id, int scnd_id, void *buf, size_t count)
+static int ide_block_read(int prim_id, int scnd_id, void *buf, uint32_t offset, size_t count)
 {
     /* Validate disk ID */
     if (prim_id < 0 || prim_id >= IDE_MAX_DISKS) {
         return -1;
     }
     
-    /* Only handle 512-byte sector reads */
-    if (count != IDE_SECTOR_SIZE) {
+    /* scnd_id should be 0 for raw disk access */
+    (void)scnd_id;  /* Unused */
+    
+    /* Validate count (must be reasonable, max 256 sectors per IDE command) */
+    if (count == 0 || count > 256) {
         return -1;
     }
     
-    /* Read one sector */
-    if (ide_read_sectors((uint8_t)prim_id, (uint32_t)scnd_id, 1, buf) == 0) {
-        return IDE_SECTOR_SIZE;
+    /* Read sectors from disk */
+    if (ide_read_sectors((uint8_t)prim_id, offset, (uint8_t)count, buf) == 0) {
+        return (int)(count * IDE_SECTOR_SIZE);
     }
     
     return -1;
@@ -289,24 +294,29 @@ static int ide_block_read(int prim_id, int scnd_id, void *buf, size_t count)
 
 /**
  * Block device write callback
- * prim_id: 0=hda, 1=hdb, 2=hdc, 3=hdd
- * scnd_id: LBA sector number
+ * prim_id: 0=hda, 1=hdb, 2=hdc, 3=hdd (disk selector)
+ * scnd_id: 0 (unused for raw disk access)
+ * offset: LBA sector number (block offset)
+ * count: Number of blocks to write
  */
-static int ide_block_write(int prim_id, int scnd_id, const void *buf, size_t count)
+static int ide_block_write(int prim_id, int scnd_id, const void *buf, uint32_t offset, size_t count)
 {
     /* Validate disk ID */
     if (prim_id < 0 || prim_id >= IDE_MAX_DISKS) {
         return -1;
     }
     
-    /* Only handle 512-byte sector writes */
-    if (count != IDE_SECTOR_SIZE) {
+    /* scnd_id should be 0 for raw disk access */
+    (void)scnd_id;  /* Unused */
+    
+    /* Validate count (must be reasonable, max 256 sectors per IDE command) */
+    if (count == 0 || count > 256) {
         return -1;
     }
     
-    /* Write one sector */
-    if (ide_write_sectors((uint8_t)prim_id, (uint32_t)scnd_id, 1, buf) == 0) {
-        return IDE_SECTOR_SIZE;
+    /* Write sectors to disk */
+    if (ide_write_sectors((uint8_t)prim_id, offset, (uint8_t)count, buf) == 0) {
+        return (int)(count * IDE_SECTOR_SIZE);
     }
     
     return -1;
@@ -353,10 +363,15 @@ int ide_write_sectors(uint8_t disk_id, uint32_t lba, uint8_t count, const void *
     /* Wait for drive to be ready */
     ide_wait_bsy(disk->base_port);
     
-    /* Select drive and set LBA mode */
-    uint8_t drive_bits = (disk->drive == 0) ? IDE_DRIVE_MASTER : IDE_DRIVE_SLAVE;
+    /* Select drive and set LBA mode - SAME AS READ */
+    uint8_t drive_bits = (disk->drive == 0) ? 0xE0 : 0xF0;  /* Master=0xE0, Slave=0xF0 */
     drive_bits |= ((lba >> 24) & 0x0F);  /* LBA bits 24-27 */
     outb(disk->base_port + IDE_REG_DRIVE, drive_bits);
+    
+    /* Wait for drive selection to take effect */
+    for (int i = 0; i < 1000; i++) {
+        inb(disk->base_port + IDE_REG_STATUS);
+    }
     
     /* Send sector count and LBA */
     outb(disk->base_port + IDE_REG_SECCOUNT, count);

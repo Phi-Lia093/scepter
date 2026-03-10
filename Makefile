@@ -110,10 +110,13 @@ $(TARGET): $(KERNEL_OBJS)
 # ===========================================================================
 MOUNT_DIR = mnt
 
-init:
+grub:
 	@echo "Creating clean GRUB disk image..."
 	sudo ./script/make_grub_disk.sh
 	@echo "Done! Use 'make mount' to mount the disk."
+
+data:
+	sudo ./script/make_test_disk.sh
 
 mount:
 	@if [ ! -f disk.img ]; then \
@@ -158,7 +161,7 @@ run: $(TARGET)
 	@echo "Unmounting disk..."
 	@$(MAKE) umount
 	@echo "Starting QEMU..."
-	qemu-system-i386 -m 128 -drive file=disk.img,format=raw,if=ide,index=0,media=disk
+	qemu-system-i386 -m 128 -drive file=disk.img,format=raw,if=ide,index=0,media=disk -drive file=data.img,format=raw,if=ide,index=1,media=disk
 
 debug: $(TARGET)
 	@if [ ! -f disk.img ]; then \

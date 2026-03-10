@@ -1,5 +1,5 @@
 #include "driver/driver.h"
-#include "cache.h"
+#include "driver/block/cache.h"
 #include "mm/slab.h"
 #include <stdint.h>
 #include <stddef.h>
@@ -163,7 +163,7 @@ int cwrite(int prim_id, int scnd_id, char c)
  * Public API - Block Device Operations
  * ========================================================================= */
 
-int bread(int prim_id, int scnd_id, void *buf, size_t count)
+int bread(int prim_id, int scnd_id, void *buf, uint32_t offset, size_t count)
 {
     device_t *dev = find_block_device(prim_id);
     if (!dev) {
@@ -174,26 +174,26 @@ int bread(int prim_id, int scnd_id, void *buf, size_t count)
         return -1;
     }
     
-    /* Try cache first (only for 512-byte block reads) */
-    if (count == CACHE_BLOCK_SIZE) {
-        if (cache_lookup(prim_id, scnd_id, buf)) {
+    /* Try cache first (only for single block reads at offset 0) */
+    if (count == 1 && offset == 0) {
+        if (cache_lookup(prim_id, scnd_id, 0, buf)) {
             /* Cache hit! Return immediately */
-            return count;
+            return CACHE_BLOCK_SIZE;
         }
     }
     
-    /* Cache miss or non-standard size - read from device */
-    int ret = dev->ops.block_ops.read(prim_id, scnd_id, buf, count);
+    /* Cache miss or multi-block/offset read - read from device */
+    int ret = dev->ops.block_ops.read(prim_id, scnd_id, buf, offset, count);
     
-    /* Cache the block if it's standard size and read succeeded */
-    if (ret > 0 && count == CACHE_BLOCK_SIZE) {
-        cache_insert(prim_id, scnd_id, buf);
+    /* Cache the block if single block at offset 0 and read succeeded */
+    if (ret > 0 && count == 1 && offset == 0) {
+        cache_insert(prim_id, scnd_id, 0, buf);
     }
     
     return ret;
 }
 
-int bwrite(int prim_id, int scnd_id, const void *buf, size_t count)
+int bwrite(int prim_id, int scnd_id, const void *buf, uint32_t offset, size_t count)
 {
     device_t *dev = find_block_device(prim_id);
     if (!dev) {
@@ -205,12 +205,12 @@ int bwrite(int prim_id, int scnd_id, const void *buf, size_t count)
     }
     
     /* Write to device */
-    int ret = dev->ops.block_ops.write(prim_id, scnd_id, buf, count);
+    int ret = dev->ops.block_ops.write(prim_id, scnd_id, buf, offset, count);
     
-    /* Update cache if write succeeded and block is standard size */
-    if (ret > 0 && count == CACHE_BLOCK_SIZE) {
+    /* Update cache if write succeeded and single block at offset 0 */
+    if (ret > 0 && count == 1 && offset == 0) {
         /* Insert/update in cache and mark as clean (write-through) */
-        cache_insert(prim_id, scnd_id, buf);
+        cache_insert(prim_id, scnd_id, 0, buf);
     }
     
     return ret;

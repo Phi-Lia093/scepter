@@ -7,9 +7,9 @@
 /* =========================================================================
  * MBR (Master Boot Record) Partition Table Support
  *
- * Provides block device access to disk partitions.
- * Device mapping: hdaX=4, hdbX=5, hdcX=6, hddX=7
- * scnd_id is partition number (1-4), scnd_id=0 is invalid
+ * Provides direct partition access functions (not through driver layer).
+ * The driver abstraction layer doesn't fit the partition use case well,
+ * so we provide dedicated partition I/O functions instead.
  * ========================================================================= */
 
 /* MBR Constants */
@@ -71,8 +71,7 @@ typedef struct {
 
 /**
  * Initialize MBR partition support
- * Scans all IDE disks for MBR partition tables and registers partition
- * block devices (prim_id 4-7 for hda-hdd partitions)
+ * Scans all IDE disks for MBR partition tables
  */
 void mbr_init(void);
 
@@ -83,10 +82,34 @@ void mbr_print_partitions(void);
 
 /**
  * Get partition information
- * @param device_id Partition device ID (4-7)
- * @param partition_id Partition number (1-4)
+ * @param disk_id Disk ID (0-3 for hda-hdd)
+ * @param partition_num Partition number (1-4)
  * @return Partition info or NULL if invalid
  */
-const partition_info_t *mbr_get_partition_info(int device_id, int partition_id);
+const partition_info_t *mbr_get_partition_info(int disk_id, int partition_num);
+
+/**
+ * Read sector(s) from a partition
+ * @param disk_id Disk ID (0-3 for hda-hdd)
+ * @param partition_num Partition number (1-4)
+ * @param sector_offset Sector offset within partition (0-based)
+ * @param count Number of sectors to read
+ * @param buffer Buffer to read into (must be count * 512 bytes)
+ * @return 0 on success, -1 on error
+ */
+int mbr_read_partition(uint8_t disk_id, uint8_t partition_num, 
+                       uint32_t sector_offset, uint8_t count, void *buffer);
+
+/**
+ * Write sector(s) to a partition
+ * @param disk_id Disk ID (0-3 for hda-hdd)
+ * @param partition_num Partition number (1-4)
+ * @param sector_offset Sector offset within partition (0-based)
+ * @param count Number of sectors to write
+ * @param buffer Buffer to write from (must be count * 512 bytes)
+ * @return 0 on success, -1 on error
+ */
+int mbr_write_partition(uint8_t disk_id, uint8_t partition_num,
+                        uint32_t sector_offset, uint8_t count, const void *buffer);
 
 #endif /* PART_MBR_H */

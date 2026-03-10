@@ -224,6 +224,10 @@ Description:
   IDE/ATA disk driver supporting up to 4 disks on primary and secondary
   IDE channels. Provides LBA28 addressing for reading and writing 512-byte
   sectors. Auto-detects available disks during initialization.
+  
+  Both read and write operations use LBA mode (0xE0/0xF0 drive bits) to ensure
+  correct sector addressing. The offset parameter specifies the absolute LBA
+  sector number on the disk.
 
 Device Mapping:
   0 = hda (Primary Master)
@@ -232,25 +236,32 @@ Device Mapping:
   3 = hdd (Secondary Slave)
 
 Operations:
-  read(prim_id, scnd_id, buf, count)
-    - Reads sector(s) from IDE disk
+  read(prim_id, scnd_id, buf, offset, count)
+    - Reads block(s) from IDE disk using LBA28 addressing
     - Parameters:
         prim_id: Disk ID (0-3)
-        scnd_id: LBA sector number (0 to disk size)
-        buf: Buffer to read into (must be 512 bytes)
-        count: Must be 512 (one sector)
-    - Return: 512 on success, -1 on error
-    - Note: Goes through cache layer (cache.c) for performance
+        scnd_id: 0 (unused for raw disk access)
+        buf: Buffer to read into (count * 512 bytes)
+        offset: Starting LBA sector number (0-based, absolute on disk)
+        count: Number of blocks (sectors) to read (1-256)
+    - Return: Bytes read (count * 512) on success, -1 on error
+    - Note: Goes through cache layer for single-block reads at offset 0
+    - Example: read(1, 0, buf, 100, 5) reads 5 sectors starting at LBA 100 on hdb
   
-  write(prim_id, scnd_id, buf, count)
-    - Writes sector(s) to IDE disk
+  write(prim_id, scnd_id, buf, offset, count)
+    - Writes block(s) to IDE disk using LBA28 addressing
     - Parameters:
         prim_id: Disk ID (0-3)
-        scnd_id: LBA sector number
-        buf: Data to write (must be 512 bytes)
-        count: Must be 512 (one sector)
-    - Return: 512 on success, -1 on error
-    - Note: Write-through cache (updates cache and writes to disk)
+        scnd_id: 0 (unused for raw disk access)
+        buf: Data to write (count * 512 bytes)
+        offset: Starting LBA sector number (0-based, absolute on disk)
+        count: Number of blocks (sectors) to write (1-256)
+    - Return: Bytes written (count * 512) on success, -1 on error
+    - Note: Write-through cache for single-block writes at offset 0
+    - Example: write(1, 0, buf, 1, 1) writes 1 sector to LBA 1 on hdb
+    - CRITICAL: Uses LBA mode bits (0xE0=master, 0xF0=slave) to ensure
+               correct sector addressing. CHS mode bits (0xA0/0xB0) would
+               cause writes to wrong sectors!
   
   ioctl(prim_id, scnd_id, command)
     - NOT IMPLEMENTED (returns -1)
@@ -260,13 +271,22 @@ Operations:
         - Get/set transfer mode
         - SMART status
 
-Notes:
+Implementation Details:
   - Uses PIO (Programmed I/O) mode, not DMA
-  - LBA28 addressing (max 128 GB per disk)
+  - LBA28 addressing (max 128 GB per disk, 28-bit LBA = 2^28 sectors)
   - 512-byte sector size
-  - All I/O goes through cache layer for performance
-  - Auto-detection via IDENTIFY command during init
+  - Drive selection: 0xE0 (master) or 0xF0 (slave) with LBA bits [27:24]
+  - 1000-loop delay after drive selection for timing stability
+  - Write command (0x30) followed by CACHE FLUSH (0xE7) per sector
   - Read timing carefully tuned to work with different GRUB versions
+
+Notes:
+  - Offset 0 = first sector (LBA 0, typically MBR on raw disks)
+  - Offset 1 = second sector (LBA 1)
+  - Cache only operates on single blocks at offset 0 to avoid thrashing
+  - Multi-block I/O and non-zero offsets bypass cache
+  - All I/O goes through cache layer (cache.c) for consistency
+  - Auto-detection via IDENTIFY command during init
 
 --------------------------------------------------------------------------------
 Devices 4-7: Partition Devices (hdaX, hdbX, hdcX, hddX)
@@ -276,40 +296,52 @@ File: driver/block/part_mbr.c
 Registration: mbr_init()
 
 Description:
-  MBR partition table parser that creates block devices for individual
-  partitions. Reads MBR from each disk and registers partition access.
+  MBR partition table parser and block device driver for accessing partitions.
+  Parses MBR from each disk and registers partition access as block devices.
   Automatically translates partition-relative I/O to absolute disk sectors.
+  
+  Each disk's partitions are accessed through a single block device using
+  scnd_id to select the partition number (1-4). The offset parameter specifies
+  the sector offset WITHIN the selected partition (0-based).
 
 Device Mapping:
   4 = hdaX (hda partitions 1-4)
-  5 = hdbX (hdb partitions 1-4)  
+  5 = hdbX (hdb partitions 1-4)
   6 = hdcX (hdc partitions 1-4)
   7 = hddX (hdd partitions 1-4)
 
 Operations:
-  read(prim_id, scnd_id, buf, count)
-    - Reads from a partition
+  read(prim_id, scnd_id, buf, offset, count)
+    - Reads from a partition using partition-relative addressing
     - Parameters:
-        prim_id: Partition device (4-7)
-        scnd_id: Partition number (1-4, NOT 0)
-        buf: Buffer to read into (512 bytes)
-        count: Must be 512
-    - Return: 512 on success, -1 on error/invalid partition
+        prim_id: Partition device (4-7 for hda-hdd partitions)
+        scnd_id: Partition number (1-4, MUST be valid partition)
+        buf: Buffer to read into (count * 512 bytes)
+        offset: Sector offset WITHIN partition (0-based)
+        count: Number of blocks (sectors) to read
+    - Return: Bytes read (count * 512) on success, -1 on error
     - Operation:
         1. Validates partition exists and scnd_id is valid (1-4)
-        2. Calculates absolute LBA: partition_start + 0
-        3. Chains to underlying disk via bread()
-    - Example: read(4, 1, buf, 512) reads first sector of hda1
+        2. Checks bounds: offset + count <= partition_size
+        3. Calculates absolute LBA: partition_start + offset
+        4. Chains to underlying disk via bread(disk_id, 0, buf, absolute_lba, count)
+    - Example: read(4, 1, buf, 100, 10) reads 10 sectors at offset 100
+               within partition 1 of hda
+    - Example: read(5, 2, buf, 0, 1) reads first sector of hdb partition 2
   
-  write(prim_id, scnd_id, buf, count)
-    - Writes to a partition
+  write(prim_id, scnd_id, buf, offset, count)
+    - Writes to a partition using partition-relative addressing
     - Parameters:
-        prim_id: Partition device (4-7)
-        scnd_id: Partition number (1-4)
-        buf: Data to write (512 bytes)
-        count: Must be 512
-    - Return: 512 on success, -1 on error
+        prim_id: Partition device (4-7 for hda-hdd partitions)
+        scnd_id: Partition number (1-4, MUST be valid partition)
+        buf: Data to write (count * 512 bytes)
+        offset: Sector offset WITHIN partition (0-based)
+        count: Number of blocks (sectors) to write
+    - Return: Bytes written (count * 512) on success, -1 on error
     - Operation: Same as read, but uses bwrite() to underlying disk
+    - Example: write(4, 1, buf, 0, 1) writes to first sector of hda partition 1
+    - Example: write(5, 1, buf, 50, 5) writes 5 sectors at offset 50
+               within hdb partition 1
   
   ioctl(prim_id, scnd_id, command)
     - NOT IMPLEMENTED (returns -1)
@@ -319,13 +351,28 @@ Operations:
         - Get partition start LBA
         - Check if partition is bootable
 
+Implementation Details:
+  - Automatically translates partition-relative offsets to absolute disk LBAs
+  - Comprehensive bounds checking prevents access beyond partition boundaries
+  - Offset calculation: absolute_lba = partition_start + offset
+  - All I/O chains through underlying disk block device (devices 0-3)
+  - Cache layer automatically handles caching (when offset=0, count=1)
+
+Helper Functions (Direct API):
+  - mbr_read_partition(disk_id, partition_num, sector_offset, count, buffer)
+  - mbr_write_partition(disk_id, partition_num, sector_offset, count, buffer)
+  - mbr_get_partition_info(disk_id, partition_num)
+  - mbr_print_partitions()
+
 Notes:
   - Only supports MBR partition tables (not GPT)
   - Supports up to 4 primary partitions per disk
-  - scnd_id=0 is INVALID (reserved, returns error)
-  - Partition types detected: FAT16, FAT32, NTFS, Linux, Linux Swap, Extended
+  - scnd_id=0 is INVALID - partition numbers are 1-4
+  - Partition types detected: FAT16, FAT32, NTFS, Minix, Linux, Linux Swap, Extended
   - Automatically validates MBR signature (0xAA55)
-  - All I/O chains through cache layer via underlying disk
+  - Offset 0 within partition = first sector of partition (NOT first sector of disk)
+  - Bounds checking prevents reading/writing beyond partition limits
+  - All I/O goes through cache layer via underlying disk for consistency
 
 ================================================================================
 ABSTRACTION LAYER
@@ -349,15 +396,27 @@ Public API Functions:
     - Write to character device
     - Returns: 0 on success, -1 on error
   
-  bread(prim_id, scnd_id, buf, count)
+  bread(prim_id, scnd_id, buf, offset, count)
     - Read from block device
+    - Parameters:
+        prim_id: Primary device ID
+        scnd_id: Secondary device ID (device-specific)
+        buf: Buffer to read into
+        offset: Starting block number (relative to device)
+        count: Number of blocks to read
     - Returns: bytes read or -1 on error
-    - Note: Automatically uses cache layer
+    - Note: Automatically uses cache layer for single-block reads
   
-  bwrite(prim_id, scnd_id, buf, count)
+  bwrite(prim_id, scnd_id, buf, offset, count)
     - Write to block device
+    - Parameters:
+        prim_id: Primary device ID
+        scnd_id: Secondary device ID (device-specific)
+        buf: Buffer to write from
+        offset: Starting block number (relative to device)
+        count: Number of blocks to write
     - Returns: bytes written or -1 on error
-    - Note: Write-through cache
+    - Note: Write-through cache for single-block writes
   
   ioctl(prim_id, scnd_id, command)
     - Send control command to device (char or block)

@@ -164,6 +164,14 @@ void kernel_main(void)
     vfs_init();
     
     printk("\nKernel initialization complete.\n\n");
+    char buf[512];
+
+    for(int i=0;i<512;i++){
+       buf[i] = i;
+    }
+
+    bwrite(5, 1, buf, 1, 1);
+    cache_flush();
     
     /* Enable interrupts after all initialization is complete */
     sti();

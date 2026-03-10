@@ -26,8 +26,8 @@ typedef char (*char_read_fn)(int scnd_id);
 typedef int (*char_write_fn)(int scnd_id, char c);
 
 /* Block device callbacks */
-typedef int (*block_read_fn)(int prim_id, int scnd_id, void *buf, size_t count);
-typedef int (*block_write_fn)(int prim_id, int scnd_id, const void *buf, size_t count);
+typedef int (*block_read_fn)(int prim_id, int scnd_id, void *buf, uint32_t offset, size_t count);
+typedef int (*block_write_fn)(int prim_id, int scnd_id, const void *buf, uint32_t offset, size_t count);
 
 /* ioctl callback - unified for both char and block devices */
 typedef int (*ioctl_fn)(int prim_id, int scnd_id, unsigned int command);
@@ -96,24 +96,26 @@ int cwrite(int prim_id, int scnd_id, char c);
 /**
  * Read from a block device
  * 
- * @param prim_id Primary device ID
- * @param scnd_id Secondary device ID
+ * @param prim_id Primary device ID (device selector)
+ * @param scnd_id Secondary device ID (device-specific, e.g., partition number)
  * @param buf Buffer to read into
- * @param count Number of bytes to read
+ * @param offset Starting block number (relative to device/partition)
+ * @param count Number of blocks to read
  * @return Number of bytes read, or -1 on error
  */
-int bread(int prim_id, int scnd_id, void *buf, size_t count);
+int bread(int prim_id, int scnd_id, void *buf, uint32_t offset, size_t count);
 
 /**
  * Write to a block device
  * 
- * @param prim_id Primary device ID
- * @param scnd_id Secondary device ID
+ * @param prim_id Primary device ID (device selector)
+ * @param scnd_id Secondary device ID (device-specific, e.g., partition number)
  * @param buf Buffer to write from
- * @param count Number of bytes to write
+ * @param offset Starting block number (relative to device/partition)
+ * @param count Number of blocks to write
  * @return Number of bytes written, or -1 on error
  */
-int bwrite(int prim_id, int scnd_id, const void *buf, size_t count);
+int bwrite(int prim_id, int scnd_id, const void *buf, uint32_t offset, size_t count);
 
 /**
  * Send ioctl command to a device (works for both char and block)
