@@ -1,12 +1,12 @@
 AS      = i686-linux-gnu-as
-CC      = i686-linux-gnu-gcc
+CC      = i686-linux-gnu-gcc-12
 LD      = i686-linux-gnu-ld
 OBJCOPY = i686-linux-gnu-objcopy
 
 CFLAGS  = -c -ffreestanding -nostdlib -fno-builtin -fno-stack-protector \
           -fno-pie -mno-red-zone -O100 -Wall -Wextra -I include -I kernel \
           -fno-pic -m32
-LIBGCC  = $(shell i686-linux-gnu-gcc -print-libgcc-file-name)
+LIBGCC  = $(shell i686-linux-gnu-gcc-12 -print-libgcc-file-name)
 LDFLAGS = -T linker.ld -nostdlib -Map=kernel.sym
 
 BUILD   = build
@@ -17,6 +17,7 @@ KERNEL_OBJS = $(BUILD)/boot.o \
               $(BUILD)/cpu.o \
               $(BUILD)/printk.o \
               $(BUILD)/string.o \
+              $(BUILD)/list.o \
               $(BUILD)/vga.o \
               $(BUILD)/pic.o \
               $(BUILD)/isr.o \
@@ -24,6 +25,7 @@ KERNEL_OBJS = $(BUILD)/boot.o \
               $(BUILD)/pit.o \
               $(BUILD)/buddy.o \
               $(BUILD)/slab.o \
+              $(BUILD)/sched.o \
               $(BUILD)/driver.o \
               $(BUILD)/tty.o \
               $(BUILD)/kbd.o \
@@ -57,6 +59,9 @@ $(BUILD)/printk.o: lib/printk.c include/lib/printk.h include/driver/char/vga.h
 $(BUILD)/string.o: lib/string.c include/lib/string.h
 	$(CC) $(CFLAGS) lib/string.c -o $@
 
+$(BUILD)/list.o: lib/list.c include/lib/list.h
+	$(CC) $(CFLAGS) lib/list.c -o $@
+
 $(BUILD)/vga.o: driver/char/vga.c include/driver/char/vga.h kernel/asm.h
 	$(CC) $(CFLAGS) driver/char/vga.c -o $@
 
@@ -80,6 +85,9 @@ $(BUILD)/panic.o: kernel/panic.c include/kernel/panic.h include/lib/printk.h ker
 
 $(BUILD)/pit.o: driver/char/pit.c include/driver/char/pit.h include/driver/pic.h include/kernel/cpu.h include/driver/driver.h kernel/asm.h
 	$(CC) $(CFLAGS) driver/char/pit.c -o $@
+
+$(BUILD)/sched.o: kernel/sched.c include/kernel/sched.h include/lib/list.h include/lib/string.h
+	$(CC) $(CFLAGS) kernel/sched.c -o $@
 
 $(BUILD)/buddy.o: mm/buddy.c include/mm/buddy.h include/lib/printk.h
 	$(CC) $(CFLAGS) mm/buddy.c -o $@
@@ -178,3 +186,5 @@ debug: $(TARGET)
 
 clean:
 	rm -rf $(BUILD)
+	rm *.img
+	rm *.sym
