@@ -13,6 +13,7 @@
 #include "driver/block/ide.h"
 #include "driver/block/part_mbr.h"
 #include "fs/fs.h"
+#include "fs/devfs.h"
 #include "asm.h"
 
 /* =========================================================================
@@ -142,31 +143,43 @@ void kernel_main(void)
     /* Initialize driver subsystem and register devices */
     driver_init();
     vga_register_driver();
-    
+    devfs_register_device("vga0", DT_CHRDEV, 0, 0);
+
     /* Initialize TTY after VGA */
     tty_init();
     tty_register_driver();
-    
+    devfs_register_device("tty0", DT_CHRDEV, 2, 0);
+
     pit_init(100);
     pit_register_driver();
-    
+    devfs_register_device("pit0", DT_CHRDEV, 1, 0);
+
     /* Initialize keyboard driver */
     kbd_init();
     kbd_register_driver();
+    devfs_register_device("kbd0", DT_CHRDEV, 3, 0);
 
     printk("Early initialization complete.\n\n");
-    
+
     /* Initialize IDE driver */
     ide_init();
     ide_register_driver();
     ide_print_disks();
-    
+    /* Register IDE disks: prim_id 0=hda, 1=hdb, 2=hdc, 3=hdd */
+    devfs_register_device("hda", DT_BLKDEV, 0, 0);
+    devfs_register_device("hdb", DT_BLKDEV, 1, 0);
+    devfs_register_device("hdc", DT_BLKDEV, 2, 0);
+    devfs_register_device("hdd", DT_BLKDEV, 3, 0);
+
     /* Initialize MBR partition support */
     mbr_init();
     mbr_print_partitions();
-    
+
     /* Initialize VFS */
     vfs_init();
+
+    /* Mount devfs at /dev */
+    devfs_init();
     
     printk("\nKernel initialization complete.\n\n");
     
