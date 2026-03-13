@@ -1,13 +1,12 @@
-AS      = i686-linux-gnu-as
-CC      = i686-linux-gnu-gcc-12
-LD      = i686-linux-gnu-ld
-OBJCOPY = i686-linux-gnu-objcopy
+CC      = gcc
 
 CFLAGS  = -c -ffreestanding -nostdlib -fno-builtin -fno-stack-protector \
           -fno-pie -mno-red-zone -O100 -Wall -Wextra -I include -I kernel \
           -fno-pic -m32
-LIBGCC  = $(shell i686-linux-gnu-gcc-12 -print-libgcc-file-name)
-LDFLAGS = -T linker.ld -nostdlib -Map=kernel.sym
+LIBGCC  = $(shell gcc -print-libgcc-file-name)
+LDFLAGS = -T linker.ld -ffreestanding -nostdlib -fno-builtin -fno-stack-protector \
+          -fno-pie -mno-red-zone -O100 -Wall -Wextra -I include -I kernel \
+          -fno-pic -m32
 
 BUILD   = build
 TARGET  = $(BUILD)/kernel.elf
@@ -46,7 +45,7 @@ $(BUILD):
 # Kernel Build
 # ===========================================================================
 $(BUILD)/boot.o: kernel/boot.s
-	$(AS) kernel/boot.s -o $@
+	$(CC) $(CFLAGS) kernel/boot.s -o $@
 
 $(BUILD)/kernel.o: kernel/kernel.c
 	$(CC) $(CFLAGS) kernel/kernel.c -o $@
@@ -79,7 +78,7 @@ $(BUILD)/pic.o: driver/pic.c include/driver/pic.h kernel/asm.h
 	$(CC) $(CFLAGS) driver/pic.c -o $@
 
 $(BUILD)/isr.o: kernel/isr.s
-	$(AS) kernel/isr.s -o $@
+	$(CC) $(CFLAGS) kernel/isr.s -o $@
 
 $(BUILD)/panic.o: kernel/panic.c include/kernel/panic.h include/lib/printk.h kernel/asm.h
 	$(CC) $(CFLAGS) kernel/panic.c -o $@
@@ -113,7 +112,7 @@ $(BUILD)/devfs.o: fs/devfs.c include/fs/devfs.h include/fs/fs.h include/driver/d
 
 # Link kernel as ELF (Multiboot compatible)
 $(TARGET): $(KERNEL_OBJS)
-	$(LD) $(LDFLAGS) -o $@ $(KERNEL_OBJS) $(LIBGCC)
+	$(CC) $(LDFLAGS) -o $@ $(KERNEL_OBJS)
 	@echo "Kernel ELF created: $@"
 	@ls -lh $@
 

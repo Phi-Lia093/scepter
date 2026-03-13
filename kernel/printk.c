@@ -68,7 +68,7 @@ static void put_pad(char pad_char, int n, int use_early)
 static const char digits_lower[] = "0123456789abcdef";
 static const char digits_upper[] = "0123456789ABCDEF";
 
-static char *uint_to_str(unsigned long long val, int base, int upper,
+static char *uint_to_str(unsigned long val, int base, int upper,
                           char *buf_end, int *out_len)
 {
     const char *digits = upper ? digits_upper : digits_lower;
@@ -89,7 +89,7 @@ static char *uint_to_str(unsigned long long val, int base, int upper,
  * Print an integer with full flag/width/precision support
  * ========================================================================= */
 
-static void print_int(unsigned long long uval, int flags, int width,
+static void print_int(unsigned long uval, int flags, int width,
                        int prec, int base, int use_early)
 {
     char buf[INT_BUF_SIZE];
@@ -100,10 +100,10 @@ static void print_int(unsigned long long uval, int flags, int width,
 
     /* Handle sign for signed values */
     if (flags & FL_SIGNED) {
-        long long sval = (long long)uval;
+        long sval = (long)uval;
         if (sval < 0) {
             sign = '-';
-            uval = (unsigned long long)(-sval);
+            uval = (unsigned long)(-sval);
         } else if (flags & FL_PLUS) {
             sign = '+';
         } else if (flags & FL_SPACE) {
@@ -266,19 +266,19 @@ static void vprintk_internal(const char *fmt, va_list args, int use_early)
         case 'd':
         case 'i':
             {
-                long long val;
-                if      (flags & FL_LLONG) val = va_arg(args, long long);
+                long val;
+                if      (flags & FL_LLONG) val = (long)va_arg(args, long long);
                 else if (flags & FL_LONG)  val = va_arg(args, long);
                 else                       val = va_arg(args, int);
-                print_int((unsigned long long)val,
+                print_int((unsigned long)val,
                           flags | FL_SIGNED, width, prec, 10, use_early);
             }
             break;
 
         case 'u':
             {
-                unsigned long long val;
-                if      (flags & FL_LLONG) val = va_arg(args, unsigned long long);
+                unsigned long val;
+                if      (flags & FL_LLONG) val = (unsigned long)va_arg(args, unsigned long long);
                 else if (flags & FL_LONG)  val = va_arg(args, unsigned long);
                 else                       val = va_arg(args, unsigned int);
                 print_int(val, flags, width, prec, 10, use_early);
@@ -287,8 +287,8 @@ static void vprintk_internal(const char *fmt, va_list args, int use_early)
 
         case 'x':
             {
-                unsigned long long val;
-                if      (flags & FL_LLONG) val = va_arg(args, unsigned long long);
+                unsigned long val;
+                if      (flags & FL_LLONG) val = (unsigned long)va_arg(args, unsigned long long);
                 else if (flags & FL_LONG)  val = va_arg(args, unsigned long);
                 else                       val = va_arg(args, unsigned int);
                 print_int(val, flags, width, prec, 16, use_early);
@@ -297,8 +297,8 @@ static void vprintk_internal(const char *fmt, va_list args, int use_early)
 
         case 'X':
             {
-                unsigned long long val;
-                if      (flags & FL_LLONG) val = va_arg(args, unsigned long long);
+                unsigned long val;
+                if      (flags & FL_LLONG) val = (unsigned long)va_arg(args, unsigned long long);
                 else if (flags & FL_LONG)  val = va_arg(args, unsigned long);
                 else                       val = va_arg(args, unsigned int);
                 print_int(val, flags | FL_UPPER, width, prec, 16, use_early);
@@ -307,8 +307,8 @@ static void vprintk_internal(const char *fmt, va_list args, int use_early)
 
         case 'o':
             {
-                unsigned long long val;
-                if      (flags & FL_LLONG) val = va_arg(args, unsigned long long);
+                unsigned long val;
+                if      (flags & FL_LLONG) val = (unsigned long)va_arg(args, unsigned long long);
                 else if (flags & FL_LONG)  val = va_arg(args, unsigned long);
                 else                       val = va_arg(args, unsigned int);
                 print_int(val, flags, width, prec, 8, use_early);
@@ -321,7 +321,7 @@ static void vprintk_internal(const char *fmt, va_list args, int use_early)
                 /* Always print as 0x + lowercase hex, field width 10 (32-bit) */
                 flags |= FL_HASH;
                 if (width == 0) width = 10;
-                print_int((unsigned long long)val, flags, width, prec, 16, use_early);
+                print_int((unsigned long)val, flags, width, prec, 16, use_early);
             }
             break;
 

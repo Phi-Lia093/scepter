@@ -1,5 +1,5 @@
 #include "driver/block/ide.h"
-#include "driver.h"
+#include "driver/driver.h"
 #include "asm.h"
 #include "lib/printk.h"
 #include <stddef.h>

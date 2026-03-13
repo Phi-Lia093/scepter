@@ -58,12 +58,12 @@ mount "${LOOP_DEV}p1" "$TEMP_MOUNT"
 
 # Step 6: Install GRUB
 echo "[6/7] Installing GRUB bootloader..."
-grub-install --target=i386-pc --boot-directory="$TEMP_MOUNT/boot" --install-modules="minix normal multiboot" "$LOOP_DEV" 2>&1 | grep -v "Installing"
+grub2-install --target=i386-pc --boot-directory="$TEMP_MOUNT/boot" --install-modules="minix normal multiboot" "$LOOP_DEV" 2>&1 | grep -v "Installing"
 
 # Step 7: Create grub.cfg
 echo "[7/7] Creating GRUB configuration..."
-mkdir -p "$TEMP_MOUNT/boot/grub"
-cat > "$TEMP_MOUNT/boot/grub/grub.cfg" << 'EOF'
+mkdir -p "$TEMP_MOUNT/boot/grub2"
+cat > "$TEMP_MOUNT/boot/grub2/grub.cfg" << 'EOF'
 set timeout=5
 set default=0
 
