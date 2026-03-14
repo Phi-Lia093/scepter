@@ -1,7 +1,7 @@
 #include "driver/char/vga.h"
 #include "driver/char/char.h"
 #include "fs/devfs.h"
-#include "asm.h"
+#include "kernel/asm.h"
 
 /* =========================================================================
  * VGA text-mode constants

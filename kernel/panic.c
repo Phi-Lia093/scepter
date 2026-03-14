@@ -1,6 +1,6 @@
 #include "kernel/panic.h"
 #include "lib/printk.h"
-#include "asm.h"
+#include "kernel/asm.h"
 #include <stdint.h>
 
 /* =========================================================================

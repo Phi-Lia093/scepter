@@ -2,7 +2,7 @@
 #define CPU_H
 
 #include <stdint.h>
-#include "asm.h"
+#include "kernel/asm.h"
 
 /* =========================================================================
  * GDT

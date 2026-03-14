@@ -1,124 +1,68 @@
-CC      = gcc
+# ============================================================================
+# Scepter Kernel - Top-Level Makefile
+# ============================================================================
 
-CFLAGS  = -c -ffreestanding -nostdlib -fno-builtin -fno-stack-protector \
-          -fno-pie -mno-red-zone -O100 -Wall -Wextra -I include -I kernel \
-          -fno-pic -m32
-LIBGCC  = $(shell gcc -print-libgcc-file-name)
-LDFLAGS = -T linker.ld -ffreestanding -nostdlib -fno-builtin -fno-stack-protector \
-          -fno-pie -mno-red-zone -O100 -Wall -Wextra -I include -I kernel \
-          -fno-pic -m32
+# Include common configuration
+include common.mk
 
-BUILD   = build
-TARGET  = $(BUILD)/kernel.elf
+# Target
+TARGET = $(BUILD_DIR)/kernel.elf
 
-KERNEL_OBJS = $(BUILD)/boot.o \
-              $(BUILD)/kernel.o \
-              $(BUILD)/cpu.o \
-              $(BUILD)/printk.o \
-              $(BUILD)/string.o \
-              $(BUILD)/list.o \
-              $(BUILD)/vga.o \
-              $(BUILD)/pic.o \
-              $(BUILD)/isr.o \
-              $(BUILD)/panic.o \
-              $(BUILD)/pit.o \
-              $(BUILD)/buddy.o \
-              $(BUILD)/slab.o \
-              $(BUILD)/sched.o \
-              $(BUILD)/char.o \
-              $(BUILD)/block.o \
-              $(BUILD)/tty.o \
-              $(BUILD)/kbd.o \
-              $(BUILD)/ide.o \
-              $(BUILD)/cache.o \
-              $(BUILD)/part_mbr.o \
-              $(BUILD)/vfs.o \
-              $(BUILD)/devfs.o
+# Modules to build
+MODULES = kernel mm lib driver fs
 
-.PHONY: all clean run debug
+# All object files will be in build/ directory
+KERNEL_OBJS = $(BUILD_DIR)/boot.o \
+              $(BUILD_DIR)/kernel.o \
+              $(BUILD_DIR)/cpu.o \
+              $(BUILD_DIR)/panic.o \
+              $(BUILD_DIR)/sched.o \
+              $(BUILD_DIR)/isr.o \
+              $(BUILD_DIR)/mminit.o \
+              $(BUILD_DIR)/buddy.o \
+              $(BUILD_DIR)/slab.o \
+              $(BUILD_DIR)/printk.o \
+              $(BUILD_DIR)/string.o \
+              $(BUILD_DIR)/list.o \
+              $(BUILD_DIR)/pic.o \
+              $(BUILD_DIR)/char.o \
+              $(BUILD_DIR)/vga.o \
+              $(BUILD_DIR)/tty.o \
+              $(BUILD_DIR)/kbd.o \
+              $(BUILD_DIR)/pit.o \
+              $(BUILD_DIR)/block.o \
+              $(BUILD_DIR)/ide.o \
+              $(BUILD_DIR)/cache.o \
+              $(BUILD_DIR)/part_mbr.o \
+              $(BUILD_DIR)/vfs.o \
+              $(BUILD_DIR)/devfs.o
 
-all: $(BUILD) $(TARGET)
+.PHONY: all modules clean run debug grub data mount umount mountd umountd
 
-$(BUILD):
-	mkdir -p $(BUILD)
+# Default target
+all: $(BUILD_DIR) modules $(TARGET)
+	@echo ""
+	@echo "Build complete!"
+	@ls -lh $(TARGET)
 
-# ===========================================================================
-# Kernel Build
-# ===========================================================================
-$(BUILD)/boot.o: kernel/boot.s
-	$(CC) $(CFLAGS) kernel/boot.s -o $@
+# Create build directory
+$(BUILD_DIR):
+	@mkdir -p $(BUILD_DIR)
 
-$(BUILD)/kernel.o: kernel/kernel.c
-	$(CC) $(CFLAGS) kernel/kernel.c -o $@
+# Build all modules
+modules:
+	@echo "Building modules..."
+	@for dir in $(MODULES); do \
+		echo ""; \
+		echo "==> Building $$dir"; \
+		$(MAKE) -C $$dir || exit 1; \
+	done
+	@echo ""
 
-$(BUILD)/cpu.o: kernel/cpu.c include/kernel/cpu.h kernel/asm.h
-	$(CC) $(CFLAGS) kernel/cpu.c -o $@
-
-$(BUILD)/printk.o: lib/printk.c include/lib/printk.h include/driver/char/vga.h
-	$(CC) $(CFLAGS) lib/printk.c -o $@
-
-$(BUILD)/string.o: lib/string.c include/lib/string.h
-	$(CC) $(CFLAGS) lib/string.c -o $@
-
-$(BUILD)/list.o: lib/list.c include/lib/list.h
-	$(CC) $(CFLAGS) lib/list.c -o $@
-
-$(BUILD)/vga.o: driver/char/vga.c include/driver/char/vga.h kernel/asm.h
-	$(CC) $(CFLAGS) driver/char/vga.c -o $@
-
-$(BUILD)/char.o: driver/char/char.c include/driver/char/char.h include/mm/slab.h
-	$(CC) $(CFLAGS) driver/char/char.c -o $@
-
-$(BUILD)/block.o: driver/block/block.c include/driver/block/block.h include/mm/slab.h
-	$(CC) $(CFLAGS) driver/block/block.c -o $@
-
-$(BUILD)/tty.o: driver/char/tty.c include/driver/char/tty.h include/driver/char/vga.h include/driver/char/char.h
-	$(CC) $(CFLAGS) driver/char/tty.c -o $@
-
-$(BUILD)/kbd.o: driver/char/kbd.c include/driver/char/kbd.h include/driver/char/char.h include/driver/pic.h include/kernel/cpu.h kernel/asm.h
-	$(CC) $(CFLAGS) driver/char/kbd.c -o $@
-
-$(BUILD)/pic.o: driver/pic.c include/driver/pic.h kernel/asm.h
-	$(CC) $(CFLAGS) driver/pic.c -o $@
-
-$(BUILD)/isr.o: kernel/isr.s
-	$(CC) $(CFLAGS) kernel/isr.s -o $@
-
-$(BUILD)/panic.o: kernel/panic.c include/kernel/panic.h include/lib/printk.h kernel/asm.h
-	$(CC) $(CFLAGS) kernel/panic.c -o $@
-
-$(BUILD)/pit.o: driver/char/pit.c include/driver/char/pit.h include/driver/pic.h include/kernel/cpu.h include/driver/char/char.h kernel/asm.h
-	$(CC) $(CFLAGS) driver/char/pit.c -o $@
-
-$(BUILD)/sched.o: kernel/sched.c include/kernel/sched.h include/lib/list.h include/lib/string.h
-	$(CC) $(CFLAGS) kernel/sched.c -o $@
-
-$(BUILD)/buddy.o: mm/buddy.c include/mm/buddy.h include/lib/printk.h
-	$(CC) $(CFLAGS) mm/buddy.c -o $@
-
-$(BUILD)/slab.o: mm/slab.c include/mm/slab.h include/mm/buddy.h include/lib/printk.h
-	$(CC) $(CFLAGS) mm/slab.c -o $@
-
-$(BUILD)/ide.o: driver/block/ide.c include/driver/block/ide.h include/driver/block/block.h include/fs/devfs.h kernel/asm.h include/lib/printk.h
-	$(CC) $(CFLAGS) driver/block/ide.c -o $@
-
-$(BUILD)/cache.o: driver/block/cache.c include/driver/block/cache.h include/driver/block/block.h include/mm/slab.h include/lib/printk.h
-	$(CC) $(CFLAGS) driver/block/cache.c -o $@
-
-$(BUILD)/part_mbr.o: driver/block/part_mbr.c include/driver/block/part_mbr.h include/driver/block/block.h include/driver/block/ide.h include/lib/printk.h
-	$(CC) $(CFLAGS) driver/block/part_mbr.c -o $@
-
-$(BUILD)/vfs.o: fs/vfs.c include/fs/fs.h include/mm/slab.h include/lib/printk.h
-	$(CC) $(CFLAGS) fs/vfs.c -o $@
-
-$(BUILD)/devfs.o: fs/devfs.c include/fs/devfs.h include/fs/fs.h include/driver/char/char.h include/driver/block/block.h include/mm/slab.h include/lib/printk.h
-	$(CC) $(CFLAGS) fs/devfs.c -o $@
-
-# Link kernel as ELF (Multiboot compatible)
-$(TARGET): $(KERNEL_OBJS)
-	$(CC) $(LDFLAGS) -o $@ $(KERNEL_OBJS)
-	@echo "Kernel ELF created: $@"
-	@ls -lh $@
+# Link kernel
+$(TARGET): modules
+	@echo "Linking kernel..."
+	@$(CC) $(LDFLAGS) -o $@ $(KERNEL_OBJS)
 
 # ===========================================================================
 # GRUB Disk Management
@@ -127,15 +71,15 @@ MOUNT_DIR = mnt
 
 grub:
 	@echo "Creating clean GRUB disk image..."
-	sudo ./script/make_grub_disk.sh
+	@sudo ./script/make_grub_disk.sh
 	@echo "Done! Use 'make mount' to mount the disk."
 
 data:
-	sudo ./script/make_test_disk.sh
+	@sudo ./script/make_test_disk.sh
 
 mount:
 	@if [ ! -f disk.img ]; then \
-		echo "ERROR: disk.img not found. Run 'make init' first."; \
+		echo "ERROR: disk.img not found. Run 'make grub' first."; \
 		exit 1; \
 	fi
 	@echo "Mounting disk.img to ./$(MOUNT_DIR)..."
@@ -160,7 +104,7 @@ umount:
 
 mountd:
 	@if [ ! -f data.img ]; then \
-		echo "ERROR: data.img not found. Run 'make init' first."; \
+		echo "ERROR: data.img not found. Run 'make data' first."; \
 		exit 1; \
 	fi
 	@echo "Mounting data.img to ./$(MOUNT_DIR)..."
@@ -188,7 +132,7 @@ umountd:
 # ===========================================================================
 run: $(TARGET)
 	@if [ ! -f disk.img ]; then \
-		echo "ERROR: disk.img not found. Run 'make init' first."; \
+		echo "ERROR: disk.img not found. Run 'make grub' first."; \
 		exit 1; \
 	fi
 	@if ! mountpoint -q $(MOUNT_DIR); then \
@@ -201,11 +145,13 @@ run: $(TARGET)
 	@echo "Unmounting disk..."
 	@$(MAKE) umount
 	@echo "Starting QEMU..."
-	qemu-system-i386 -m 128 -drive file=disk.img,format=raw,if=ide,index=0,media=disk -drive file=data.img,format=raw,if=ide,index=1,media=disk
+	@qemu-system-i386 -m 128 \
+		-drive file=disk.img,format=raw,if=ide,index=0,media=disk \
+		-drive file=data.img,format=raw,if=ide,index=1,media=disk
 
 debug: $(TARGET)
 	@if [ ! -f disk.img ]; then \
-		echo "ERROR: disk.img not found. Run 'make init' first."; \
+		echo "ERROR: disk.img not found. Run 'make grub' first."; \
 		exit 1; \
 	fi
 	@if ! mountpoint -q $(MOUNT_DIR); then \
@@ -214,9 +160,13 @@ debug: $(TARGET)
 	@cp $(TARGET) $(MOUNT_DIR)/boot/kernel.elf
 	@sync
 	@$(MAKE) umount
-	bochs
+	@bochs
 
+# ===========================================================================
+# Clean
+# ===========================================================================
 clean:
-	rm -rf $(BUILD)
-	rm -f *.img
-	rm -f *.sym
+	@echo "Cleaning build artifacts..."
+	@rm -rf $(BUILD_DIR)
+	@rm -f *.sym
+	@echo "✓ Clean complete"

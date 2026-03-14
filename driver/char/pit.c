@@ -4,7 +4,7 @@
 #include "kernel/cpu.h"
 #include "fs/devfs.h"
 #include "lib/printk.h"
-#include "asm.h"
+#include "kernel/asm.h"
 
 /* =========================================================================
  * Driver state

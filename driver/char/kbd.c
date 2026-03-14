@@ -3,7 +3,7 @@
 #include "driver/pic.h"
 #include "kernel/cpu.h"
 #include "fs/devfs.h"
-#include "asm.h"
+#include "kernel/asm.h"
 
 /* =========================================================================
  * PS/2 Keyboard Constants
