@@ -26,7 +26,4 @@ void pit_init(uint32_t hz);
 /* Returns the total tick count since pit_init() */
 uint32_t pit_get_ticks(void);
 
-/* Register PIT as a character device driver */
-int pit_register_driver(void);
-
 #endif /* PIT_H */

@@ -1,6 +1,7 @@
 #include "driver/char/tty.h"
 #include "driver/char/vga.h"
-#include "driver/driver.h"
+#include "driver/char/char.h"
+#include "fs/devfs.h"
 #include <stdint.h>
 
 /* =========================================================================
@@ -13,9 +14,9 @@
 
 /* Escape sequence parser states */
 typedef enum {
-    TTY_STATE_NORMAL,      /* Normal character output */
-    TTY_STATE_ESC,         /* Received ESC (0x1B) */
-    TTY_STATE_CSI,         /* Received ESC[ - parsing CSI sequence */
+    TTY_STATE_NORMAL,
+    TTY_STATE_ESC,
+    TTY_STATE_CSI,
 } tty_state_t;
 
 /* =========================================================================
@@ -28,7 +29,7 @@ static struct {
     tty_color_t fg;
     tty_color_t bg;
     tty_state_t state;
-    int params[8];         /* CSI parameters */
+    int params[8];
     int param_count;
     int current_param;
     uint8_t bold;
@@ -58,26 +59,12 @@ static uint8_t tty_make_color(tty_color_t fg, tty_color_t bg)
  * TTY Operations
  * ========================================================================= */
 
-void tty_init(void)
-{
-    tty.col = 0;
-    tty.row = 0;
-    tty.fg = TTY_WHITE;
-    tty.bg = TTY_BLACK;
-    tty.state = TTY_STATE_NORMAL;
-    tty.param_count = 0;
-    tty.current_param = 0;
-    tty.bold = 0;
-}
-
 void tty_clear(void)
 {
     uint8_t color = tty_make_color(tty.fg, tty.bg);
-    for (int row = 0; row < TTY_HEIGHT; row++) {
-        for (int col = 0; col < TTY_WIDTH; col++) {
+    for (int row = 0; row < TTY_HEIGHT; row++)
+        for (int col = 0; col < TTY_WIDTH; col++)
             tty_write_cell(col, row, ' ', color);
-        }
-    }
     tty.col = 0;
     tty.row = 0;
     tty_update_hw_cursor();
@@ -97,126 +84,98 @@ void tty_get_cursor(uint8_t *col, uint8_t *row)
 
 void tty_set_cursor(uint8_t col, uint8_t row)
 {
-    if (col >= TTY_WIDTH) col = TTY_WIDTH - 1;
+    if (col >= TTY_WIDTH)  col = TTY_WIDTH  - 1;
     if (row >= TTY_HEIGHT) row = TTY_HEIGHT - 1;
     tty.col = col;
     tty.row = row;
     tty_update_hw_cursor();
 }
 
-/* Scroll screen up by one line */
 static void tty_scroll(void)
 {
     uint8_t color = tty_make_color(tty.fg, tty.bg);
     volatile uint16_t *vga = (volatile uint16_t *)0xC00B8000;
-    
-    /* Move all rows up */
-    for (int row = 1; row < TTY_HEIGHT; row++) {
-        for (int col = 0; col < TTY_WIDTH; col++) {
+
+    for (int row = 1; row < TTY_HEIGHT; row++)
+        for (int col = 0; col < TTY_WIDTH; col++)
             vga[(row - 1) * TTY_WIDTH + col] = vga[row * TTY_WIDTH + col];
-        }
-    }
-    
-    /* Clear last row */
-    for (int col = 0; col < TTY_WIDTH; col++) {
+
+    for (int col = 0; col < TTY_WIDTH; col++)
         tty_write_cell(col, TTY_HEIGHT - 1, ' ', color);
-    }
-    
+
     if (tty.row > 0) tty.row--;
 }
 
-/* Handle newline */
 static void tty_newline(void)
 {
     tty.col = 0;
     tty.row++;
-    if (tty.row >= TTY_HEIGHT) {
+    if (tty.row >= TTY_HEIGHT)
         tty_scroll();
-    }
 }
 
 /* =========================================================================
  * ANSI Escape Sequence Parser
  * ========================================================================= */
 
-/* Execute CSI sequence */
 static void tty_execute_csi(char command)
 {
     int n, m;
-    
+
     switch (command) {
-    case 'A':  /* Cursor up */
+    case 'A':
         n = (tty.param_count > 0 && tty.params[0] > 0) ? tty.params[0] : 1;
-        if (tty.row >= n) tty.row -= n;
-        else tty.row = 0;
+        if (tty.row >= n) tty.row -= n; else tty.row = 0;
         break;
-        
-    case 'B':  /* Cursor down */
+    case 'B':
         n = (tty.param_count > 0 && tty.params[0] > 0) ? tty.params[0] : 1;
         tty.row += n;
         if (tty.row >= TTY_HEIGHT) tty.row = TTY_HEIGHT - 1;
         break;
-        
-    case 'C':  /* Cursor forward */
+    case 'C':
         n = (tty.param_count > 0 && tty.params[0] > 0) ? tty.params[0] : 1;
         tty.col += n;
         if (tty.col >= TTY_WIDTH) tty.col = TTY_WIDTH - 1;
         break;
-        
-    case 'D':  /* Cursor backward */
+    case 'D':
         n = (tty.param_count > 0 && tty.params[0] > 0) ? tty.params[0] : 1;
-        if (tty.col >= n) tty.col -= n;
-        else tty.col = 0;
+        if (tty.col >= n) tty.col -= n; else tty.col = 0;
         break;
-        
-    case 'H':  /* Cursor position (row;col) */
+    case 'H':
     case 'f':
         n = (tty.param_count > 0 && tty.params[0] > 0) ? tty.params[0] - 1 : 0;
         m = (tty.param_count > 1 && tty.params[1] > 0) ? tty.params[1] - 1 : 0;
         tty_set_cursor(m, n);
-        return;  /* Already updated cursor */
-        
-    case 'J':  /* Erase display */
+        return;
+    case 'J':
         n = (tty.param_count > 0) ? tty.params[0] : 0;
-        if (n == 2) {  /* Clear entire screen */
-            tty_clear();
-            return;
-        }
+        if (n == 2) { tty_clear(); return; }
         break;
-        
-    case 'K':  /* Erase line */
+    case 'K':
         {
             uint8_t color = tty_make_color(tty.fg, tty.bg);
-            for (int col = tty.col; col < TTY_WIDTH; col++) {
+            for (int col = tty.col; col < TTY_WIDTH; col++)
                 tty_write_cell(col, tty.row, ' ', color);
-            }
         }
         break;
-        
-    case 'm':  /* Set graphics mode */
+    case 'm':
         for (int i = 0; i < tty.param_count; i++) {
             int param = tty.params[i];
-            if (param == 0) {  /* Reset */
-                tty.fg = TTY_WHITE;
-                tty.bg = TTY_BLACK;
-                tty.bold = 0;
-            } else if (param == 1) {  /* Bold */
+            if (param == 0) {
+                tty.fg = TTY_WHITE; tty.bg = TTY_BLACK; tty.bold = 0;
+            } else if (param == 1) {
                 tty.bold = 1;
-            } else if (param >= 30 && param <= 37) {  /* Foreground color */
-                /* ANSI to VGA color mapping: ANSI order is Black,Red,Green,Yellow,Blue,Magenta,Cyan,White
-                   VGA order is Black,Blue,Green,Cyan,Red,Magenta,Yellow,White */
-                static const uint8_t ansi_to_vga[] = {0, 4, 2, 6, 1, 5, 3, 7};
-                int ansi_idx = param - 30;
-                tty.fg = (tty_color_t)(ansi_to_vga[ansi_idx] + (tty.bold ? 8 : 0));
-            } else if (param >= 40 && param <= 47) {  /* Background color */
-                static const uint8_t ansi_to_vga[] = {0, 4, 2, 6, 1, 5, 3, 7};
-                int ansi_idx = param - 40;
-                tty.bg = (tty_color_t)ansi_to_vga[ansi_idx];
+            } else if (param >= 30 && param <= 37) {
+                static const uint8_t ansi_to_vga[] = {0,4,2,6,1,5,3,7};
+                tty.fg = (tty_color_t)(ansi_to_vga[param - 30] + (tty.bold ? 8 : 0));
+            } else if (param >= 40 && param <= 47) {
+                static const uint8_t ansi_to_vga[] = {0,4,2,6,1,5,3,7};
+                tty.bg = (tty_color_t)ansi_to_vga[param - 40];
             }
         }
         break;
     }
-    
+
     tty_update_hw_cursor();
 }
 
@@ -227,33 +186,17 @@ static void tty_execute_csi(char command)
 void tty_putchar(char c)
 {
     uint8_t color = tty_make_color(tty.fg, tty.bg);
-    
+
     switch (tty.state) {
     case TTY_STATE_NORMAL:
-        /* Check for escape sequence start */
-        if (c == '\033') {  /* ESC */
-            tty.state = TTY_STATE_ESC;
-            return;
-        }
-        
-        /* Handle control characters */
+        if (c == '\033') { tty.state = TTY_STATE_ESC; return; }
         switch (c) {
-        case '\n':  /* Line feed */
-            tty_newline();
+        case '\n': tty_newline(); break;
+        case '\r': tty.col = 0; break;
+        case '\b':
+            if (tty.col > 0) { tty.col--; tty_write_cell(tty.col, tty.row, ' ', color); }
             break;
-            
-        case '\r':  /* Carriage return */
-            tty.col = 0;
-            break;
-            
-        case '\b':  /* Backspace */
-            if (tty.col > 0) {
-                tty.col--;
-                tty_write_cell(tty.col, tty.row, ' ', color);
-            }
-            break;
-            
-        case '\t':  /* Tab */
+        case '\t':
             {
                 int next_tab = ((tty.col / TAB_WIDTH) + 1) * TAB_WIDTH;
                 if (next_tab >= TTY_WIDTH) {
@@ -266,85 +209,67 @@ void tty_putchar(char c)
                 }
             }
             break;
-            
-        case '\a':  /* Bell - ignore for now */
-            break;
-            
-        default:  /* Regular character */
-            if (c >= 32 && c <= 126) {  /* Printable ASCII */
+        case '\a': break;
+        default:
+            if (c >= 32 && c <= 126) {
                 tty_write_cell(tty.col, tty.row, c, color);
                 tty.col++;
-                if (tty.col >= TTY_WIDTH) {
-                    tty_newline();
-                }
+                if (tty.col >= TTY_WIDTH) tty_newline();
             }
             break;
         }
         break;
-        
+
     case TTY_STATE_ESC:
         if (c == '[') {
-            /* Start of CSI sequence */
             tty.state = TTY_STATE_CSI;
-            tty.param_count = 0;
+            tty.param_count   = 0;
             tty.current_param = 0;
             for (int i = 0; i < 8; i++) tty.params[i] = 0;
         } else {
-            /* Unknown escape sequence, return to normal */
             tty.state = TTY_STATE_NORMAL;
         }
         break;
-        
+
     case TTY_STATE_CSI:
         if (c >= '0' && c <= '9') {
-            /* Accumulate parameter digit */
             tty.current_param = tty.current_param * 10 + (c - '0');
         } else if (c == ';') {
-            /* Parameter separator */
-            if (tty.param_count < 8) {
+            if (tty.param_count < 8)
                 tty.params[tty.param_count++] = tty.current_param;
-                tty.current_param = 0;
-            }
+            tty.current_param = 0;
         } else if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')) {
-            /* Command letter - save last parameter and execute */
-            if (tty.param_count < 8) {
+            if (tty.param_count < 8)
                 tty.params[tty.param_count++] = tty.current_param;
-            }
             tty_execute_csi(c);
             tty.state = TTY_STATE_NORMAL;
         } else {
-            /* Invalid character, abort sequence */
             tty.state = TTY_STATE_NORMAL;
         }
         break;
     }
-    
+
     tty_update_hw_cursor();
 }
 
 void tty_puts(const char *str)
 {
-    while (*str) {
-        tty_putchar(*str++);
-    }
+    while (*str) tty_putchar(*str++);
 }
 
 /* =========================================================================
- * Driver Layer Integration
+ * Driver callbacks
  * ========================================================================= */
 
-/* ioctl commands */
 #define TTY_IOCTL_CLEAR  0x1
 
 static char tty_read(int scnd_id)
 {
-    /* Forward read to keyboard driver (device 3) */
-    extern char cread(int, int);
     (void)scnd_id;
-    return cread(3, 0);
+    return cread(3, 0);   /* forward to keyboard (char dev 3) */
 }
 
-static int tty_write(int scnd_id, char c)
+static int tty_write_cb(int scnd_id, char c)
 {
     (void)scnd_id;
     tty_putchar(c);
@@ -355,22 +280,26 @@ static int tty_ioctl(int prim_id, int scnd_id, unsigned int command)
 {
     (void)prim_id;
     (void)scnd_id;
-    
-    switch (command) {
-        case TTY_IOCTL_CLEAR:
-            tty_clear();
-            return 0;
-        default:
-            return -1;  /* Unknown command */
-    }
+    if (command == TTY_IOCTL_CLEAR) { tty_clear(); return 0; }
+    return -1;
 }
 
-int tty_register_driver(void)
+/* =========================================================================
+ * Initialisation – state reset + driver registration + devfs node
+ * ========================================================================= */
+
+void tty_init(void)
 {
-    char_ops_t ops = {
-        .read = tty_read,
-        .write = tty_write,
-        .ioctl = tty_ioctl
-    };
-    return register_char_device(2, &ops);
+    tty.col          = 0;
+    tty.row          = 0;
+    tty.fg           = TTY_WHITE;
+    tty.bg           = TTY_BLACK;
+    tty.state        = TTY_STATE_NORMAL;
+    tty.param_count  = 0;
+    tty.current_param = 0;
+    tty.bold         = 0;
+
+    char_ops_t ops = { .read = tty_read, .write = tty_write_cb, .ioctl = tty_ioctl };
+    register_char_device(2, &ops);
+    devfs_register_device("tty0", DT_CHRDEV, 2, 0);
 }

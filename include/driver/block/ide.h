@@ -109,10 +109,4 @@ int ide_write_sectors(uint8_t disk_id, uint32_t lba, uint8_t count, const void *
  */
 void ide_print_disks(void);
 
-/**
- * Register IDE disks as block devices (hda=0, hdb=1, hdc=2, hdd=3)
- * Must be called after ide_init() and driver_init()
- */
-void ide_register_driver(void);
-
 #endif /* IDE_H */

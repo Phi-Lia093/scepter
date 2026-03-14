@@ -12,14 +12,9 @@
  */
 
 /**
- * Initialize keyboard driver
- * Sets up IRQ1 handler and initializes buffer
+ * Initialize keyboard driver.
+ * Sets up IRQ1 handler, buffer, driver registration and devfs node.
  */
 void kbd_init(void);
-
-/**
- * Register keyboard as character device 3
- */
-int kbd_register_driver(void);
 
 #endif /* KBD_H */

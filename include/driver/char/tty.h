@@ -39,12 +39,6 @@ typedef enum {
 void tty_init(void);
 
 /**
- * Register TTY as a character device
- * Returns 0 on success, -1 on failure
- */
-int tty_register_driver(void);
-
-/**
  * Write a character to TTY
  * Handles control characters and escape sequences
  */

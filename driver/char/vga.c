@@ -1,5 +1,6 @@
 #include "driver/char/vga.h"
-#include "driver.h"
+#include "driver/char/char.h"
+#include "fs/devfs.h"
 #include "asm.h"
 
 /* =========================================================================
@@ -121,22 +122,11 @@ void vga_putchar(char c)
 }
 
 /* =========================================================================
- * Initialisation
- * ========================================================================= */
-
-void vga_init(void)
-{
-    vga_color = vga_entry_color(VGA_LIGHT_GREY, VGA_BLACK);
-    vga_clear();
-}
-
-/* =========================================================================
- * Driver Layer Integration
+ * Driver callbacks
  * ========================================================================= */
 
 static char vga_read(int scnd_id)
 {
-    /* VGA doesn't support reading */
     (void)scnd_id;
     return 0;
 }
@@ -148,11 +138,16 @@ static int vga_write(int scnd_id, char c)
     return 0;
 }
 
-int vga_register_driver(void)
+/* =========================================================================
+ * Initialisation – hardware + driver registration + devfs node
+ * ========================================================================= */
+
+void vga_init(void)
 {
-    char_ops_t ops = {
-        .read = vga_read,
-        .write = vga_write
-    };
-    return register_char_device(0, &ops);
+    vga_color = vga_entry_color(VGA_LIGHT_GREY, VGA_BLACK);
+    vga_clear();
+
+    char_ops_t ops = { .read = vga_read, .write = vga_write, .ioctl = NULL };
+    register_char_device(0, &ops);
+    devfs_register_device("vga0", DT_CHRDEV, 0, 0);
 }

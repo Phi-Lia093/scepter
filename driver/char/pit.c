@@ -1,8 +1,9 @@
 #include "driver/char/pit.h"
+#include "driver/char/char.h"
 #include "driver/pic.h"
 #include "kernel/cpu.h"
-#include "printk.h"
-#include "driver/driver.h"
+#include "fs/devfs.h"
+#include "lib/printk.h"
 #include "asm.h"
 
 /* =========================================================================
@@ -23,20 +24,31 @@ uint32_t pit_get_ticks(void)
 void pit_isr(void)
 {
     pit_ticks++;
-
-    // if (pit_ticks % 100 == 0)
-    //     printk("[PIT] tick %u (uptime ~%u s)\n",
-    //            pit_ticks, pit_ticks / 100);
-
     pic_send_eoi(IRQ0);
 }
 
 /* =========================================================================
- * Initialisation
+ * Driver callbacks
  * ========================================================================= */
 
-/* Declared in isr.s / cpu.h */
-extern void irq0(void);
+static char pit_read(int scnd_id)
+{
+    (void)scnd_id;
+    return (char)(pit_ticks & 0xFF);
+}
+
+static int pit_write(int scnd_id, char c)
+{
+    (void)scnd_id;
+    (void)c;
+    return 0;
+}
+
+/* =========================================================================
+ * Initialisation – hardware + IRQ setup + driver registration + devfs node
+ * ========================================================================= */
+
+extern void irq0(void);   /* defined in kernel/isr.s */
 
 void pit_init(uint32_t hz)
 {
@@ -47,40 +59,17 @@ void pit_init(uint32_t hz)
 
     /* Program PIT channel 0: mode 3 (square wave), binary counting */
     outb(PIT_CMD,      PIT_CMD_INIT);
-    outb(PIT_CHANNEL0, (uint8_t)(divisor & 0xFF));   /* low byte  */
-    outb(PIT_CHANNEL0, (uint8_t)(divisor >> 8));     /* high byte */
+    outb(PIT_CHANNEL0, (uint8_t)(divisor & 0xFF));
+    outb(PIT_CHANNEL0, (uint8_t)(divisor >> 8));
 
     /* Register IRQ0 handler in IDT (vector 32 = PIC master offset 0x20) */
     idt_set_gate(32, (uint32_t)irq0, GDT_KERNEL_CODE, IDT_GATE_INT32);
 
     /* Unmask IRQ0 in the PIC */
     pic_enable_irq(IRQ0);
-}
 
-/* =========================================================================
- * Driver Layer Integration
- * ========================================================================= */
-
-static char pit_read(int scnd_id)
-{
-    /* Return low byte of tick counter */
-    (void)scnd_id;
-    return (char)(pit_ticks & 0xFF);
-}
-
-static int pit_write(int scnd_id, char c)
-{
-    /* Writing to PIT does nothing */
-    (void)scnd_id;
-    (void)c;
-    return 0;
-}
-
-int pit_register_driver(void)
-{
-    char_ops_t ops = {
-        .read = pit_read,
-        .write = pit_write
-    };
-    return register_char_device(1, &ops);
+    /* Register as char device 1 and add devfs node */
+    char_ops_t ops = { .read = pit_read, .write = pit_write, .ioctl = NULL };
+    register_char_device(1, &ops);
+    devfs_register_device("pit0", DT_CHRDEV, 1, 0);
 }

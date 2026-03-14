@@ -43,7 +43,6 @@ static inline uint16_t vga_entry(char c, uint8_t color)
  * ========================================================================= */
 
 void vga_init(void);
-int vga_register_driver(void);
 void vga_clear(void);
 void vga_set_color(uint8_t color);
 void vga_putchar(char c);

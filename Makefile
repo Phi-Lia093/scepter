@@ -25,7 +25,8 @@ KERNEL_OBJS = $(BUILD)/boot.o \
               $(BUILD)/buddy.o \
               $(BUILD)/slab.o \
               $(BUILD)/sched.o \
-              $(BUILD)/driver.o \
+              $(BUILD)/char.o \
+              $(BUILD)/block.o \
               $(BUILD)/tty.o \
               $(BUILD)/kbd.o \
               $(BUILD)/ide.o \
@@ -65,13 +66,16 @@ $(BUILD)/list.o: lib/list.c include/lib/list.h
 $(BUILD)/vga.o: driver/char/vga.c include/driver/char/vga.h kernel/asm.h
 	$(CC) $(CFLAGS) driver/char/vga.c -o $@
 
-$(BUILD)/driver.o: driver/driver.c include/driver/driver.h include/mm/slab.h
-	$(CC) $(CFLAGS) driver/driver.c -o $@
+$(BUILD)/char.o: driver/char/char.c include/driver/char/char.h include/mm/slab.h
+	$(CC) $(CFLAGS) driver/char/char.c -o $@
 
-$(BUILD)/tty.o: driver/char/tty.c include/driver/char/tty.h include/driver/char/vga.h include/driver/driver.h
+$(BUILD)/block.o: driver/block/block.c include/driver/block/block.h include/mm/slab.h
+	$(CC) $(CFLAGS) driver/block/block.c -o $@
+
+$(BUILD)/tty.o: driver/char/tty.c include/driver/char/tty.h include/driver/char/vga.h include/driver/char/char.h
 	$(CC) $(CFLAGS) driver/char/tty.c -o $@
 
-$(BUILD)/kbd.o: driver/char/kbd.c include/driver/char/kbd.h include/driver/driver.h include/driver/pic.h include/kernel/cpu.h kernel/asm.h
+$(BUILD)/kbd.o: driver/char/kbd.c include/driver/char/kbd.h include/driver/char/char.h include/driver/pic.h include/kernel/cpu.h kernel/asm.h
 	$(CC) $(CFLAGS) driver/char/kbd.c -o $@
 
 $(BUILD)/pic.o: driver/pic.c include/driver/pic.h kernel/asm.h
@@ -83,7 +87,7 @@ $(BUILD)/isr.o: kernel/isr.s
 $(BUILD)/panic.o: kernel/panic.c include/kernel/panic.h include/lib/printk.h kernel/asm.h
 	$(CC) $(CFLAGS) kernel/panic.c -o $@
 
-$(BUILD)/pit.o: driver/char/pit.c include/driver/char/pit.h include/driver/pic.h include/kernel/cpu.h include/driver/driver.h kernel/asm.h
+$(BUILD)/pit.o: driver/char/pit.c include/driver/char/pit.h include/driver/pic.h include/kernel/cpu.h include/driver/char/char.h kernel/asm.h
 	$(CC) $(CFLAGS) driver/char/pit.c -o $@
 
 $(BUILD)/sched.o: kernel/sched.c include/kernel/sched.h include/lib/list.h include/lib/string.h
@@ -95,19 +99,19 @@ $(BUILD)/buddy.o: mm/buddy.c include/mm/buddy.h include/lib/printk.h
 $(BUILD)/slab.o: mm/slab.c include/mm/slab.h include/mm/buddy.h include/lib/printk.h
 	$(CC) $(CFLAGS) mm/slab.c -o $@
 
-$(BUILD)/ide.o: driver/block/ide.c include/driver/block/ide.h kernel/asm.h include/lib/printk.h
+$(BUILD)/ide.o: driver/block/ide.c include/driver/block/ide.h include/driver/block/block.h include/fs/devfs.h kernel/asm.h include/lib/printk.h
 	$(CC) $(CFLAGS) driver/block/ide.c -o $@
 
-$(BUILD)/cache.o: driver/block/cache.c include/driver/block/cache.h include/driver/driver.h include/mm/slab.h include/lib/printk.h
+$(BUILD)/cache.o: driver/block/cache.c include/driver/block/cache.h include/driver/block/block.h include/mm/slab.h include/lib/printk.h
 	$(CC) $(CFLAGS) driver/block/cache.c -o $@
 
-$(BUILD)/part_mbr.o: driver/block/part_mbr.c include/driver/block/part_mbr.h include/driver/driver.h include/driver/block/ide.h include/lib/printk.h
+$(BUILD)/part_mbr.o: driver/block/part_mbr.c include/driver/block/part_mbr.h include/driver/block/block.h include/driver/block/ide.h include/lib/printk.h
 	$(CC) $(CFLAGS) driver/block/part_mbr.c -o $@
 
 $(BUILD)/vfs.o: fs/vfs.c include/fs/fs.h include/mm/slab.h include/lib/printk.h
 	$(CC) $(CFLAGS) fs/vfs.c -o $@
 
-$(BUILD)/devfs.o: fs/devfs.c include/fs/devfs.h include/fs/fs.h include/driver/driver.h include/mm/slab.h include/lib/printk.h
+$(BUILD)/devfs.o: fs/devfs.c include/fs/devfs.h include/fs/fs.h include/driver/char/char.h include/driver/block/block.h include/mm/slab.h include/lib/printk.h
 	$(CC) $(CFLAGS) fs/devfs.c -o $@
 
 # Link kernel as ELF (Multiboot compatible)
