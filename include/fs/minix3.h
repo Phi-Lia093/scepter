@@ -162,17 +162,31 @@ minix3_fs_info_t *minix3_get_mounted_fs(void);  /* For testing */
 
 /* inode.c - Inode operations */
 int minix3_read_inode(minix3_fs_info_t *fs, uint32_t ino, struct minix3_inode *inode);
+int minix3_write_inode(minix3_fs_info_t *fs, uint32_t ino, struct minix3_inode *inode);
 int minix3_bmap(minix3_fs_info_t *fs, struct minix3_inode *inode, 
                 uint32_t file_block, uint32_t *zone_out);
+int minix3_alloc_zone(minix3_fs_info_t *fs, uint32_t *zone_out);
+int minix3_free_zone(minix3_fs_info_t *fs, uint32_t zone);
+int minix3_alloc_inode(minix3_fs_info_t *fs, uint16_t mode, uint32_t *ino_out);
+int minix3_free_inode(minix3_fs_info_t *fs, uint32_t ino);
+int minix3_sync_bitmaps(minix3_fs_info_t *fs);
 
 /* dir.c - Directory operations */
 int minix3_lookup(minix3_fs_info_t *fs, struct minix3_inode *dir_inode,
                   const char *name, uint32_t *inode_out);
 int minix3_list_dir(minix3_fs_info_t *fs, struct minix3_inode *dir_inode);
+int minix3_add_dirent(minix3_fs_info_t *fs, struct minix3_inode *dir_inode,
+                      const char *name, uint32_t ino);
+int minix3_remove_dirent(minix3_fs_info_t *fs, struct minix3_inode *dir_inode,
+                         const char *name);
 
 /* file.c - File operations */
 int minix3_read_file(minix3_fs_info_t *fs, struct minix3_inode *inode,
                      uint32_t offset, uint8_t *buf, uint32_t count);
+int minix3_write_file(minix3_fs_info_t *fs, struct minix3_inode *inode,
+                      uint32_t offset, const uint8_t *buf, uint32_t count);
+int minix3_truncate_file(minix3_fs_info_t *fs, struct minix3_inode *inode,
+                         uint32_t new_size);
 int minix3_read_entire_file(minix3_fs_info_t *fs, struct minix3_inode *inode,
                             uint8_t *buf, uint32_t max_size);
 void minix3_cat_file(minix3_fs_info_t *fs, struct minix3_inode *inode, uint32_t max_bytes);

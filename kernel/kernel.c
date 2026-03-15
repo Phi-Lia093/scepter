@@ -11,6 +11,7 @@
 #include "driver/block/part_mbr.h"
 #include "driver/pic.h"
 #include "lib/printk.h"
+#include "lib/string.h"
 #include "mm/mm.h"
 #include "mm/slab.h"
 #include "driver/block/cache.h"
@@ -79,6 +80,9 @@ void kernel_main(void)
         while (1);
     }
 
+    int fd = fs_open("/test.txt", O_CREAT | O_RDWR);
+    fs_write(fd, "hello", 6);
+    fs_close(fd);
     sti();
     while (1);
 }

@@ -13,7 +13,7 @@
  * VFS Callback: open
  * ============================================================================ */
 
-static int minix3_vfs_open(void *fs_private, const char *path, int flags __attribute__((unused)),
+static int minix3_vfs_open(void *fs_private, const char *path, int flags,
                            void **file_private)
 {
     minix3_fs_info_t *fs = (minix3_fs_info_t *)fs_private;
@@ -82,8 +82,52 @@ static int minix3_vfs_open(void *fs_private, const char *path, int flags __attri
         /* Lookup component in current directory */
         uint32_t next_ino;
         if (minix3_lookup(fs, &dir_inode, token, &next_ino) < 0) {
-            kfree(file);
-            return -1;  /* Component not found */
+            /* Component not found */
+            if (is_last && (flags & O_CREAT)) {
+                /* Create new file */
+                uint16_t mode = MINIX3_S_IFREG | MINIX3_S_IRUSR | MINIX3_S_IWUSR | 
+                               MINIX3_S_IRGRP | MINIX3_S_IROTH;  /* 0644 */
+                
+                /* Allocate new inode */
+                if (minix3_alloc_inode(fs, mode, &next_ino) < 0) {
+                    printk("[minix3] Failed to allocate inode\n");
+                    kfree(file);
+                    return -1;
+                }
+                
+                /* Add directory entry */
+                if (minix3_add_dirent(fs, &dir_inode, token, next_ino) < 0) {
+                    printk("[minix3] Failed to add directory entry\n");
+                    minix3_free_inode(fs, next_ino);
+                    kfree(file);
+                    return -1;
+                }
+                
+                /* Write back parent directory inode (size may have changed) */
+                if (minix3_write_inode(fs, current_ino, &dir_inode) < 0) {
+                    printk("[minix3] Failed to write parent directory inode\n");
+                }
+                
+                /* Sync bitmaps */
+                minix3_sync_bitmaps(fs);
+                
+                /* Now read the newly created file's inode (use different variable) */
+                struct minix3_inode new_file_inode;
+                if (minix3_read_inode(fs, next_ino, &new_file_inode) < 0) {
+                    kfree(file);
+                    return -1;
+                }
+                
+                /* Set up file handle with new file */
+                file->inode_num = next_ino;
+                file->inode = new_file_inode;
+                *file_private = file;
+                return 0;  /* File created and opened successfully */
+            } else {
+                /* File not found and O_CREAT not set */
+                kfree(file);
+                return -1;
+            }
         }
         
         current_ino = next_ino;
@@ -110,6 +154,15 @@ static int minix3_vfs_open(void *fs_private, const char *path, int flags __attri
     file->inode_num = current_ino;
     file->inode = dir_inode;
     
+    /* Handle O_TRUNC flag - truncate file to 0 if opened for writing */
+    if ((flags & O_TRUNC) && MINIX3_ISREG(file->inode.i_mode)) {
+        if (minix3_truncate_file(fs, &file->inode, 0) < 0) {
+            kfree(file);
+            return -1;
+        }
+        file->dirty = 1;  /* Mark inode as dirty */
+    }
+    
     *file_private = file;
     return 0;
 }
@@ -124,9 +177,16 @@ static int minix3_vfs_close(void *file_private)
     
     minix3_file_info_t *file = (minix3_file_info_t *)file_private;
     
-    /* TODO: Write back dirty inode if needed */
+    /* Write back dirty inode if needed */
     if (file->dirty) {
-        /* Write inode back to disk */
+        if (minix3_write_inode(file->fs, file->inode_num, &file->inode) < 0) {
+            printk("[minix3] Failed to write back inode on close\n");
+        }
+        
+        /* Sync bitmaps if dirty */
+        if (minix3_sync_bitmaps(file->fs) < 0) {
+            printk("[minix3] Failed to sync bitmaps on close\n");
+        }
     }
     
     kfree(file);
@@ -160,6 +220,33 @@ static int minix3_vfs_read(void *file_private, void *buf, size_t count)
 }
 
 /* ============================================================================
+ * VFS Callback: write
+ * ============================================================================ */
+
+static int minix3_vfs_write(void *file_private, const void *buf, size_t count)
+{
+    if (!file_private || !buf) return -1;
+    
+    minix3_file_info_t *file = (minix3_file_info_t *)file_private;
+    
+    /* Only regular files can be written */
+    if (!MINIX3_ISREG(file->inode.i_mode)) {
+        return -1;
+    }
+    
+    /* Write to file at current offset */
+    int bytes_written = minix3_write_file(file->fs, &file->inode,
+                                          file->offset, (const uint8_t *)buf, count);
+    
+    if (bytes_written > 0) {
+        file->offset += bytes_written;
+        file->dirty = 1;  /* Mark inode as dirty */
+    }
+    
+    return bytes_written;
+}
+
+/* ============================================================================
  * VFS Callback: seek
  * ============================================================================ */
 
@@ -190,6 +277,32 @@ static int minix3_vfs_seek(void *file_private, int32_t offset, int whence,
     
     file->offset = (uint32_t)target;
     *new_offset = file->offset;
+    return 0;
+}
+
+/* ============================================================================
+ * VFS Callback: truncate
+ * ============================================================================ */
+
+static int minix3_vfs_truncate(void *file_private, uint32_t length)
+{
+    if (!file_private) return -1;
+    
+    minix3_file_info_t *file = (minix3_file_info_t *)file_private;
+    
+    /* Truncate the file */
+    if (minix3_truncate_file(file->fs, &file->inode, length) < 0) {
+        return -1;
+    }
+    
+    /* Mark inode as dirty */
+    file->dirty = 1;
+    
+    /* Adjust offset if it's beyond new size */
+    if (file->offset > length) {
+        file->offset = length;
+    }
+    
     return 0;
 }
 
@@ -333,9 +446,9 @@ static fs_ops_t minix3_ops = {
     .open     = minix3_vfs_open,
     .close    = minix3_vfs_close,
     .read     = minix3_vfs_read,
-    .write    = NULL,  /* TODO: Implement write support */
+    .write    = minix3_vfs_write,
     .seek     = minix3_vfs_seek,
-    .truncate = NULL,  /* TODO: Implement truncate */
+    .truncate = minix3_vfs_truncate,
     .readdir  = minix3_vfs_readdir,
     .mkdir    = NULL,  /* TODO: Implement mkdir */
     .rmdir    = NULL,  /* TODO: Implement rmdir */
