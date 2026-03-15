@@ -136,30 +136,7 @@ int minix3_list_dir(minix3_fs_info_t *fs, struct minix3_inode *dir_inode)
                 continue;
             }
             
-            /* Read entry inode to get file type */
-            struct minix3_inode entry_inode;
-            if (minix3_read_inode(fs, entries[i].inode, &entry_inode) < 0) {
-                printk("  inode=%5u  <error reading inode>  %s\n",
-                       entries[i].inode, entries[i].name);
-                continue;
-            }
-            
-            /* Determine file type */
-            const char *type;
-            if (MINIX3_ISDIR(entry_inode.i_mode)) {
-                type = "DIR ";
-            } else if (MINIX3_ISREG(entry_inode.i_mode)) {
-                type = "FILE";
-            } else if (MINIX3_ISCHR(entry_inode.i_mode)) {
-                type = "CHR ";
-            } else if (MINIX3_ISBLK(entry_inode.i_mode)) {
-                type = "BLK ";
-            } else if (MINIX3_ISLNK(entry_inode.i_mode)) {
-                type = "LNK ";
-            } else {
-                type = "????";
-            }
-            
+            /* Just count entries without printing */
             total++;
         }
     }
