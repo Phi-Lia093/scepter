@@ -5,3 +5,6 @@ build/
 # Disk/CD images
 *.iso
 *.img
+
+# Log files
+*.log

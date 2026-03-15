@@ -30,12 +30,17 @@ static void put_char_early(char c)
     vga_putchar(c);
 }
 
+/* Forward declare serial write function */
+extern void serial_write_char(char c);
+
 static void put_char(char c)
 {
-    /* Use driver abstraction layer - TTY device (ID 2) */
-    // extern int cwrite(int, int, char);
-    // cwrite(2, 0, c);
-    put_char_early(c);  /* Fallback to early output if TTY not ready */
+    /* Output to both VGA and serial port */
+    extern void vga_putchar(char);
+    vga_putchar(c);
+    
+    /* Also send to serial for logging */
+    serial_write_char(c);
 }
 
 static void put_str(const char *s, int len, int use_early)

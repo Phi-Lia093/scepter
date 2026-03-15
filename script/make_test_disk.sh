@@ -48,7 +48,7 @@ sleep 1
 
 # Step 4: Format partition as Minix filesystem
 echo "[4/5] Formatting partition 1 as Minix filesystem..."
-mkfs.minix "${LOOP_DEV}p1" > /dev/null 2>&1
+mkfs.minix -3 "${LOOP_DEV}p1" > /dev/null 2>&1
 
 # Step 5: Verify and show partition info
 echo "[5/5] Verifying partition table..."

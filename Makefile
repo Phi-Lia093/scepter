@@ -30,12 +30,18 @@ KERNEL_OBJS = $(BUILD_DIR)/boot.o \
               $(BUILD_DIR)/tty.o \
               $(BUILD_DIR)/kbd.o \
               $(BUILD_DIR)/pit.o \
+              $(BUILD_DIR)/serial.o \
               $(BUILD_DIR)/block.o \
               $(BUILD_DIR)/ide.o \
               $(BUILD_DIR)/cache.o \
               $(BUILD_DIR)/part_mbr.o \
               $(BUILD_DIR)/vfs.o \
-              $(BUILD_DIR)/devfs.o
+              $(BUILD_DIR)/devfs.o \
+              $(BUILD_DIR)/minix3.o \
+              $(BUILD_DIR)/super.o \
+              $(BUILD_DIR)/inode.o \
+              $(BUILD_DIR)/dir.o \
+              $(BUILD_DIR)/file.o
 
 .PHONY: all modules clean run debug grub data mount umount mountd umountd
 
@@ -145,9 +151,11 @@ run: $(TARGET)
 	@echo "Unmounting disk..."
 	@$(MAKE) umount
 	@echo "Starting QEMU..."
+	@rm -f kernel.log
 	@qemu-system-i386 -m 128 \
 		-drive file=disk.img,format=raw,if=ide,index=0,media=disk \
-		-drive file=data.img,format=raw,if=ide,index=1,media=disk
+		-drive file=data.img,format=raw,if=ide,index=1,media=disk \
+		-serial file:kernel.log
 
 debug: $(TARGET)
 	@if [ ! -f disk.img ]; then \
@@ -160,6 +168,7 @@ debug: $(TARGET)
 	@cp $(TARGET) $(MOUNT_DIR)/boot/kernel.elf
 	@sync
 	@$(MAKE) umount
+	@rm -f kernel.log
 	@bochs
 
 # ===========================================================================
@@ -169,4 +178,9 @@ clean:
 	@echo "Cleaning build artifacts..."
 	@rm -rf $(BUILD_DIR)
 	@rm -f *.sym
+	@echo "✓ Clean complete"
+
+cleani:
+	@echo "Cleaning build artifacts..."
+	@rm -f *.img
 	@echo "✓ Clean complete"

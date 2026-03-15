@@ -1,28 +1,19 @@
 # ============================================================================
-# Filesystem Module Makefile
+# Minix v3 Filesystem Module Makefile
 # ============================================================================
 
-# Subdirectories
-SUBDIRS = minix3
-
-# Source files in fs/
-SRCS = vfs.c devfs.c
+# Source files
+SRCS = minix3.c super.c inode.c dir.c file.c
 
 # Object files (in build directory)
 OBJS = $(addprefix $(BUILD_DIR)/, $(SRCS:.c=.o))
 
 # Build all objects
-all: $(OBJS) subdirs
-
-# Build subdirectories
-subdirs:
-	@for dir in $(SUBDIRS); do \
-		$(MAKE) -C $$dir || exit 1; \
-	done
+all: $(OBJS)
 
 # Compilation rule
 $(BUILD_DIR)/%.o: %.c
-	@echo "  CC      fs/$<"
+	@echo "  CC      fs/minix3/$<"
 	@$(CC) $(CFLAGS) $(INCLUDE) $< -o $@
 
-.PHONY: all subdirs
+.PHONY: all
