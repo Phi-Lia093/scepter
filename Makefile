@@ -31,6 +31,7 @@ KERNEL_OBJS = $(BUILD_DIR)/boot.o \
               $(BUILD_DIR)/kbd.o \
               $(BUILD_DIR)/pit.o \
               $(BUILD_DIR)/serial.o \
+              $(BUILD_DIR)/rtc.o \
               $(BUILD_DIR)/block.o \
               $(BUILD_DIR)/ide.o \
               $(BUILD_DIR)/cache.o \

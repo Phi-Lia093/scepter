@@ -5,6 +5,7 @@
 #include "fs/minix3.h"
 #include "fs/fs.h"
 #include "driver/block/block.h"
+#include "driver/char/rtc.h"
 #include "lib/printk.h"
 #include "lib/string.h"
 
@@ -116,7 +117,7 @@ int minix3_add_dirent(minix3_fs_info_t *fs, struct minix3_inode *dir_inode,
                 uint32_t entry_end_offset = (block * fs->block_size) + ((i + 1) * MINIX3_DIRENT_SIZE);
                 if (entry_end_offset > dir_inode->i_size) {
                     dir_inode->i_size = entry_end_offset;
-                    dir_inode->i_mtime++;
+                    dir_inode->i_mtime = rtc_get_unix_time();
                 }
                 
                 return 0;
@@ -161,7 +162,7 @@ int minix3_add_dirent(minix3_fs_info_t *fs, struct minix3_inode *dir_inode,
     
     /* Update directory size */
     dir_inode->i_size += fs->block_size;
-    dir_inode->i_mtime++;
+    dir_inode->i_mtime = rtc_get_unix_time();
     
     return 0;
 }
@@ -215,7 +216,7 @@ int minix3_remove_dirent(minix3_fs_info_t *fs, struct minix3_inode *dir_inode,
                     return -1;
                 }
                 
-                dir_inode->i_mtime++;
+                dir_inode->i_mtime = rtc_get_unix_time();
                 return 0;
             }
         }

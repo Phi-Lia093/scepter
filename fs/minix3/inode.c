@@ -5,6 +5,7 @@
 #include "fs/minix3.h"
 #include "fs/fs.h"
 #include "driver/block/block.h"
+#include "driver/char/rtc.h"
 #include "lib/printk.h"
 #include "lib/string.h"
 
@@ -283,9 +284,12 @@ int minix3_alloc_inode(minix3_fs_info_t *fs, uint16_t mode, uint32_t *ino_out)
                     new_inode.i_uid = 0;
                     new_inode.i_gid = 0;
                     new_inode.i_size = 0;
-                    new_inode.i_atime = 1;  /* Non-zero timestamp (TODO: implement RTC) */
-                    new_inode.i_mtime = 1;
-                    new_inode.i_ctime = 1;
+                    
+                    /* Use real timestamp from RTC */
+                    uint32_t timestamp = rtc_get_unix_time();
+                    new_inode.i_atime = timestamp;
+                    new_inode.i_mtime = timestamp;
+                    new_inode.i_ctime = timestamp;
                     
                     /* Write inode to disk */
                     if (minix3_write_inode(fs, ino, &new_inode) < 0) {

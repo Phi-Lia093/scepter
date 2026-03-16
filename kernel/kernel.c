@@ -5,6 +5,7 @@
 #include "driver/char/pit.h"
 #include "driver/char/kbd.h"
 #include "driver/char/serial.h"
+#include "driver/char/rtc.h"
 #include "driver/char/char.h"
 #include "driver/block/block.h"
 #include "driver/block/ide.h"
@@ -54,6 +55,7 @@ void kernel_main(void)
     tty_init();
     pit_init(100);
     kbd_init();
+    rtc_init();  /* RTC prints system time automatically */
 
     printk("[KERNEL] Early initialization complete\n\n");
 
@@ -80,9 +82,9 @@ void kernel_main(void)
         while (1);
     }
 
-    int fd = fs_open("/test.txt", O_CREAT | O_RDWR);
-    fs_write(fd, "hello", 6);
-    fs_close(fd);
+    fs_mkdir("/AAA", 0755);
+    fs_unlink("/test.txt");
+
     sti();
     while (1);
 }

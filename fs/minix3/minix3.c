@@ -395,6 +395,290 @@ static int minix3_vfs_readdir(void *file_private, dirent_t *dirent)
 }
 
 /* ============================================================================
+ * VFS Callback: unlink (delete file)
+ * ============================================================================ */
+
+static int minix3_vfs_unlink(void *fs_private, const char *path)
+{
+    minix3_fs_info_t *fs = (minix3_fs_info_t *)fs_private;
+    if (!fs || !path) return -1;
+    
+    /* Parse path to find parent directory and filename */
+    const char *filename = path;
+    if (filename[0] == '/') filename++;
+    
+    /* Find the last '/' to separate parent from filename */
+    const char *last_slash = NULL;
+    for (const char *p = filename; *p; p++) {
+        if (*p == '/') last_slash = p;
+    }
+    
+    /* Get parent directory inode (root for now if no slash) */
+    struct minix3_inode parent_inode;
+    uint32_t parent_ino = MINIX3_ROOT_INO;
+    
+    if (minix3_read_inode(fs, parent_ino, &parent_inode) < 0) {
+        return -1;
+    }
+    
+    /* Get the filename part */
+    const char *name = last_slash ? last_slash + 1 : filename;
+    
+    /* Lookup the file */
+    uint32_t file_ino;
+    if (minix3_lookup(fs, &parent_inode, name, &file_ino) < 0) {
+        return -1;  /* File not found */
+    }
+    
+    /* Read file inode */
+    struct minix3_inode file_inode;
+    if (minix3_read_inode(fs, file_ino, &file_inode) < 0) {
+        return -1;
+    }
+    
+    /* Check it's a regular file, not a directory */
+    if (MINIX3_ISDIR(file_inode.i_mode)) {
+        printk("[minix3] Cannot unlink directory (use rmdir)\n");
+        return -1;
+    }
+    
+    /* Decrement link count */
+    file_inode.i_nlinks--;
+    
+    /* If no more links, free the file */
+    if (file_inode.i_nlinks == 0) {
+        /* Truncate to 0 to free all blocks */
+        if (minix3_truncate_file(fs, &file_inode, 0) < 0) {
+            return -1;
+        }
+        
+        /* Free the inode */
+        if (minix3_free_inode(fs, file_ino) < 0) {
+            return -1;
+        }
+    } else {
+        /* Still has links, just write back updated inode */
+        if (minix3_write_inode(fs, file_ino, &file_inode) < 0) {
+            return -1;
+        }
+    }
+    
+    /* Remove directory entry */
+    if (minix3_remove_dirent(fs, &parent_inode, name) < 0) {
+        return -1;
+    }
+    
+    /* Write back parent directory */
+    if (minix3_write_inode(fs, parent_ino, &parent_inode) < 0) {
+        return -1;
+    }
+    
+    /* Sync bitmaps */
+    minix3_sync_bitmaps(fs);
+    
+    return 0;
+}
+
+/* ============================================================================
+ * VFS Callback: mkdir (create directory)
+ * ============================================================================ */
+
+static int minix3_vfs_mkdir(void *fs_private, const char *path, uint32_t mode)
+{
+    minix3_fs_info_t *fs = (minix3_fs_info_t *)fs_private;
+    if (!fs || !path) return -1;
+    
+    /* Parse path */
+    const char *filename = path;
+    if (filename[0] == '/') filename++;
+    
+    /* Find parent directory (root for simple paths) */
+    struct minix3_inode parent_inode;
+    uint32_t parent_ino = MINIX3_ROOT_INO;
+    
+    if (minix3_read_inode(fs, parent_ino, &parent_inode) < 0) {
+        return -1;
+    }
+    
+    /* Check if directory already exists */
+    uint32_t existing_ino;
+    if (minix3_lookup(fs, &parent_inode, filename, &existing_ino) == 0) {
+        printk("[minix3] Directory already exists\n");
+        return -1;
+    }
+    
+    /* Allocate inode for new directory */
+    uint32_t new_ino;
+    uint16_t dir_mode = MINIX3_S_IFDIR | (mode & 0777);
+    if (minix3_alloc_inode(fs, dir_mode, &new_ino) < 0) {
+        return -1;
+    }
+    
+    /* Read the new directory inode */
+    struct minix3_inode dir_inode;
+    if (minix3_read_inode(fs, new_ino, &dir_inode) < 0) {
+        minix3_free_inode(fs, new_ino);
+        return -1;
+    }
+    
+    /* Allocate first block for directory */
+    uint32_t zone;
+    if (minix3_alloc_zone(fs, &zone) < 0) {
+        minix3_free_inode(fs, new_ino);
+        return -1;
+    }
+    
+    dir_inode.i_zone[0] = zone;
+    dir_inode.i_size = fs->block_size;
+    dir_inode.i_nlinks = 2;  /* "." and parent's ".." */
+    
+    /* Create directory entries "." and ".." */
+    uint8_t buf[4096];
+    memset(buf, 0, fs->block_size);
+    
+    struct minix3_dirent *entries = (struct minix3_dirent *)buf;
+    
+    /* Entry 0: "." (self) */
+    entries[0].inode = new_ino;
+    strncpy(entries[0].name, ".", MINIX3_NAME_LEN);
+    
+    /* Entry 1: ".." (parent) */
+    entries[1].inode = parent_ino;
+    strncpy(entries[1].name, "..", MINIX3_NAME_LEN);
+    
+    /* Write directory block */
+    uint32_t sector = zone * (fs->block_size / 512);
+    int sectors = fs->block_size / 512;
+    if (bwrite(fs->device_id, fs->partition_id, buf, sector, sectors) < 0) {
+        minix3_free_zone(fs, zone);
+        minix3_free_inode(fs, new_ino);
+        return -1;
+    }
+    
+    /* Write directory inode */
+    if (minix3_write_inode(fs, new_ino, &dir_inode) < 0) {
+        minix3_free_zone(fs, zone);
+        minix3_free_inode(fs, new_ino);
+        return -1;
+    }
+    
+    /* Add entry to parent directory */
+    if (minix3_add_dirent(fs, &parent_inode, filename, new_ino) < 0) {
+        minix3_free_zone(fs, zone);
+        minix3_free_inode(fs, new_ino);
+        return -1;
+    }
+    
+    /* Increment parent link count (for ".." in subdirectory) */
+    parent_inode.i_nlinks++;
+    
+    /* Write back parent */
+    if (minix3_write_inode(fs, parent_ino, &parent_inode) < 0) {
+        return -1;
+    }
+    
+    /* Sync bitmaps */
+    minix3_sync_bitmaps(fs);
+    
+    return 0;
+}
+
+/* ============================================================================
+ * VFS Callback: rmdir (remove directory)
+ * ============================================================================ */
+
+static int minix3_vfs_rmdir(void *fs_private, const char *path)
+{
+    minix3_fs_info_t *fs = (minix3_fs_info_t *)fs_private;
+    if (!fs || !path) return -1;
+    
+    /* Parse path */
+    const char *filename = path;
+    if (filename[0] == '/') filename++;
+    
+    /* Get parent directory */
+    struct minix3_inode parent_inode;
+    uint32_t parent_ino = MINIX3_ROOT_INO;
+    
+    if (minix3_read_inode(fs, parent_ino, &parent_inode) < 0) {
+        return -1;
+    }
+    
+    /* Lookup directory */
+    uint32_t dir_ino;
+    if (minix3_lookup(fs, &parent_inode, filename, &dir_ino) < 0) {
+        return -1;
+    }
+    
+    /* Read directory inode */
+    struct minix3_inode dir_inode;
+    if (minix3_read_inode(fs, dir_ino, &dir_inode) < 0) {
+        return -1;
+    }
+    
+    /* Check it's a directory */
+    if (!MINIX3_ISDIR(dir_inode.i_mode)) {
+        printk("[minix3] Not a directory\n");
+        return -1;
+    }
+    
+    /* Check if empty (only "." and ".." should be present) */
+    uint32_t num_blocks = (dir_inode.i_size + fs->block_size - 1) / fs->block_size;
+    int entries_per_block = fs->block_size / MINIX3_DIRENT_SIZE;
+    
+    for (uint32_t block = 0; block < num_blocks; block++) {
+        uint32_t zone;
+        if (minix3_bmap(fs, &dir_inode, block, &zone) < 0) continue;
+        if (zone == 0) continue;
+        
+        uint8_t buf[4096];
+        uint32_t sector = zone * (fs->block_size / 512);
+        int sectors = fs->block_size / 512;
+        
+        if (bread(fs->device_id, fs->partition_id, buf, sector, sectors) < 0) {
+            return -1;
+        }
+        
+        struct minix3_dirent *entries = (struct minix3_dirent *)buf;
+        for (int i = 0; i < entries_per_block; i++) {
+            if (entries[i].inode == 0) continue;
+            
+            /* Skip "." and ".." */
+            if (strcmp(entries[i].name, ".") == 0 || 
+                strcmp(entries[i].name, "..") == 0) {
+                continue;
+            }
+            
+            /* Found a non-empty entry */
+            printk("[minix3] Directory not empty\n");
+            return -1;
+        }
+    }
+    
+    /* Directory is empty, free all blocks */
+    for (uint32_t i = 0; i < MINIX3_DIRECT_ZONES && dir_inode.i_zone[i] != 0; i++) {
+        minix3_free_zone(fs, dir_inode.i_zone[i]);
+    }
+    
+    /* Free inode */
+    minix3_free_inode(fs, dir_ino);
+    
+    /* Remove from parent directory */
+    minix3_remove_dirent(fs, &parent_inode, filename);
+    
+    /* Decrement parent link count */
+    parent_inode.i_nlinks--;
+    
+    /* Write back parent */
+    minix3_write_inode(fs, parent_ino, &parent_inode);
+    
+    /* Sync bitmaps */
+    minix3_sync_bitmaps(fs);
+    
+    return 0;
+}
+
+/* ============================================================================
  * VFS Callback: stat
  * ============================================================================ */
 
@@ -450,9 +734,9 @@ static fs_ops_t minix3_ops = {
     .seek     = minix3_vfs_seek,
     .truncate = minix3_vfs_truncate,
     .readdir  = minix3_vfs_readdir,
-    .mkdir    = NULL,  /* TODO: Implement mkdir */
-    .rmdir    = NULL,  /* TODO: Implement rmdir */
-    .unlink   = NULL,  /* TODO: Implement unlink */
+    .mkdir    = minix3_vfs_mkdir,
+    .rmdir    = minix3_vfs_rmdir,
+    .unlink   = minix3_vfs_unlink,
     .rename   = NULL,  /* TODO: Implement rename */
     .stat     = minix3_vfs_stat,
 };

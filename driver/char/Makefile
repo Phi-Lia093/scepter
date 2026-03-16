@@ -3,7 +3,7 @@
 # ============================================================================
 
 # Source files
-SRCS = char.c vga.c tty.c kbd.c pit.c serial.c
+SRCS = char.c vga.c tty.c kbd.c pit.c serial.c rtc.c
 
 # Object files (in build directory)
 OBJS = $(addprefix $(BUILD_DIR)/, $(SRCS:.c=.o))

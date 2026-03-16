@@ -5,6 +5,7 @@
 #include "fs/minix3.h"
 #include "fs/fs.h"
 #include "driver/block/block.h"
+#include "driver/char/rtc.h"
 #include "lib/printk.h"
 #include "lib/string.h"
 
@@ -284,8 +285,8 @@ int minix3_write_file(minix3_fs_info_t *fs, struct minix3_inode *inode,
         inode->i_size = offset + bytes_written;
     }
     
-    /* Update modification time (would need real time source) */
-    inode->i_mtime++;
+    /* Update modification time with real timestamp */
+    inode->i_mtime = rtc_get_unix_time();
     
     return bytes_written;
 }
@@ -310,7 +311,7 @@ int minix3_truncate_file(minix3_fs_info_t *fs, struct minix3_inode *inode,
     /* If growing or same size, just update size (sparse file) */
     if (new_size >= old_size) {
         inode->i_size = new_size;
-        inode->i_mtime++;
+        inode->i_mtime = rtc_get_unix_time();
         return 0;
     }
     
@@ -374,7 +375,7 @@ int minix3_truncate_file(minix3_fs_info_t *fs, struct minix3_inode *inode,
     
     /* Update inode */
     inode->i_size = new_size;
-    inode->i_mtime++;
+    inode->i_mtime = rtc_get_unix_time();
     
     return 0;
 }
