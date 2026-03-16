@@ -5,6 +5,7 @@
 #include "fs/minix3.h"
 #include "fs/fs.h"
 #include "driver/block/block.h"
+#include "driver/char/rtc.h"
 #include "mm/slab.h"
 #include "lib/printk.h"
 #include "lib/string.h"
@@ -679,6 +680,150 @@ static int minix3_vfs_rmdir(void *fs_private, const char *path)
 }
 
 /* ============================================================================
+ * VFS Callback: rename (move/rename file or directory)
+ * ============================================================================ */
+
+static int minix3_vfs_rename(void *fs_private, const char *old_path, const char *new_path)
+{
+    minix3_fs_info_t *fs = (minix3_fs_info_t *)fs_private;
+    if (!fs || !old_path || !new_path) return -1;
+    
+    /* Parse old path */
+    const char *old_name = old_path;
+    if (old_name[0] == '/') old_name++;
+    
+    /* Parse new path */
+    const char *new_name = new_path;
+    if (new_name[0] == '/') new_name++;
+    
+    /* Check if paths contain '/' - cross-directory rename not yet supported */
+    const char *old_slash = strchr(old_name, '/');
+    const char *new_slash = strchr(new_name, '/');
+    
+    if (old_slash != NULL || new_slash != NULL) {
+        printk("[minix3] Cross-directory rename not yet implemented\n");
+        printk("[minix3] Only renames within root directory are supported\n");
+        return -1;
+    }
+    
+    /* For now, we only support rename within root directory
+     * Both old and new paths must be in root (no slashes) */
+    
+    /* Get root directory inode */
+    struct minix3_inode root_inode;
+    if (minix3_read_inode(fs, MINIX3_ROOT_INO, &root_inode) < 0) {
+        return -1;
+    }
+    
+    /* Lookup the old file/directory */
+    uint32_t target_ino;
+    if (minix3_lookup(fs, &root_inode, old_name, &target_ino) < 0) {
+        printk("[minix3] Source file/directory not found\n");
+        return -1;
+    }
+    
+    /* Read target inode to check if it's a directory */
+    struct minix3_inode target_inode;
+    if (minix3_read_inode(fs, target_ino, &target_inode) < 0) {
+        return -1;
+    }
+    
+    /* Check if destination already exists */
+    uint32_t existing_ino;
+    if (minix3_lookup(fs, &root_inode, new_name, &existing_ino) == 0) {
+        /* Destination exists - we need to handle this */
+        struct minix3_inode existing_inode;
+        if (minix3_read_inode(fs, existing_ino, &existing_inode) < 0) {
+            return -1;
+        }
+        
+        /* If replacing a directory, it must be empty */
+        if (MINIX3_ISDIR(existing_inode.i_mode)) {
+            /* Check if empty (only "." and "..") */
+            uint32_t num_blocks = (existing_inode.i_size + fs->block_size - 1) / fs->block_size;
+            int entries_per_block = fs->block_size / MINIX3_DIRENT_SIZE;
+            
+            for (uint32_t block = 0; block < num_blocks; block++) {
+                uint32_t zone;
+                if (minix3_bmap(fs, &existing_inode, block, &zone) < 0) continue;
+                if (zone == 0) continue;
+                
+                uint8_t buf[4096];
+                uint32_t sector = zone * (fs->block_size / 512);
+                int sectors = fs->block_size / 512;
+                
+                if (bread(fs->device_id, fs->partition_id, buf, sector, sectors) < 0) {
+                    return -1;
+                }
+                
+                struct minix3_dirent *entries = (struct minix3_dirent *)buf;
+                for (int i = 0; i < entries_per_block; i++) {
+                    if (entries[i].inode == 0) continue;
+                    
+                    if (strcmp(entries[i].name, ".") == 0 || 
+                        strcmp(entries[i].name, "..") == 0) {
+                        continue;
+                    }
+                    
+                    printk("[minix3] Cannot replace non-empty directory\n");
+                    return -1;
+                }
+            }
+            
+            /* Directory is empty, remove it first */
+            for (uint32_t i = 0; i < MINIX3_DIRECT_ZONES && existing_inode.i_zone[i] != 0; i++) {
+                minix3_free_zone(fs, existing_inode.i_zone[i]);
+            }
+            minix3_free_inode(fs, existing_ino);
+        } else {
+            /* Regular file - unlink it */
+            if (minix3_truncate_file(fs, &existing_inode, 0) < 0) {
+                return -1;
+            }
+            minix3_free_inode(fs, existing_ino);
+        }
+        
+        /* Remove the old entry */
+        if (minix3_remove_dirent(fs, &root_inode, new_name) < 0) {
+            return -1;
+        }
+    }
+    
+    /* Add new directory entry with the same inode number
+     * This modifies root_inode.i_size and root_inode.i_mtime */
+    if (minix3_add_dirent(fs, &root_inode, new_name, target_ino) < 0) {
+        printk("[minix3] Failed to create new directory entry\n");
+        return -1;
+    }
+    
+    /* Remove old directory entry
+     * This modifies root_inode.i_mtime */
+    if (minix3_remove_dirent(fs, &root_inode, old_name) < 0) {
+        /* Try to undo the add */
+        minix3_remove_dirent(fs, &root_inode, new_name);
+        printk("[minix3] Failed to remove old directory entry\n");
+        return -1;
+    }
+    
+    /* Write back root directory inode with updated size/mtime */
+    if (minix3_write_inode(fs, MINIX3_ROOT_INO, &root_inode) < 0) {
+        printk("[minix3] Failed to write root directory inode\n");
+        return -1;
+    }
+    
+    /* Update timestamps on the target inode */
+    target_inode.i_ctime = rtc_get_unix_time();
+    if (minix3_write_inode(fs, target_ino, &target_inode) < 0) {
+        printk("[minix3] Failed to update target inode\n");
+    }
+    
+    /* Sync bitmaps */
+    minix3_sync_bitmaps(fs);
+    
+    return 0;
+}
+
+/* ============================================================================
  * VFS Callback: stat
  * ============================================================================ */
 
@@ -737,7 +882,7 @@ static fs_ops_t minix3_ops = {
     .mkdir    = minix3_vfs_mkdir,
     .rmdir    = minix3_vfs_rmdir,
     .unlink   = minix3_vfs_unlink,
-    .rename   = NULL,  /* TODO: Implement rename */
+    .rename   = minix3_vfs_rename,
     .stat     = minix3_vfs_stat,
 };
 

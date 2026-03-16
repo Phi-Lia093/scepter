@@ -81,9 +81,7 @@ void kernel_main(void)
         sti();
         while (1);
     }
-
-    fs_mkdir("/AAA", 0755);
-    fs_unlink("/test.txt");
+    fs_rename("/file", "fi");
 
     sti();
     while (1);
