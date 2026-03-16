@@ -680,6 +680,162 @@ static int minix3_vfs_rmdir(void *fs_private, const char *path)
 }
 
 /* ============================================================================
+ * Helper: Parse path into parent directory path and filename
+ * ============================================================================ */
+
+static int parse_parent_and_name(const char *path, char *parent, char *name)
+{
+    /* Skip leading slash */
+    const char *p = path;
+    if (*p == '/') p++;
+    
+    /* Find last slash */
+    const char *last_slash = NULL;
+    for (const char *s = p; *s; s++) {
+        if (*s == '/') last_slash = s;
+    }
+    
+    if (last_slash == NULL) {
+        /* No slash - file in root directory */
+        parent[0] = '\0';  /* Empty = root */
+        strncpy(name, p, MINIX3_NAME_LEN);
+        name[MINIX3_NAME_LEN - 1] = '\0';
+    } else {
+        /* Has slash - extract parent and name */
+        int parent_len = last_slash - p;
+        if (parent_len >= 255) parent_len = 254;
+        memcpy(parent, p, parent_len);
+        parent[parent_len] = '\0';
+        
+        strncpy(name, last_slash + 1, MINIX3_NAME_LEN);
+        name[MINIX3_NAME_LEN - 1] = '\0';
+    }
+    
+    return 0;
+}
+
+/* ============================================================================
+ * Helper: Lookup directory inode by path
+ * ============================================================================ */
+
+static int lookup_directory_by_path(minix3_fs_info_t *fs, const char *path, 
+                                     uint32_t *ino_out, struct minix3_inode *inode_out)
+{
+    /* Empty path or "/" means root */
+    if (path[0] == '\0' || (path[0] == '/' && path[1] == '\0')) {
+        *ino_out = MINIX3_ROOT_INO;
+        return minix3_read_inode(fs, MINIX3_ROOT_INO, inode_out);
+    }
+    
+    /* Start from root */
+    uint32_t current_ino = MINIX3_ROOT_INO;
+    struct minix3_inode current_inode;
+    
+    if (minix3_read_inode(fs, current_ino, &current_inode) < 0) {
+        return -1;
+    }
+    
+    /* Parse path components */
+    char path_copy[256];
+    const char *p = path;
+    if (*p == '/') p++;
+    
+    strncpy(path_copy, p, sizeof(path_copy) - 1);
+    path_copy[sizeof(path_copy) - 1] = '\0';
+    
+    char *token = path_copy;
+    char *next = token;
+    
+    while (*token) {
+        /* Find next '/' */
+        while (*next && *next != '/') next++;
+        
+        int is_last = (*next == '\0');
+        *next = '\0';
+        
+        if (token[0] == '\0') {
+            if (!is_last) {
+                token = next + 1;
+                next = token;
+            }
+            continue;
+        }
+        
+        /* Lookup component */
+        uint32_t next_ino;
+        if (minix3_lookup(fs, &current_inode, token, &next_ino) < 0) {
+            return -1;  /* Component not found */
+        }
+        
+        current_ino = next_ino;
+        if (minix3_read_inode(fs, current_ino, &current_inode) < 0) {
+            return -1;
+        }
+        
+        /* Must be directory if not last component */
+        if (!is_last && !MINIX3_ISDIR(current_inode.i_mode)) {
+            return -1;
+        }
+        
+        if (is_last) break;
+        
+        token = next + 1;
+        next = token;
+    }
+    
+    /* Check final component is a directory */
+    if (!MINIX3_ISDIR(current_inode.i_mode)) {
+        return -1;
+    }
+    
+    *ino_out = current_ino;
+    *inode_out = current_inode;
+    return 0;
+}
+
+/* ============================================================================
+ * Helper: Update ".." entry in a directory
+ * ============================================================================ */
+
+static int update_dotdot(minix3_fs_info_t *fs, uint32_t dir_ino, uint32_t new_parent_ino)
+{
+    struct minix3_inode dir_inode;
+    if (minix3_read_inode(fs, dir_ino, &dir_inode) < 0) {
+        return -1;
+    }
+    
+    /* Read first block (where ".." should be) */
+    uint32_t zone;
+    if (minix3_bmap(fs, &dir_inode, 0, &zone) < 0 || zone == 0) {
+        return -1;
+    }
+    
+    uint8_t buf[4096];
+    uint32_t sector = zone * (fs->block_size / 512);
+    int sectors = fs->block_size / 512;
+    
+    if (bread(fs->device_id, fs->partition_id, buf, sector, sectors) < 0) {
+        return -1;
+    }
+    
+    struct minix3_dirent *entries = (struct minix3_dirent *)buf;
+    
+    /* ".." should be at index 1 */
+    if (entries[1].inode != 0 && strcmp(entries[1].name, "..") == 0) {
+        entries[1].inode = new_parent_ino;
+        
+        /* Write back */
+        if (bwrite(fs->device_id, fs->partition_id, buf, sector, sectors) < 0) {
+            return -1;
+        }
+        return 0;
+    }
+    
+    /* ".." not found where expected */
+    return -1;
+}
+
+/* ============================================================================
  * VFS Callback: rename (move/rename file or directory)
  * ============================================================================ */
 
@@ -688,58 +844,52 @@ static int minix3_vfs_rename(void *fs_private, const char *old_path, const char 
     minix3_fs_info_t *fs = (minix3_fs_info_t *)fs_private;
     if (!fs || !old_path || !new_path) return -1;
     
-    /* Parse old path */
-    const char *old_name = old_path;
-    if (old_name[0] == '/') old_name++;
+    /* Parse both paths */
+    char old_parent_path[256];
+    char old_name[MINIX3_NAME_LEN];
+    char new_parent_path[256];
+    char new_name[MINIX3_NAME_LEN];
     
-    /* Parse new path */
-    const char *new_name = new_path;
-    if (new_name[0] == '/') new_name++;
+    parse_parent_and_name(old_path, old_parent_path, old_name);
+    parse_parent_and_name(new_path, new_parent_path, new_name);
     
-    /* Check if paths contain '/' - cross-directory rename not yet supported */
-    const char *old_slash = strchr(old_name, '/');
-    const char *new_slash = strchr(new_name, '/');
+    /* Lookup parent directories */
+    uint32_t old_parent_ino, new_parent_ino;
+    struct minix3_inode old_parent_inode, new_parent_inode;
     
-    if (old_slash != NULL || new_slash != NULL) {
-        printk("[minix3] Cross-directory rename not yet implemented\n");
-        printk("[minix3] Only renames within root directory are supported\n");
+    if (lookup_directory_by_path(fs, old_parent_path, &old_parent_ino, &old_parent_inode) < 0) {
+        printk("[minix3] Source parent directory not found\n");
         return -1;
     }
     
-    /* For now, we only support rename within root directory
-     * Both old and new paths must be in root (no slashes) */
-    
-    /* Get root directory inode */
-    struct minix3_inode root_inode;
-    if (minix3_read_inode(fs, MINIX3_ROOT_INO, &root_inode) < 0) {
+    if (lookup_directory_by_path(fs, new_parent_path, &new_parent_ino, &new_parent_inode) < 0) {
+        printk("[minix3] Destination parent directory not found\n");
         return -1;
     }
     
-    /* Lookup the old file/directory */
+    /* Lookup source file/directory */
     uint32_t target_ino;
-    if (minix3_lookup(fs, &root_inode, old_name, &target_ino) < 0) {
-        printk("[minix3] Source file/directory not found\n");
+    if (minix3_lookup(fs, &old_parent_inode, old_name, &target_ino) < 0) {
+        printk("[minix3] Source not found\n");
         return -1;
     }
     
-    /* Read target inode to check if it's a directory */
+    /* Read target inode */
     struct minix3_inode target_inode;
     if (minix3_read_inode(fs, target_ino, &target_inode) < 0) {
         return -1;
     }
     
-    /* Check if destination already exists */
+    /* Check if destination exists - handle replacement */
     uint32_t existing_ino;
-    if (minix3_lookup(fs, &root_inode, new_name, &existing_ino) == 0) {
-        /* Destination exists - we need to handle this */
+    if (minix3_lookup(fs, &new_parent_inode, new_name, &existing_ino) == 0) {
         struct minix3_inode existing_inode;
         if (minix3_read_inode(fs, existing_ino, &existing_inode) < 0) {
             return -1;
         }
         
-        /* If replacing a directory, it must be empty */
         if (MINIX3_ISDIR(existing_inode.i_mode)) {
-            /* Check if empty (only "." and "..") */
+            /* Check directory is empty */
             uint32_t num_blocks = (existing_inode.i_size + fs->block_size - 1) / fs->block_size;
             int entries_per_block = fs->block_size / MINIX3_DIRENT_SIZE;
             
@@ -759,65 +909,67 @@ static int minix3_vfs_rename(void *fs_private, const char *old_path, const char 
                 struct minix3_dirent *entries = (struct minix3_dirent *)buf;
                 for (int i = 0; i < entries_per_block; i++) {
                     if (entries[i].inode == 0) continue;
-                    
-                    if (strcmp(entries[i].name, ".") == 0 || 
-                        strcmp(entries[i].name, "..") == 0) {
-                        continue;
-                    }
+                    if (strcmp(entries[i].name, ".") == 0 || strcmp(entries[i].name, "..") == 0) continue;
                     
                     printk("[minix3] Cannot replace non-empty directory\n");
                     return -1;
                 }
             }
             
-            /* Directory is empty, remove it first */
+            /* Free empty directory */
             for (uint32_t i = 0; i < MINIX3_DIRECT_ZONES && existing_inode.i_zone[i] != 0; i++) {
                 minix3_free_zone(fs, existing_inode.i_zone[i]);
             }
             minix3_free_inode(fs, existing_ino);
         } else {
-            /* Regular file - unlink it */
-            if (minix3_truncate_file(fs, &existing_inode, 0) < 0) {
-                return -1;
-            }
+            /* Free regular file */
+            minix3_truncate_file(fs, &existing_inode, 0);
             minix3_free_inode(fs, existing_ino);
         }
         
-        /* Remove the old entry */
-        if (minix3_remove_dirent(fs, &root_inode, new_name) < 0) {
-            return -1;
+        /* Remove from destination parent */
+        minix3_remove_dirent(fs, &new_parent_inode, new_name);
+    }
+    
+    /* Add to destination directory - may increase new_parent_inode.i_size */
+    if (minix3_add_dirent(fs, &new_parent_inode, new_name, target_ino) < 0) {
+        printk("[minix3] Failed to add to destination directory\n");
+        return -1;
+    }
+    
+    /* Remove from source directory - updates old_parent_inode.i_mtime */
+    if (minix3_remove_dirent(fs, &old_parent_inode, old_name) < 0) {
+        printk("[minix3] Failed to remove from source directory\n");
+        return -1;
+    }
+    
+    /* If moving directory between different parents, update ".." and link counts */
+    if (MINIX3_ISDIR(target_inode.i_mode) && old_parent_ino != new_parent_ino) {
+        if (update_dotdot(fs, target_ino, new_parent_ino) < 0) {
+            printk("[minix3] Failed to update .. link\n");
         }
+        
+        /* Adjust link counts */
+        old_parent_inode.i_nlinks--;  /* Lost a subdirectory */
+        new_parent_inode.i_nlinks++;  /* Gained a subdirectory */
     }
     
-    /* Add new directory entry with the same inode number
-     * This modifies root_inode.i_size and root_inode.i_mtime */
-    if (minix3_add_dirent(fs, &root_inode, new_name, target_ino) < 0) {
-        printk("[minix3] Failed to create new directory entry\n");
+    /* Write back both parent inodes with updated sizes */
+    if (minix3_write_inode(fs, old_parent_ino, &old_parent_inode) < 0) {
+        printk("[minix3] Failed to write source parent\n");
         return -1;
     }
     
-    /* Remove old directory entry
-     * This modifies root_inode.i_mtime */
-    if (minix3_remove_dirent(fs, &root_inode, old_name) < 0) {
-        /* Try to undo the add */
-        minix3_remove_dirent(fs, &root_inode, new_name);
-        printk("[minix3] Failed to remove old directory entry\n");
+    if (minix3_write_inode(fs, new_parent_ino, &new_parent_inode) < 0) {
+        printk("[minix3] Failed to write destination parent\n");
         return -1;
     }
     
-    /* Write back root directory inode with updated size/mtime */
-    if (minix3_write_inode(fs, MINIX3_ROOT_INO, &root_inode) < 0) {
-        printk("[minix3] Failed to write root directory inode\n");
-        return -1;
-    }
-    
-    /* Update timestamps on the target inode */
+    /* Update target ctime */
     target_inode.i_ctime = rtc_get_unix_time();
-    if (minix3_write_inode(fs, target_ino, &target_inode) < 0) {
-        printk("[minix3] Failed to update target inode\n");
-    }
+    minix3_write_inode(fs, target_ino, &target_inode);
     
-    /* Sync bitmaps */
+    /* Sync */
     minix3_sync_bitmaps(fs);
     
     return 0;

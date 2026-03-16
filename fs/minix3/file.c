@@ -159,9 +159,11 @@ static int minix3_alloc_file_block(minix3_fs_info_t *fs, struct minix3_inode *in
     if (file_block < MINIX3_DIRECT_ZONES) {
         if (inode->i_zone[file_block] == 0) {
             /* Allocate new zone */
-            if (minix3_alloc_zone(fs, &inode->i_zone[file_block]) < 0) {
+            uint32_t new_zone;
+            if (minix3_alloc_zone(fs, &new_zone) < 0) {
                 return -1;
             }
+            inode->i_zone[file_block] = new_zone;
         }
         *zone_out = inode->i_zone[file_block];
         return 0;
@@ -173,9 +175,11 @@ static int minix3_alloc_file_block(minix3_fs_info_t *fs, struct minix3_inode *in
     if (file_block < zone_ptrs_per_block) {
         /* Allocate indirect block if needed */
         if (inode->i_zone[7] == 0) {
-            if (minix3_alloc_zone(fs, &inode->i_zone[7]) < 0) {
+            uint32_t new_zone;
+            if (minix3_alloc_zone(fs, &new_zone) < 0) {
                 return -1;
             }
+            inode->i_zone[7] = new_zone;
             /* Zero the indirect block */
             uint8_t zero_buf[4096] = {0};
             uint32_t sector = inode->i_zone[7] * (fs->block_size / 512);
@@ -246,7 +250,7 @@ int minix3_write_file(minix3_fs_info_t *fs, struct minix3_inode *inode,
         /* Get or allocate zone for this block */
         uint32_t zone;
         if (minix3_alloc_file_block(fs, inode, file_block, &zone) < 0) {
-            return bytes_written > 0 ? bytes_written : -1;
+            return bytes_written > 0 ? (int)bytes_written : -1;
         }
         
         /* If partial block write, read existing data first */
@@ -257,7 +261,7 @@ int minix3_write_file(minix3_fs_info_t *fs, struct minix3_inode *inode,
             /* Only read if the block already has data (not a new allocation beyond EOF) */
             if (offset + bytes_written < inode->i_size) {
                 if (bread(fs->device_id, fs->partition_id, block_buf, sector, sectors) < 0) {
-                    return bytes_written > 0 ? bytes_written : -1;
+                    return bytes_written > 0 ? (int)bytes_written : -1;
                 }
             } else {
                 /* New block beyond EOF, zero it */
@@ -274,7 +278,7 @@ int minix3_write_file(minix3_fs_info_t *fs, struct minix3_inode *inode,
         
         if (bwrite(fs->device_id, fs->partition_id, block_buf, sector, sectors) < 0) {
             printk("[minix3] Failed to write block\n");
-            return bytes_written > 0 ? bytes_written : -1;
+            return bytes_written > 0 ? (int)bytes_written : -1;
         }
         
         bytes_written += bytes_in_block;

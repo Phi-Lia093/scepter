@@ -131,10 +131,12 @@ int minix3_add_dirent(minix3_fs_info_t *fs, struct minix3_inode *dir_inode,
     /* Allocate a new block for the directory */
     uint32_t zone;
     if (new_block < MINIX3_DIRECT_ZONES) {
-        if (minix3_alloc_zone(fs, &dir_inode->i_zone[new_block]) < 0) {
+        uint32_t new_zone;
+        if (minix3_alloc_zone(fs, &new_zone) < 0) {
             return -1;
         }
-        zone = dir_inode->i_zone[new_block];
+        dir_inode->i_zone[new_block] = new_zone;
+        zone = new_zone;
     } else {
         printk("[minix3] Directory too large (indirect not yet supported)\n");
         return -1;

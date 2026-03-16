@@ -21,7 +21,6 @@ static minix3_fs_info_t *g_mounted_fs = NULL;
  */
 int minix3_mount(int dev_id, int part_id, void **fs_private)
 {
-    printk("[minix3] Mounting device %d, partition %d\n", dev_id, part_id);
     
     /* Allocate filesystem info structure */
     minix3_fs_info_t *fs = (minix3_fs_info_t *)kalloc(sizeof(minix3_fs_info_t));
@@ -67,9 +66,6 @@ int minix3_mount(int dev_id, int part_id, void **fs_private)
     /* Calculate inode table location */
     fs->inode_table_block = 2 + sb->s_imap_blocks + sb->s_zmap_blocks;
     fs->data_zone_start = sb->s_firstdatazone;
-    
-    printk("[minix3] Mounted: %u inodes, %u blocks\n", 
-           sb->s_ninodes, sb->s_zones);
     
     /* Allocate and load inode bitmap */
     uint32_t imap_size = sb->s_imap_blocks * fs->block_size;
@@ -126,9 +122,40 @@ int minix3_mount(int dev_id, int part_id, void **fs_private)
         }
     }
     
+    /* Calculate usage statistics - only count up to actual limits */
+    uint32_t used_inodes = 0;
+    uint32_t total_inodes = sb->s_ninodes;
+    
+    /* Count used inodes (only within valid range) */
+    for (uint32_t ino = 0; ino < total_inodes; ino++) {
+        uint32_t byte_idx = ino / 8;
+        int bit_idx = ino % 8;
+        if (fs->inode_bitmap[byte_idx] & (1 << bit_idx)) {
+            used_inodes++;
+        }
+    }
+    
+    uint32_t used_blocks = 0;
+    uint32_t total_blocks = sb->s_zones;
+    
+    /* Count used blocks (only within valid range) */
+    for (uint32_t zone = 0; zone < total_blocks; zone++) {
+        uint32_t byte_idx = zone / 8;
+        int bit_idx = zone % 8;
+        if (fs->zone_bitmap[byte_idx] & (1 << bit_idx)) {
+            used_blocks++;
+        }
+    }
+    
+    uint32_t free_inodes = total_inodes - used_inodes;
+    uint32_t free_blocks = total_blocks - used_blocks;
+    
     *fs_private = fs;
     g_mounted_fs = fs;  /* Save for testing */
-    printk("[minix3] Mount successful\n");
+    
+    printk("[minix3] inode %u/%u free  block %u/%u free\n",
+           free_inodes, total_inodes, free_blocks, total_blocks);
+    
     return 0;
 }
 
