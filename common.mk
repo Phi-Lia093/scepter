@@ -6,10 +6,10 @@
 # Compiler and flags
 CC      = gcc
 CFLAGS  = -c -ffreestanding -nostdlib -fno-builtin -fno-stack-protector \
-          -fno-pie -mno-red-zone -O2 -Wall -Wextra -fno-pic -m32
+          -fno-pie -mno-red-zone -O100 -Wall -Wextra -fno-pic -m32
 
 LDFLAGS = -T linker.ld -ffreestanding -nostdlib -fno-builtin -fno-stack-protector \
-          -fno-pie -mno-red-zone -O2 -Wall -Wextra -fno-pic -m32
+          -fno-pie -mno-red-zone -O100 -Wall -Wextra -fno-pic -m32
 
 # Directories
 TOP_DIR    := $(shell pwd)

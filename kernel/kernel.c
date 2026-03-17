@@ -19,6 +19,7 @@
 #include "fs/fs.h"
 #include "fs/devfs.h"
 #include "fs/minix3.h"
+#include "driver/acpi/acpi.h"
 
 /* =========================================================================
  * kernel_main
@@ -58,6 +59,12 @@ void kernel_main(void)
     rtc_init();  /* RTC prints system time automatically */
 
     printk("[KERNEL] Early initialization complete\n\n");
+
+    /* ------------------------------------------------------------------
+     * ACPI (Advanced Configuration and Power Interface)
+     * ------------------------------------------------------------------ */
+    acpi_init();           /* Discover RSDP, parse tables, setup shutdown */
+    acpi_enum_devices();   /* Enumerate CPUs, I/O APICs, etc. */
 
     /* ------------------------------------------------------------------
      * Block drivers + partition scan

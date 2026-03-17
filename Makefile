@@ -11,39 +11,9 @@ TARGET = $(BUILD_DIR)/kernel.elf
 # Modules to build
 MODULES = kernel mm lib driver fs
 
-# All object files will be in build/ directory
-KERNEL_OBJS = $(BUILD_DIR)/boot.o \
-              $(BUILD_DIR)/kernel.o \
-              $(BUILD_DIR)/cpu.o \
-              $(BUILD_DIR)/panic.o \
-              $(BUILD_DIR)/sched.o \
-              $(BUILD_DIR)/isr.o \
-              $(BUILD_DIR)/mminit.o \
-              $(BUILD_DIR)/buddy.o \
-              $(BUILD_DIR)/slab.o \
-              $(BUILD_DIR)/pgtable.o \
-              $(BUILD_DIR)/printk.o \
-              $(BUILD_DIR)/string.o \
-              $(BUILD_DIR)/list.o \
-              $(BUILD_DIR)/pic.o \
-              $(BUILD_DIR)/char.o \
-              $(BUILD_DIR)/vga.o \
-              $(BUILD_DIR)/tty.o \
-              $(BUILD_DIR)/kbd.o \
-              $(BUILD_DIR)/pit.o \
-              $(BUILD_DIR)/serial.o \
-              $(BUILD_DIR)/rtc.o \
-              $(BUILD_DIR)/block.o \
-              $(BUILD_DIR)/ide.o \
-              $(BUILD_DIR)/cache.o \
-              $(BUILD_DIR)/part_mbr.o \
-              $(BUILD_DIR)/vfs.o \
-              $(BUILD_DIR)/devfs.o \
-              $(BUILD_DIR)/minix3.o \
-              $(BUILD_DIR)/super.o \
-              $(BUILD_DIR)/inode.o \
-              $(BUILD_DIR)/dir.o \
-              $(BUILD_DIR)/file.o
+# Automatically collect all .o files from build directory
+# This is much cleaner than listing every single object file
+KERNEL_OBJS = $(wildcard $(BUILD_DIR)/*.o)
 
 .PHONY: all modules clean run debug grub data mount umount mountd umountd
 
@@ -71,6 +41,7 @@ modules:
 $(TARGET): modules
 	@echo "Linking kernel..."
 	@$(CC) $(LDFLAGS) -o $@ $(KERNEL_OBJS)
+	nm --no-sort $@ > kernel.sym
 
 # ===========================================================================
 # GRUB Disk Management

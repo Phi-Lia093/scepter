@@ -3,7 +3,7 @@
 # ============================================================================
 
 # Subdirectories
-SUBDIRS = char block
+SUBDIRS = char block acpi
 
 # Root driver files (pic.c in driver/)
 SRCS = pic.c
