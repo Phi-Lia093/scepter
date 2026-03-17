@@ -72,24 +72,45 @@ ISR_NOERR 31   /*      Reserved                      */
 .macro IRQ_STUB num, handler
 .global irq\num
 irq\num:
-    pusha
+    cli
+    pusha                       /* Save all general purpose registers */
+    
+    /* Save segment registers */
+    xorl  %eax, %eax
     movw  %ds, %ax
+    pushl %eax
     movw  %es, %ax
+    pushl %eax
     movw  %fs, %ax
+    pushl %eax
     movw  %gs, %ax
+    pushl %eax
+    
+    /* Switch to kernel data segment */
     movw  $0x10, %ax
     movw  %ax, %ds
     movw  %ax, %es
     movw  %ax, %fs
     movw  %ax, %gs
+    
+    /* Switch to kernel page directory */
     movl  kernel_page_table, %eax
     movl  %eax, %cr3
+    
+    /* Call the C handler */
     call  \handler
+    
+    /* Restore segment registers */
+    popl  %eax
     movw  %ax, %gs
+    popl  %eax
     movw  %ax, %fs
+    popl  %eax
     movw  %ax, %es
+    popl  %eax
     movw  %ax, %ds
-    popa
+    
+    popa                        /* Restore general purpose registers */
     iret
 .endm
 
@@ -100,6 +121,7 @@ IRQ_STUB 1, kbd_isr   /* IRQ1 – Keyboard */
  * Common handler: save context, switch to kernel env, call panic_isr
  * ------------------------------------------------------------------------- */
 isr_common:
+    cli
     pusha                       /* save EAX ECX EDX EBX ESP EBP ESI EDI */
 
     xorl %eax, %eax

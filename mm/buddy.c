@@ -124,10 +124,10 @@ void buddy_init(uint32_t base_phys, uint32_t total_kb)
 }
 
 /* =========================================================================
- * Public API - Allocation
+ * Public API - Allocation with Flags
  * ========================================================================= */
 
-void *page_alloc(size_t size)
+void *page_alloc_flags(size_t size, uint32_t flags)
 {
     if (size == 0) {
         return NULL;
@@ -156,7 +156,15 @@ void *page_alloc(size_t size)
     /* Calculate physical address */
     uint32_t phys = allocator.base_phys + (start_idx << PAGE_SHIFT);
     
-    return phys_to_virt(phys);
+    /* Return based on flags */
+    if (flags & MEM_PHY) {
+        /* Return physical address (caller will map it later) */
+        return (void*)phys;
+    } else {
+        /* MEM_MAP: Return virtual address (must be in mapped region) */
+        /* Note: All pages in buddy allocator are pre-mapped by mm_init */
+        return phys_to_virt(phys);
+    }
 }
 
 /* =========================================================================
@@ -169,7 +177,16 @@ void page_free(void *addr)
         return;
     }
     
-    uint32_t phys = virt_to_phys(addr);
+    uint32_t phys;
+    
+    /* Handle both virtual addresses (>= 0xC0000000) and physical addresses */
+    if ((uint32_t)addr >= KERNEL_VMA) {
+        /* Virtual address - convert to physical */
+        phys = virt_to_phys(addr);
+    } else {
+        /* Physical address - use directly */
+        phys = (uint32_t)addr;
+    }
     
     /* Validate address is within our range */
     if (phys < allocator.base_phys) {

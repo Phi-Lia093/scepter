@@ -21,6 +21,7 @@ KERNEL_OBJS = $(BUILD_DIR)/boot.o \
               $(BUILD_DIR)/mminit.o \
               $(BUILD_DIR)/buddy.o \
               $(BUILD_DIR)/slab.o \
+              $(BUILD_DIR)/pgtable.o \
               $(BUILD_DIR)/printk.o \
               $(BUILD_DIR)/string.o \
               $(BUILD_DIR)/list.o \
@@ -157,20 +158,6 @@ run: $(TARGET)
 		-drive file=disk.img,format=raw,if=ide,index=0,media=disk \
 		-drive file=data.img,format=raw,if=ide,index=1,media=disk \
 		-serial file:kernel.log
-
-debug: $(TARGET)
-	@if [ ! -f disk.img ]; then \
-		echo "ERROR: disk.img not found. Run 'make grub' first."; \
-		exit 1; \
-	fi
-	@if ! mountpoint -q $(MOUNT_DIR); then \
-		$(MAKE) mount; \
-	fi
-	@cp $(TARGET) $(MOUNT_DIR)/boot/kernel.elf
-	@sync
-	@$(MAKE) umount
-	@rm -f kernel.log
-	@bochs
 
 # ===========================================================================
 # Clean

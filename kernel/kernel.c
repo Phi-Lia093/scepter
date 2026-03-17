@@ -81,7 +81,6 @@ void kernel_main(void)
         sti();
         while (1);
     }
-
     sti();
     while (1);
 }

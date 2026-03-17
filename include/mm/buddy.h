@@ -31,16 +31,37 @@
 void buddy_init(uint32_t base_phys, uint32_t total_kb);
 
 /* =========================================================================
+ * Allocation Flags
+ * ========================================================================= */
+
+/* MEM_PHY: Allocate physical memory anywhere, return physical address
+ *          Use for DMA buffers, ACPI tables, or MMIO that will be remapped */
+#define MEM_PHY  0x0001
+
+/* MEM_MAP: Allocate from pre-mapped region, return virtual address
+ *          Use for normal kernel allocations (default behavior) */
+#define MEM_MAP  0x0002
+
+/* =========================================================================
  * Allocation and Deallocation
  * ========================================================================= */
 
-/* Allocate physical memory of at least 'size' bytes.
+/* Allocate physical memory with specific flags.
+ * size: number of bytes to allocate
+ * flags: MEM_PHY (returns physical addr) or MEM_MAP (returns virtual addr)
+ * Returns address or NULL on failure. */
+void *page_alloc_flags(size_t size, uint32_t flags);
+
+/* Allocate physical memory from pre-mapped region (convenience wrapper).
  * Returns a virtual address (physical + KERNEL_VMA) or NULL on failure.
- * Actual allocated size is rounded up to the nearest power-of-2 pages. */
-void *page_alloc(size_t size);
+ * Equivalent to page_alloc_flags(size, MEM_MAP). */
+static inline void *page_alloc(size_t size) {
+    return page_alloc_flags(size, MEM_MAP);
+}
 
 /* Free physical memory previously allocated with page_alloc().
- * addr: virtual address returned by page_alloc() */
+ * addr: address returned by page_alloc() or page_alloc_flags()
+ * Works with both physical and virtual addresses. */
 void page_free(void *addr);
 
 /* =========================================================================

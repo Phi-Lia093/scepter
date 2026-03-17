@@ -150,10 +150,12 @@ _start_higher:
  * ----------------------------------------------------------------------- */
 .section .data
 .align 4096
+.global boot_page_directory
 boot_page_directory:
     .skip 4096                    /* 1024 PDEs × 4 bytes */
 
 .align 4096
+.global boot_page_tables
 boot_page_tables:
     .skip 1048576                 /* 256 page tables × 4096 bytes */
 
