@@ -5,7 +5,7 @@ DEVICE DRIVER INTERFACE DOCUMENTATION
 This file describes the functionality of all device drivers in the system,
 including what their read(), write(), and ioctl() operations do.
 
-Last Updated: 2026-02-21
+Last Updated: 2026-03-18
 
 ================================================================================
 CHARACTER DEVICES
@@ -16,7 +16,7 @@ Device 0: VGA (Video Graphics Array)
 --------------------------------------------------------------------------------
 Type: Character Device
 File: driver/char/vga.c
-Registration: vga_register_driver()
+Registration: vga_init()
 
 Description:
   Direct VGA text-mode output driver providing 80x25 character display.
@@ -48,17 +48,19 @@ Notes:
   - 80 columns × 25 rows text mode
   - Default color: light grey on black
   - Automatic scrolling when screen fills
+  - Hardcoded address (standard VGA legacy location)
 
 --------------------------------------------------------------------------------
 Device 1: PIT (Programmable Interval Timer)
 --------------------------------------------------------------------------------
 Type: Character Device  
 File: driver/char/pit.c
-Registration: pit_register_driver()
+Registration: pit_init()
 
 Description:
   8253/8254 PIT driver providing system timing and tick counting.
   Configured to generate interrupts at specified frequency (typically 100Hz).
+  Uses unified interrupt manager for both PIC and APIC modes.
 
 Operations:
   read(scnd_id)
@@ -74,20 +76,22 @@ Operations:
     - Return: 0 (success, but does nothing)
   
   ioctl(prim_id, scnd_id, command)
-    - NOT IMPLEMENTED (returns -1)
+    - NOT IMPLEMENTED (returns NULL)
 
 Notes:
   - Generates IRQ0 interrupts at configured frequency
   - Internal tick counter incremented on each interrupt
   - For full 32-bit tick count, use pit_get_ticks() kernel function
   - Default frequency: 100Hz (configurable via pit_init())
+  - Uses interrupt_eoi() and interrupt_enable_irq() for mode independence
+  - Registered as /dev/pit0 in devfs
 
 --------------------------------------------------------------------------------
 Device 2: TTY (Terminal Emulator)
 --------------------------------------------------------------------------------
 Type: Character Device
 File: driver/char/tty.c  
-Registration: tty_register_driver()
+Registration: tty_init()
 
 Description:
   ANSI terminal emulator built on top of VGA. Provides escape sequence
@@ -146,21 +150,22 @@ Notes:
   - Full color support (16 foreground, 8 background)
   - Tab stops at every 8 characters
   - ANSI color mapping to VGA color palette
-BLOCK DEVICES
   - ioctl command 0x1 provides programmatic screen clearing
+  - Registered as /dev/tty0 in devfs
 
 --------------------------------------------------------------------------------
 Device 3: Keyboard (PS/2 Keyboard)
 --------------------------------------------------------------------------------
 Type: Character Device
 File: driver/char/kbd.c
-Registration: kbd_register_driver()
+Registration: kbd_init()
 
 Description:
   PS/2 keyboard driver with IRQ1 interrupt handling. Converts scancodes to
   ASCII characters using translation tables. Supports modifier keys (Shift,
   Caps Lock) and buffers input in a 128-byte circular buffer. No automatic
   echo - applications must explicitly output received characters.
+  Uses unified interrupt manager for both PIC and APIC modes.
 
 Operations:
   read(scnd_id)
@@ -202,13 +207,142 @@ Buffer Behavior:
 
 Notes:
   - IRQ1 (keyboard interrupt) on vector 33
-  - Reads from port 0x60 (KBD_DATA_PORT)
+  - Reads from port 0x60 (KBD_DATA_PORT, hardcoded standard)
   - No echo - application must output received chars
   - scnd_id validation enforced (must be 0)
   - Used by TTY for input via cread(3, 0)
   - 100% interrupt-driven, no polling
+  - Uses interrupt_eoi() and interrupt_enable_irq() for mode independence
+  - Registered as /dev/kbd0 in devfs
 
-BLOCK DEVICES
+--------------------------------------------------------------------------------
+Device 9: RTC (Real-Time Clock)
+--------------------------------------------------------------------------------
+Type: Character Device
+File: driver/char/rtc.c
+Registration: rtc_init()
+
+Description:
+  CMOS/RTC driver providing system date and time from hardware real-time clock.
+  Reads current time on initialization and provides read-only access.
+
+Operations:
+  read(scnd_id)
+    - NOT SUPPORTED (returns 0)
+    - Use rtc_get_datetime() kernel function instead
+  
+  write(scnd_id, char)
+    - NOT SUPPORTED (returns -1)
+    - RTC is read-only in this implementation
+  
+  ioctl(prim_id, scnd_id, command)
+    - NOT SUPPORTED (returns -1)
+
+API Functions:
+  - rtc_get_datetime(rtc_datetime_t *dt) - Get current date/time
+
+Notes:
+  - Reads from CMOS ports 0x70 (address) and 0x71 (data)
+  - Hardcoded ports (standard CMOS/RTC legacy location)
+  - Provides year, month, day, hour, minute, second
+  - BCD to binary conversion performed automatically
+  - Time read during initialization
+  - Registered as /dev/rtc0 in devfs
+
+--------------------------------------------------------------------------------
+Devices 10-13: Serial Ports (serial0-serial3)
+--------------------------------------------------------------------------------
+Type: Character Device
+File: driver/char/serial.c
+Registration: serial_init()
+
+Description:
+  Multi-port serial UART driver with dynamic discovery. Automatically detects
+  serial ports via PCI UART controllers and legacy ISA port probing. Supports
+  up to 4 serial ports. serial0 is used for kernel logging (printk).
+  
+  **DYNAMIC DISCOVERY** - No hardcoded addresses! Uses:
+  1. PCI bus scan for UART controllers (class 0x07, subclass 0x00)
+  2. Legacy ISA port probing (COM1-COM4: 0x3F8, 0x2F8, 0x3E8, 0x2E8)
+  
+  All detected ports are initialized to 115200 baud, 8N1.
+
+Device Mapping:
+  10 = serial0 (first detected port, typically COM1) - **kernel logging**
+  11 = serial1 (second detected port, typically COM2)
+  12 = serial2 (third detected port, typically COM3)
+  13 = serial3 (fourth detected port, typically COM4)
+
+Operations:
+  read(scnd_id)
+    - Reads a byte from serial port if available
+    - Parameters:
+        scnd_id: Port ID (0-3 for serial0-serial3)
+    - Returns: Character from port, or 0 if no data available
+    - Non-blocking: Returns immediately
+    - Checks Line Status Register for data ready
+  
+  write(scnd_id, char)
+    - Writes a character to serial port
+    - Parameters:
+        scnd_id: Port ID (0-3 for serial0-serial3)
+        char: Character to write
+    - Automatic CRLF conversion: '\n' → '\r\n'
+    - Waits for transmit buffer to be empty (with timeout)
+    - Return: 0 on success, -1 on invalid port
+  
+  ioctl(prim_id, scnd_id, command)
+    - NOT IMPLEMENTED (returns NULL)
+
+Port Detection:
+  - PCI Detection:
+      • Scans PCI bus for class 0x07 (Simple Communications)
+      • Subclass 0x00 (Serial Controller, 16550-compatible)
+      • Reads BAR0 for I/O port address
+      • Supports I/O port based UARTs
+      • MMIO UARTs detected but not yet supported
+  
+  - ISA Detection:
+      • Tests ports 0x3F8, 0x2F8, 0x3E8, 0x2E8 (COM1-COM4)
+      • Validates by checking scratch register
+      • Pattern test: write 0x55, read, write 0xAA, read
+      • Only registers ports that respond correctly
+
+Port Types:
+  - SERIAL_TYPE_ISA:  Legacy ISA I/O port
+  - SERIAL_TYPE_PCI:  PCI UART (I/O port based)
+  - SERIAL_TYPE_MMIO: Memory-mapped I/O (detected but not supported yet)
+
+Configuration:
+  - Baud rate: 115200 (divisor = 1)
+  - Data bits: 8
+  - Parity: None
+  - Stop bits: 1 (8N1)
+  - FIFO: Enabled with 14-byte threshold
+  - Flow control: DTR/RTS enabled
+
+API Functions:
+  - serial_write_char(char) - Write to serial0 (for printk)
+  - serial_get_port_count() - Get number of detected ports
+  - serial_get_port(port_id) - Get port descriptor
+
+Notes:
+  - **NO HARDCODED ADDRESSES** - fully dynamic
+  - Automatically registers all detected ports in devfs
+  - serial0 used by printk for kernel logging
+  - Supports both PCI UART cards and legacy COM ports
+  - Port existence verified before registration
+  - Maximum 4 ports (SERIAL_MAX_PORTS)
+  - Non-blocking I/O
+  - No interrupt support (polling mode)
+  - Registered as /dev/serial0-3 in devfs
+
+Examples:
+  - cwrite(10, 0, 'A') - Write 'A' to serial0
+  - cread(11, 1, buf) - Read from serial1
+  - Serial port at 0x3F8 becomes serial0 if detected first
+  - PCI UART at custom address becomes serial1 if detected second
+
 ================================================================================
 BLOCK DEVICES
 ================================================================================
@@ -218,12 +352,18 @@ Devices 0-3: IDE Hard Disks (hda, hdb, hdc, hdd)
 --------------------------------------------------------------------------------
 Type: Block Device
 File: driver/block/ide.c
-Registration: ide_register_driver()
+Registration: ide_init()
 
 Description:
   IDE/ATA disk driver supporting up to 4 disks on primary and secondary
   IDE channels. Provides LBA28 addressing for reading and writing 512-byte
   sectors. Auto-detects available disks during initialization.
+  
+  **DYNAMIC DISCOVERY** via PCI:
+  1. Scans PCI bus for IDE controllers (class 0x01, subclass 0x01)
+  2. Reads BAR0-BAR3 for channel port addresses
+  3. Supports both native PCI mode and compatibility mode
+  4. Falls back to legacy ports (0x1F0/0x170) if no PCI IDE found
   
   Both read and write operations use LBA mode (0xE0/0xF0 drive bits) to ensure
   correct sector addressing. The offset parameter specifies the absolute LBA
@@ -245,7 +385,7 @@ Operations:
         offset: Starting LBA sector number (0-based, absolute on disk)
         count: Number of blocks (sectors) to read (1-256)
     - Return: Bytes read (count * 512) on success, -1 on error
-    - Note: Goes through cache layer for single-block reads at offset 0
+    - Note: Goes through cache layer for single-block reads
     - Example: read(1, 0, buf, 100, 5) reads 5 sectors starting at LBA 100 on hdb
   
   write(prim_id, scnd_id, buf, offset, count)
@@ -257,36 +397,31 @@ Operations:
         offset: Starting LBA sector number (0-based, absolute on disk)
         count: Number of blocks (sectors) to write (1-256)
     - Return: Bytes written (count * 512) on success, -1 on error
-    - Note: Write-through cache for single-block writes at offset 0
+    - Note: Write-through cache for single-block writes
     - Example: write(1, 0, buf, 1, 1) writes 1 sector to LBA 1 on hdb
     - CRITICAL: Uses LBA mode bits (0xE0=master, 0xF0=slave) to ensure
-               correct sector addressing. CHS mode bits (0xA0/0xB0) would
-               cause writes to wrong sectors!
+               correct sector addressing.
   
   ioctl(prim_id, scnd_id, command)
-    - NOT IMPLEMENTED (returns -1)
-    - Future: Could support commands like:
-        - Get disk geometry
-        - Flush cache
-        - Get/set transfer mode
-        - SMART status
+    - NOT IMPLEMENTED (returns NULL)
 
 Implementation Details:
   - Uses PIO (Programmed I/O) mode, not DMA
   - LBA28 addressing (max 128 GB per disk, 28-bit LBA = 2^28 sectors)
   - 512-byte sector size
   - Drive selection: 0xE0 (master) or 0xF0 (slave) with LBA bits [27:24]
-  - 1000-loop delay after drive selection for timing stability
   - Write command (0x30) followed by CACHE FLUSH (0xE7) per sector
-  - Read timing carefully tuned to work with different GRUB versions
+  - PCI detection reads prog_if register to determine native/compatibility mode
+  - Legacy ports: Primary 0x1F0/0x3F6, Secondary 0x170/0x376
 
 Notes:
+  - **DYNAMIC DISCOVERY** - PCI scan for IDE controllers
   - Offset 0 = first sector (LBA 0, typically MBR on raw disks)
-  - Offset 1 = second sector (LBA 1)
-  - Cache only operates on single blocks at offset 0 to avoid thrashing
-  - Multi-block I/O and non-zero offsets bypass cache
+  - Cache operates on single blocks to avoid thrashing
+  - Multi-block I/O bypasses cache
   - All I/O goes through cache layer (cache.c) for consistency
   - Auto-detection via IDENTIFY command during init
+  - Registered as /dev/hda, /dev/hdb, /dev/hdc, /dev/hdd in devfs
 
 --------------------------------------------------------------------------------
 Devices 4-7: Partition Devices (hdaX, hdbX, hdcX, hddX)
@@ -327,42 +462,22 @@ Operations:
         4. Chains to underlying disk via bread(disk_id, 0, buf, absolute_lba, count)
     - Example: read(4, 1, buf, 100, 10) reads 10 sectors at offset 100
                within partition 1 of hda
-    - Example: read(5, 2, buf, 0, 1) reads first sector of hdb partition 2
   
   write(prim_id, scnd_id, buf, offset, count)
     - Writes to a partition using partition-relative addressing
-    - Parameters:
-        prim_id: Partition device (4-7 for hda-hdd partitions)
-        scnd_id: Partition number (1-4, MUST be valid partition)
-        buf: Data to write (count * 512 bytes)
-        offset: Sector offset WITHIN partition (0-based)
-        count: Number of blocks (sectors) to write
+    - Parameters: Same as read
     - Return: Bytes written (count * 512) on success, -1 on error
     - Operation: Same as read, but uses bwrite() to underlying disk
-    - Example: write(4, 1, buf, 0, 1) writes to first sector of hda partition 1
-    - Example: write(5, 1, buf, 50, 5) writes 5 sectors at offset 50
-               within hdb partition 1
   
   ioctl(prim_id, scnd_id, command)
     - NOT IMPLEMENTED (returns -1)
-    - Future: Could support commands like:
-        - Get partition size
-        - Get partition type
-        - Get partition start LBA
-        - Check if partition is bootable
 
 Implementation Details:
   - Automatically translates partition-relative offsets to absolute disk LBAs
   - Comprehensive bounds checking prevents access beyond partition boundaries
   - Offset calculation: absolute_lba = partition_start + offset
   - All I/O chains through underlying disk block device (devices 0-3)
-  - Cache layer automatically handles caching (when offset=0, count=1)
-
-Helper Functions (Direct API):
-  - mbr_read_partition(disk_id, partition_num, sector_offset, count, buffer)
-  - mbr_write_partition(disk_id, partition_num, sector_offset, count, buffer)
-  - mbr_get_partition_info(disk_id, partition_num)
-  - mbr_print_partitions()
+  - Cache layer automatically handles caching
 
 Notes:
   - Only supports MBR partition tables (not GPT)
@@ -370,21 +485,126 @@ Notes:
   - scnd_id=0 is INVALID - partition numbers are 1-4
   - Partition types detected: FAT16, FAT32, NTFS, Minix, Linux, Linux Swap, Extended
   - Automatically validates MBR signature (0xAA55)
-  - Offset 0 within partition = first sector of partition (NOT first sector of disk)
+  - Offset 0 within partition = first sector of partition
   - Bounds checking prevents reading/writing beyond partition limits
-  - All I/O goes through cache layer via underlying disk for consistency
+  - Registered as /dev/hdaX, /dev/hdbX in devfs (X = partition number)
+
+================================================================================
+INFRASTRUCTURE DRIVERS
+================================================================================
+
+--------------------------------------------------------------------------------
+PCI (Peripheral Component Interconnect)
+--------------------------------------------------------------------------------
+File: driver/pci/pci.c
+Header: include/driver/pci/pci.h
+
+Description:
+  PCI configuration space access and device enumeration. Supports PCI Local
+  Bus Specification 2.x/3.x. Provides functions to scan for devices by class
+  and subclass, and callback mechanism for device initialization.
+
+Functions:
+  - pci_init() - Initialize PCI subsystem and scan bus
+  - pci_config_read_dword/word/byte() - Read configuration space
+  - pci_config_write_dword() - Write configuration space
+  - pci_scan_devices(class, subclass, callback) - Scan for matching devices
+  - pci_enable_device(bus, slot, func, command_bits) - Enable device features
+
+Supported Classes:
+  - 0x01: Mass Storage Controller
+    • 0x00: SCSI
+    • 0x01: IDE Controller
+    • 0x06: SATA
+  - 0x02: Network Controller
+  - 0x03: Display Controller
+  - 0x06: Bridge Device
+  - 0x07: Simple Communication Controller
+    • 0x00: Serial Controller (16550-compatible)
+    • 0x01: Parallel Port
+    • 0x03: Modem
+
+Notes:
+  - Used by IDE driver for controller detection
+  - Used by serial driver for UART detection
+  - Configuration space access via ports 0xCF8/0xCFC
+  - Supports BAR (Base Address Register) reading
+  - Automatic device enumeration on bus 0
+
+--------------------------------------------------------------------------------
+APIC (Advanced Programmable Interrupt Controller)
+--------------------------------------------------------------------------------
+Files: driver/apic/lapic.c, driver/apic/ioapic.c, driver/apic/interrupt.c
+
+Description:
+  APIC subsystem providing modern interrupt handling on multi-processor
+  systems. Automatically detected via ACPI MADT table. Provides unified
+  interrupt management API that works with both APIC and legacy PIC.
+
+Components:
+  - Local APIC: Per-CPU interrupt controller (MSR 0x1B, base 0xFEE00000)
+  - I/O APIC: External interrupt routing (base 0xFEC00000)
+  - Interrupt Manager: Unified API for interrupt control
+
+Functions:
+  - interrupt_init() - Initialize interrupt controller (APIC or PIC)
+  - interrupt_eoi(irq) - Send End-Of-Interrupt
+  - interrupt_enable_irq(irq) - Enable interrupt line
+  - interrupt_disable_irq(irq) - Disable interrupt line
+  - interrupt_get_mode() - Get current mode (APIC/PIC)
+
+Features:
+  - Automatic APIC detection via ACPI MADT
+  - IRQ override handling (e.g., IRQ 0 → GSI 2)
+  - Automatic fallback to PIC if no APIC available
+  - Mode-independent driver code (drivers use interrupt_* API)
+  - Proper EOI handling for both APIC and PIC
+
+Notes:
+  - Used by PIT and keyboard drivers
+  - APIC preferred over PIC when available
+  - GSI (Global System Interrupt) mapping handled automatically
+  - I/O APIC redirection entries configured during init
+
+--------------------------------------------------------------------------------
+ACPI (Advanced Configuration and Power Interface)
+--------------------------------------------------------------------------------
+Files: driver/acpi/acpi.c, driver/acpi/rsdp.c, driver/acpi/tables.c
+
+Description:
+  ACPI table parser providing system configuration information. Locates and
+  validates ACPI tables including RSDP, RSDT, MADT (APIC), FADT (Power Mgmt).
+
+Functions:
+  - acpi_init() - Initialize ACPI and parse tables
+  - acpi_is_available() - Check if ACPI is available
+  - acpi_find_table(rsdt, signature) - Find specific table
+  - acpi_shutdown() - Perform ACPI shutdown
+
+Supported Tables:
+  - RSDP: Root System Description Pointer
+  - RSDT: Root System Description Table
+  - MADT: Multiple APIC Description Table (for APIC init)
+  - FADT: Fixed ACPI Description Table (for power management)
+  - HPET: High Precision Event Timer
+  - WAET: Windows ACPI Emulated Devices Table
+
+Notes:
+  - RSDP located via EBDA or BIOS ROM scan
+  - Used by APIC subsystem for hardware detection
+  - Used by power management for shutdown
+  - All table addresses mapped via ioremap()
 
 ================================================================================
 ABSTRACTION LAYER
 ================================================================================
 
-File: driver/driver.c
-Header: include/driver.h
+File: driver/char/char.c, driver/block/block.c
+Header: include/driver/char/char.h, include/driver/block/block.h
 
 Description:
   Unified device driver abstraction providing consistent interface for both
-  character and block devices. Supports dynamic device registration with
-  kalloc-based linked lists.
+  character and block devices. Supports dynamic device registration.
 
 Public API Functions:
 
@@ -398,46 +618,57 @@ Public API Functions:
   
   bread(prim_id, scnd_id, buf, offset, count)
     - Read from block device
-    - Parameters:
-        prim_id: Primary device ID
-        scnd_id: Secondary device ID (device-specific)
-        buf: Buffer to read into
-        offset: Starting block number (relative to device)
-        count: Number of blocks to read
     - Returns: bytes read or -1 on error
-    - Note: Automatically uses cache layer for single-block reads
   
   bwrite(prim_id, scnd_id, buf, offset, count)
     - Write to block device
-    - Parameters:
-        prim_id: Primary device ID
-        scnd_id: Secondary device ID (device-specific)
-        buf: Buffer to write from
-        offset: Starting block number (relative to device)
-        count: Number of blocks to write
     - Returns: bytes written or -1 on error
-    - Note: Write-through cache for single-block writes
   
   ioctl(prim_id, scnd_id, command)
-    - Send control command to device (char or block)
-    - Returns: device-specific value or -1 on error/not supported
-    - Unified interface: tries char devices first, then block devices
+    - Send control command to device
+    - Returns: device-specific value or -1
 
 Device Registration:
   - register_char_device(prim_id, ops)
   - register_block_device(prim_id, ops)
-  
-Device ID Ranges:
-  - Character devices: 0-255
-  - Block devices: 0-255
-  - Separate namespaces (char 0 ≠ block 0)
 
 Cache Layer:
   File: driver/block/cache.c
-  - LRU cache for block devices (32 entries, 512 bytes each)
+  - LRU cache for block devices (64 entries, 512 bytes each)
   - Automatic caching on bread()
   - Write-through on bwrite()
   - Significantly improves disk I/O performance
+
+================================================================================
+SUMMARY OF DYNAMIC DISCOVERY
+================================================================================
+
+The following drivers use DYNAMIC DISCOVERY (no hardcoded addresses):
+
+✅ Serial Ports (driver/char/serial.c)
+   - PCI UART scan (class 0x07, subclass 0x00)
+   - Legacy ISA port probing (COM1-COM4)
+   - Validates ports before registration
+
+✅ IDE Disks (driver/block/ide.c)
+   - PCI IDE controller scan (class 0x01, subclass 0x01)
+   - Reads BAR0-BAR3 for port addresses
+   - Falls back to legacy ports if needed
+
+✅ APIC (driver/apic/interrupt.c)
+   - Detected via ACPI MADT table
+   - Local APIC and I/O APIC addresses from MADT
+   - Automatic fallback to PIC
+
+The following drivers use HARDCODED addresses (by design):
+
+✅ VGA (0xB8000) - Standard VGA text mode location
+✅ PS/2 Keyboard (0x60) - Standard PS/2 port
+✅ PIT Timer (0x40-0x43) - Standard 8253/8254 ports
+✅ RTC/CMOS (0x70-0x71) - Standard CMOS ports
+
+These hardcoded addresses are PC/AT legacy standards and do not have
+discovery mechanisms. They are correct and should remain hardcoded.
 
 ================================================================================
 FUTURE ADDITIONS
@@ -445,44 +676,13 @@ FUTURE ADDITIONS
 
 When adding new drivers or functionality:
 
-1. Add device to appropriate section (Character or Block Devices)
+1. Add device to appropriate section (Character/Block/Infrastructure)
 2. Document device number and type
 3. Describe each operation (read/write/ioctl) in detail
 4. Include parameter descriptions and return values
 5. Note any special behavior or limitations
-6. Update this file as part of driver implementation
-
-Example template:
-
---------------------------------------------------------------------------------
-Device X: [Device Name]
---------------------------------------------------------------------------------
-Type: [Character/Block] Device
-File: driver/[path]/[file].c
-Registration: [function_name]()
-
-Description:
-  [Detailed description of hardware/purpose]
-
-Operations:
-  read(...)
-    - [What it does]
-    - Parameters: [describe each]
-    - Return: [what and when]
-  
-  write(...)
-    - [What it does]
-    - Parameters: [describe each]
-    - Return: [what and when]
-  
-  ioctl(...)
-    - [What commands are supported]
-    - Command codes: [list with descriptions]
-    - Return: [what and when]
-
-Notes:
-  - [Important implementation details]
-  - [Limitations or special behaviors]
+6. If using dynamic discovery, document the detection method
+7. Update this file as part of driver implementation
 
 ================================================================================
 END OF DOCUMENTATION

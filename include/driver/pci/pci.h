@@ -48,6 +48,7 @@
 #define PCI_CLASS_NETWORK       0x02  /* Network Controller */
 #define PCI_CLASS_DISPLAY       0x03  /* Display Controller */
 #define PCI_CLASS_BRIDGE        0x06  /* Bridge Device */
+#define PCI_CLASS_SIMPLE_COMM   0x07  /* Simple Communication Controller */
 
 /* PCI Storage Subclass Codes */
 #define PCI_SUBCLASS_SCSI       0x00  /* SCSI Bus Controller */
@@ -56,6 +57,11 @@
 #define PCI_SUBCLASS_RAID       0x04  /* RAID Controller */
 #define PCI_SUBCLASS_ATA        0x05  /* ATA Controller */
 #define PCI_SUBCLASS_SATA       0x06  /* SATA Controller */
+
+/* PCI Simple Communication Subclass Codes */
+#define PCI_SUBCLASS_SERIAL     0x00  /* Serial Controller (16550-compatible) */
+#define PCI_SUBCLASS_PARALLEL   0x01  /* Parallel Port */
+#define PCI_SUBCLASS_MODEM      0x03  /* Modem */
 
 /* PCI IDE Programming Interface Bits */
 #define PCI_IDE_PRIMARY_NATIVE  0x01  /* Primary channel in native mode */
