@@ -9,6 +9,7 @@
 #include "driver/acpi/tables.h"
 #include "lib/printk.h"
 #include "mm/mm.h"
+#include "mm/vmalloc.h"
 #include <stddef.h>
 
 /* External functions from other ACPI modules */
@@ -23,7 +24,7 @@ extern int acpi_pm_is_available(void);
 static acpi_rsdp_t *g_rsdp = NULL;
 static acpi_rsdt_t *g_rsdt = NULL;
 static acpi_fadt_t *g_fadt = NULL;
-static acpi_madt_t *g_madt = NULL;
+acpi_madt_t *g_madt = NULL;  /* Exposed for interrupt controller */
 static int g_acpi_available = 0;
 
 /* ============================================================================
@@ -56,13 +57,28 @@ void acpi_init(void)
     
     acpi_print_rsdp_info(g_rsdp);
     
-    /* Step 2: Locate RSDT */
+    /* Step 2: Locate RSDT - First map just header to get length */
     uint32_t rsdt_phys = g_rsdp->rsdt_address;
-    g_rsdt = (acpi_rsdt_t *)PHYS_TO_VIRT(rsdt_phys);
+    acpi_sdt_header_t *rsdt_hdr = (acpi_sdt_header_t *)ioremap(rsdt_phys, sizeof(acpi_sdt_header_t));
+    if (!rsdt_hdr) {
+        printk("[ACPI] FATAL: Cannot map RSDT header!\n");
+        return;
+    }
+    
+    uint32_t rsdt_len = rsdt_hdr->length;
+    iounmap(rsdt_hdr);
+    
+    /* Now map entire RSDT */
+    g_rsdt = (acpi_rsdt_t *)ioremap(rsdt_phys, rsdt_len);
+    if (!g_rsdt) {
+        printk("[ACPI] FATAL: Cannot map RSDT!\n");
+        return;
+    }
     
     /* Validate RSDT */
     if (!acpi_validate_checksum(g_rsdt, g_rsdt->header.length)) {
         printk("[ACPI] FATAL: RSDT checksum validation failed!\n");
+        iounmap(g_rsdt);
         g_rsdp = NULL;
         g_rsdt = NULL;
         return;
@@ -77,14 +93,15 @@ void acpi_init(void)
     /* Step 3: Find and parse FADT */
     uint32_t fadt_phys = acpi_find_table(g_rsdt, "FACP");
     if (fadt_phys) {
-        g_fadt = (acpi_fadt_t *)PHYS_TO_VIRT(fadt_phys);
-        
-        if (acpi_validate_checksum(g_fadt, g_fadt->header.length)) {
+        /* Map FADT */
+        g_fadt = (acpi_fadt_t *)ioremap(fadt_phys, sizeof(acpi_fadt_t));
+        if (g_fadt && acpi_validate_checksum(g_fadt, g_fadt->header.length)) {
             printk("[ACPI] FADT found and validated\n");
             acpi_parse_fadt_for_pm(g_fadt);
             printk("\n");
         } else {
             printk("[ACPI] WARNING: FADT checksum validation failed\n");
+            if (g_fadt) iounmap(g_fadt);
             g_fadt = NULL;
         }
     } else {
@@ -94,14 +111,22 @@ void acpi_init(void)
     /* Step 4: Find and parse MADT */
     uint32_t madt_phys = acpi_find_table(g_rsdt, "APIC");
     if (madt_phys) {
-        g_madt = (acpi_madt_t *)PHYS_TO_VIRT(madt_phys);
-        
-        if (acpi_validate_checksum(g_madt, g_madt->header.length)) {
-            printk("[ACPI] MADT found and validated\n");
-            /* Don't parse yet - wait for explicit enumeration call */
-        } else {
-            printk("[ACPI] WARNING: MADT checksum validation failed\n");
-            g_madt = NULL;
+        /* First map header to get length */
+        acpi_sdt_header_t *madt_hdr = (acpi_sdt_header_t *)ioremap(madt_phys, sizeof(acpi_sdt_header_t));
+        if (madt_hdr) {
+            uint32_t madt_len = madt_hdr->length;
+            iounmap(madt_hdr);
+            
+            /* Now map entire MADT */
+            g_madt = (acpi_madt_t *)ioremap(madt_phys, madt_len);
+            if (g_madt && acpi_validate_checksum(g_madt, g_madt->header.length)) {
+                printk("[ACPI] MADT found and validated\n");
+                /* Don't parse yet - wait for explicit enumeration call */
+            } else {
+                printk("[ACPI] WARNING: MADT checksum validation failed\n");
+                if (g_madt) iounmap(g_madt);
+                g_madt = NULL;
+            }
         }
     } else {
         printk("[ACPI] WARNING: MADT not found (no APIC information)\n");

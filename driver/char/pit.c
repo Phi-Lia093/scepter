@@ -1,10 +1,12 @@
 #include "driver/char/pit.h"
 #include "driver/char/char.h"
-#include "driver/pic.h"
+#include "driver/apic/interrupt.h"
 #include "kernel/cpu.h"
 #include "fs/devfs.h"
 #include "lib/printk.h"
 #include "kernel/asm.h"
+
+#define IRQ0  0  /* Timer IRQ */
 
 /* =========================================================================
  * Driver state
@@ -24,7 +26,11 @@ uint32_t pit_get_ticks(void)
 void pit_isr(void)
 {
     pit_ticks++;
-    pic_send_eoi(IRQ0);
+    // if(pit_ticks%100==0){
+    //     printk("1sec\n");
+    // }
+    
+    interrupt_eoi(IRQ0);
 }
 
 /* =========================================================================
@@ -65,8 +71,8 @@ void pit_init(uint32_t hz)
     /* Register IRQ0 handler in IDT (vector 32 = PIC master offset 0x20) */
     idt_set_gate(32, (uint32_t)irq0, GDT_KERNEL_CODE, IDT_GATE_INT32);
 
-    /* Unmask IRQ0 in the PIC */
-    pic_enable_irq(IRQ0);
+    /* Enable IRQ0 (works with both PIC and APIC) */
+    interrupt_enable_irq(IRQ0);
 
     /* Register as char device 1 and add devfs node */
     char_ops_t ops = { .read = pit_read, .write = pit_write, .ioctl = NULL };

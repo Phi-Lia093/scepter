@@ -29,6 +29,15 @@ uint32_t* get_pte(uint32_t virt_addr);
  * ============================================================================ */
 
 /**
+ * Map a physical page to a virtual page
+ * @param virt_addr Virtual address (will be page-aligned)
+ * @param phys_addr Physical address (will be page-aligned)
+ * @param flags Page flags (Present | Writable | User | etc.)
+ * @return 0 on success, -1 on error
+ */
+int map_page(uint32_t virt_addr, uint32_t phys_addr, uint32_t flags);
+
+/**
  * Invalidate (unmap) a single virtual page
  * @param virt_addr Virtual address of page to unmap (will be page-aligned)
  */

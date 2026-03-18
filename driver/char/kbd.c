@@ -1,6 +1,6 @@
 #include "driver/char/kbd.h"
 #include "driver/char/char.h"
-#include "driver/pic.h"
+#include "driver/apic/interrupt.h"
 #include "kernel/cpu.h"
 #include "fs/devfs.h"
 #include "kernel/asm.h"
@@ -11,6 +11,8 @@
 
 #define KBD_DATA_PORT    0x60
 #define KBD_BUFFER_SIZE  128
+
+#define IRQ1             1    /* Keyboard IRQ */
 
 #define SC_LSHIFT        0x2A
 #define SC_RSHIFT        0x36
@@ -97,21 +99,21 @@ void kbd_isr(void)
 
     if (scancode == SC_LSHIFT || scancode == SC_RSHIFT) {
         kbd_state.shift_pressed = 1;
-        pic_send_eoi(IRQ1);
+        interrupt_eoi(IRQ1);
         return;
     }
     if (scancode == SC_LSHIFT_REL || scancode == SC_RSHIFT_REL) {
         kbd_state.shift_pressed = 0;
-        pic_send_eoi(IRQ1);
+        interrupt_eoi(IRQ1);
         return;
     }
     if (scancode == SC_CAPSLOCK) {
         kbd_state.caps_lock = !kbd_state.caps_lock;
-        pic_send_eoi(IRQ1);
+        interrupt_eoi(IRQ1);
         return;
     }
     if (scancode & 0x80) {   /* break code – ignore */
-        pic_send_eoi(IRQ1);
+        interrupt_eoi(IRQ1);
         return;
     }
 
@@ -128,7 +130,7 @@ void kbd_isr(void)
     }
 
     if (ascii != 0) kbd_buffer_push(ascii);
-    pic_send_eoi(IRQ1);
+    interrupt_eoi(IRQ1);
 }
 
 /* =========================================================================
@@ -168,7 +170,7 @@ void kbd_init(void)
     kbd_state.caps_lock     = 0;
 
     idt_set_gate(33, (uint32_t)irq1, GDT_KERNEL_CODE, IDT_GATE_INT32);
-    pic_enable_irq(IRQ1);
+    interrupt_enable_irq(IRQ1);
 
     char_ops_t ops = { .read = kbd_read, .write = kbd_write, .ioctl = kbd_ioctl };
     register_char_device(3, &ops);

@@ -6,6 +6,7 @@
 #include "lib/printk.h"
 #include "lib/string.h"
 #include "mm/mm.h"
+#include "mm/vmalloc.h"
 
 /* ============================================================================
  * RSDP Search Functions
@@ -33,30 +34,39 @@ static int validate_rsdp_checksum(acpi_rsdp_t *rsdp)
  * Search for RSDP in a memory range
  * @param start Physical start address
  * @param end Physical end address (exclusive)
- * @return Pointer to RSDP, or NULL if not found
+ * @return Physical address of RSDP, or 0 if not found
  */
-static acpi_rsdp_t* search_rsdp_range(uint32_t start, uint32_t end)
+static uint32_t search_rsdp_range(uint32_t start, uint32_t end)
 {
-    /* Convert physical address to virtual (direct-mapped region) */
-    uint8_t *ptr = (uint8_t *)PHYS_TO_VIRT(start);
-    uint8_t *end_ptr = (uint8_t *)PHYS_TO_VIRT(end);
+    uint32_t size = end - start;
+    
+    /* Map the search range into virtual memory */
+    uint8_t *mapped = (uint8_t *)ioremap(start, size);
+    if (!mapped) {
+        printk("[ACPI] Failed to map search range 0x%08x-0x%08x\n", start, end);
+        return 0;
+    }
+    
+    uint32_t rsdp_phys = 0;
     
     /* RSDP is aligned on 16-byte boundary */
-    while (ptr < end_ptr) {
+    for (uint32_t offset = 0; offset < size; offset += 16) {
         /* Check for "RSD PTR " signature */
-        if (memcmp(ptr, "RSD PTR ", 8) == 0) {
-            acpi_rsdp_t *rsdp = (acpi_rsdp_t *)ptr;
+        if (memcmp(mapped + offset, "RSD PTR ", 8) == 0) {
+            acpi_rsdp_t *rsdp = (acpi_rsdp_t *)(mapped + offset);
             
             /* Validate checksum */
             if (validate_rsdp_checksum(rsdp)) {
-                return rsdp;
+                rsdp_phys = start + offset;
+                break;
             }
         }
-        
-        ptr += 16;  /* Next 16-byte boundary */
     }
     
-    return NULL;
+    /* Unmap the search range */
+    iounmap(mapped);
+    
+    return rsdp_phys;
 }
 
 /**
@@ -66,39 +76,53 @@ static acpi_rsdp_t* search_rsdp_range(uint32_t start, uint32_t end)
  * 1. EBDA (Extended BIOS Data Area) - first 1KB
  * 2. Main BIOS area (0xE0000 - 0xFFFFF)
  * 
- * @return Pointer to RSDP, or NULL if not found
+ * @return Physical address of RSDP, or 0 if not found
  */
-acpi_rsdp_t* acpi_find_rsdp(void)
+uint32_t acpi_find_rsdp_phys(void)
 {
-    acpi_rsdp_t *rsdp = NULL;
-    
     printk("[ACPI] Searching for RSDP...\n");
     
     /* Get EBDA address from BDA (BIOS Data Area) at 0x40E */
     uint16_t *ebda_ptr = (uint16_t *)PHYS_TO_VIRT(0x40E);
     uint32_t ebda_addr = (*ebda_ptr) << 4;  /* Segment to physical address */
     
+    uint32_t rsdp_phys = 0;
+    
     if (ebda_addr != 0) {
         printk("[ACPI]   Searching EBDA at 0x%08x...\n", ebda_addr);
-        rsdp = search_rsdp_range(ebda_addr, ebda_addr + 1024);
-        if (rsdp) {
-            printk("[ACPI]   Found RSDP in EBDA at 0x%08x\n", 
-                   (uint32_t)rsdp - KERNEL_VMA);
-            return rsdp;
+        rsdp_phys = search_rsdp_range(ebda_addr, ebda_addr + 1024);
+        if (rsdp_phys) {
+            printk("[ACPI]   Found RSDP in EBDA at phys 0x%08x\n", rsdp_phys);
+            return rsdp_phys;
         }
     }
     
     /* Search main BIOS area (0xE0000 - 0xFFFFF) */
     printk("[ACPI]   Searching BIOS ROM area 0xE0000-0xFFFFF...\n");
-    rsdp = search_rsdp_range(0xE0000, 0x100000);
-    if (rsdp) {
-        printk("[ACPI]   Found RSDP in BIOS ROM at 0x%08x\n",
-               (uint32_t)rsdp - KERNEL_VMA);
-        return rsdp;
+    rsdp_phys = search_rsdp_range(0xE0000, 0x100000);
+    if (rsdp_phys) {
+        printk("[ACPI]   Found RSDP in BIOS ROM at phys 0x%08x\n", rsdp_phys);
+        return rsdp_phys;
     }
     
     printk("[ACPI]   RSDP not found\n");
-    return NULL;
+    return 0;
+}
+
+/**
+ * Map RSDP into virtual memory
+ * @param rsdp_phys Physical address of RSDP
+ * @return Virtual pointer to RSDP, or NULL if failed
+ */
+acpi_rsdp_t* acpi_find_rsdp(void)
+{
+    uint32_t rsdp_phys = acpi_find_rsdp_phys();
+    if (rsdp_phys == 0) {
+        return NULL;
+    }
+    
+    /* Map RSDP into virtual memory (permanently for now) */
+    return (acpi_rsdp_t *)ioremap(rsdp_phys, sizeof(acpi_rsdp_t));
 }
 
 /**

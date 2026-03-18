@@ -12,6 +12,9 @@
 extern uint32_t boot_page_directory[];
 extern uint32_t boot_page_tables[];
 
+/* Forward declaration for allocation */
+extern void *page_alloc_flags(size_t size, uint32_t flags);
+
 /* ============================================================================
  * Page Table Entry Access
  * ============================================================================ */
@@ -40,6 +43,55 @@ uint32_t* get_pte(uint32_t virt_addr)
 /* ============================================================================
  * Page Mapping Operations
  * ============================================================================ */
+
+/**
+ * Map a physical page to a virtual page
+ * @param virt_addr Virtual address (will be page-aligned)
+ * @param phys_addr Physical address (will be page-aligned)
+ * @param flags Page flags (Present | Writable | User | etc.)
+ * @return 0 on success, -1 on error
+ */
+int map_page(uint32_t virt_addr, uint32_t phys_addr, uint32_t flags)
+{
+    /* Page-align addresses */
+    virt_addr &= ~0xFFF;
+    phys_addr &= ~0xFFF;
+    
+    /* Get page directory entry */
+    uint32_t pde_idx = virt_addr >> 22;
+    uint32_t *pde = &boot_page_directory[pde_idx];
+    
+    /* Allocate page table if not present */
+    if (!(*pde & 0x1)) {
+        /* Allocate physical page for page table */
+        void *pt_phys = page_alloc_flags(PAGE_SIZE, MEM_PHY);
+        if (!pt_phys) {
+            printk("[PGTABLE] ERROR: Cannot allocate page table\n");
+            return -1;
+        }
+        
+        /* Set page directory entry */
+        *pde = (uint32_t)pt_phys | 0x3;  /* Present | Writable */
+        
+        /* Zero the page table (access via direct-mapped region)
+         * Page tables themselves are allocated from direct-mapped region */
+        uint32_t *pt_virt = (uint32_t *)PHYS_TO_VIRT((uint32_t)pt_phys);
+        for (int i = 0; i < 1024; i++) {
+            pt_virt[i] = 0;
+        }
+    }
+    
+    /* Get page table and set PTE */
+    uint32_t *pt = (uint32_t *)((*pde & ~0xFFF) + KERNEL_VMA);
+    uint32_t pte_idx = (virt_addr >> 12) & 0x3FF;
+    
+    pt[pte_idx] = phys_addr | flags;
+    
+    /* Flush TLB for this address */
+    asm volatile("invlpg (%0)" :: "r"(virt_addr) : "memory");
+    
+    return 0;
+}
 
 /**
  * Invalidate (unmap) a single virtual page

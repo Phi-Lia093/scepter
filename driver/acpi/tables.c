@@ -7,6 +7,7 @@
 #include "lib/printk.h"
 #include "lib/string.h"
 #include "mm/mm.h"
+#include "mm/vmalloc.h"
 
 /* ============================================================================
  * Checksum Validation
@@ -53,11 +54,17 @@ uint32_t acpi_find_table(acpi_rsdt_t *rsdt, const char *signature)
     for (uint32_t i = 0; i < entries; i++) {
         uint32_t phys_addr = rsdt->entries[i];
         
-        /* Map physical address to virtual */
-        acpi_sdt_header_t *header = (acpi_sdt_header_t *)PHYS_TO_VIRT(phys_addr);
+        /* Map just the header to check signature */
+        acpi_sdt_header_t *header = (acpi_sdt_header_t *)ioremap(phys_addr, sizeof(acpi_sdt_header_t));
+        if (!header) {
+            continue;
+        }
         
         /* Compare signature */
-        if (memcmp(header->signature, signature, 4) == 0) {
+        int match = (memcmp(header->signature, signature, 4) == 0);
+        iounmap(header);
+        
+        if (match) {
             return phys_addr;
         }
     }
@@ -193,13 +200,22 @@ void acpi_list_tables(acpi_rsdt_t *rsdt)
     /* List all tables */
     for (uint32_t i = 0; i < entries; i++) {
         uint32_t phys_addr = rsdt->entries[i];
-        acpi_sdt_header_t *header = (acpi_sdt_header_t *)PHYS_TO_VIRT(phys_addr);
+        
+        /* Map header to read signature and length */
+        acpi_sdt_header_t *header = (acpi_sdt_header_t *)ioremap(phys_addr, sizeof(acpi_sdt_header_t));
+        if (!header) {
+            printk("[ACPI]   [%u] <failed to map> at 0x%08x\n", i, phys_addr);
+            continue;
+        }
         
         char sig[5];
         memcpy(sig, header->signature, 4);
         sig[4] = '\0';
+        uint32_t length = header->length;
+        
+        iounmap(header);
         
         printk("[ACPI]   [%u] %s at 0x%08x (length=%u bytes)\n",
-               i, sig, phys_addr, header->length);
+               i, sig, phys_addr, length);
     }
 }

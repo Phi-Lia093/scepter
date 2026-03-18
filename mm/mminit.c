@@ -5,6 +5,7 @@
 #include "mm/buddy.h"
 #include "mm/slab.h"
 #include "mm/pgtable.h"
+#include "mm/vmalloc.h"
 #include "lib/printk.h"
 #include "kernel/asm.h"
 
@@ -151,6 +152,9 @@ void mm_init(void)
     
     /* Initialize slab allocator */
     slab_init();
+    
+    /* Initialize vmalloc/ioremap subsystem */
+    vmalloc_init();
     
     printk("[MM] Memory management initialized\n\n");
 }

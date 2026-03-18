@@ -1,5 +1,6 @@
 #include "driver/block/ide.h"
 #include "driver/block/block.h"
+#include "driver/pci/pci.h"
 #include "fs/devfs.h"
 #include "kernel/asm.h"
 #include "lib/printk.h"
@@ -252,30 +253,143 @@ void ide_print_disks(void)
 }
 
 /* =========================================================================
+ * PCI IDE Controller Detection
+ * ========================================================================= */
+
+static int g_disk_index = 0;  /* Global disk index counter */
+static int g_pci_ide_found = 0;
+
+/**
+ * Detect disks on an IDE channel
+ */
+static void ide_detect_channel(uint16_t base_port, uint16_t ctrl_port, const char *name)
+{
+    if (g_disk_index >= IDE_MAX_DISKS - 1) {
+        return;  /* No more slots */
+    }
+    
+    printk("[IDE] Scanning %s channel (base=0x%03x, ctrl=0x%03x)...\n",
+           name, base_port, ctrl_port);
+    
+    /* Try master */
+    if (ide_identify(base_port, ctrl_port, 0, &ide_disks[g_disk_index])) {
+        printk("[IDE]   Master: %s\n", ide_disks[g_disk_index].model);
+        g_disk_index++;
+    }
+    
+    /* Try slave */
+    if (g_disk_index < IDE_MAX_DISKS &&
+        ide_identify(base_port, ctrl_port, 1, &ide_disks[g_disk_index])) {
+        printk("[IDE]   Slave: %s\n", ide_disks[g_disk_index].model);
+        g_disk_index++;
+    }
+}
+
+/**
+ * PCI IDE controller callback
+ */
+static void ide_pci_callback(pci_device_t *pci_dev)
+{
+    g_pci_ide_found = 1;
+    
+    printk("[IDE] Found PCI IDE controller: %04x:%04x (prog_if=0x%02x)\n",
+           pci_dev->vendor_id, pci_dev->device_id, pci_dev->prog_if);
+    
+    /* Enable I/O space and bus mastering */
+    pci_enable_device(pci_dev->bus, pci_dev->slot, pci_dev->func,
+                      PCI_COMMAND_IO | PCI_COMMAND_MASTER);
+    
+    /* Extract I/O port addresses from BARs
+     * BAR0 = Primary Command Block
+     * BAR1 = Primary Control Block  
+     * BAR2 = Secondary Command Block
+     * BAR3 = Secondary Control Block
+     * BAR4 = Bus Master IDE */
+    
+    uint16_t primary_cmd = 0, primary_ctrl = 0;
+    uint16_t secondary_cmd = 0, secondary_ctrl = 0;
+    
+    /* Check if in native PCI mode or compatibility mode */
+    if (pci_dev->prog_if & PCI_IDE_PRIMARY_NATIVE) {
+        /* Native mode - use BARs */
+        if (pci_dev->bar[0] & PCI_BAR_IO) {
+            primary_cmd = pci_dev->bar[0] & 0xFFFC;
+        }
+        if (pci_dev->bar[1] & PCI_BAR_IO) {
+            primary_ctrl = pci_dev->bar[1] & 0xFFFC;
+        }
+    } else {
+        /* Compatibility mode - use legacy ports */
+        primary_cmd = IDE_PRIMARY_BASE;
+        primary_ctrl = IDE_PRIMARY_CTRL;
+    }
+    
+    if (pci_dev->prog_if & PCI_IDE_SECONDARY_NATIVE) {
+        /* Native mode - use BARs */
+        if (pci_dev->bar[2] & PCI_BAR_IO) {
+            secondary_cmd = pci_dev->bar[2] & 0xFFFC;
+        }
+        if (pci_dev->bar[3] & PCI_BAR_IO) {
+            secondary_ctrl = pci_dev->bar[3] & 0xFFFC;
+        }
+    } else {
+        /* Compatibility mode - use legacy ports */
+        secondary_cmd = IDE_SECONDARY_BASE;
+        secondary_ctrl = IDE_SECONDARY_CTRL;
+    }
+    
+    printk("[IDE]   Primary:   base=0x%03x, ctrl=0x%03x %s\n",
+           primary_cmd, primary_ctrl,
+           (pci_dev->prog_if & PCI_IDE_PRIMARY_NATIVE) ? "(native)" : "(legacy)");
+    printk("[IDE]   Secondary: base=0x%03x, ctrl=0x%03x %s\n",
+           secondary_cmd, secondary_ctrl,
+           (pci_dev->prog_if & PCI_IDE_SECONDARY_NATIVE) ? "(native)" : "(legacy)");
+    
+    /* Detect disks on both channels */
+    if (primary_cmd && primary_ctrl) {
+        ide_detect_channel(primary_cmd, primary_ctrl, "Primary");
+    }
+    
+    if (secondary_cmd && secondary_ctrl) {
+        ide_detect_channel(secondary_cmd, secondary_ctrl, "Secondary");
+    }
+}
+
+/* =========================================================================
  * Initialisation – detect disks + register block devs + devfs nodes
  * ========================================================================= */
 
 void ide_init(void)
 {
-    printk("[IDE] Scanning for disks...\n");
-
-    int disk_count = 0;
-    if (ide_identify(IDE_PRIMARY_BASE,   IDE_PRIMARY_CTRL,   0, &ide_disks[0])) disk_count++;
-    if (ide_identify(IDE_PRIMARY_BASE,   IDE_PRIMARY_CTRL,   1, &ide_disks[1])) disk_count++;
-    if (ide_identify(IDE_SECONDARY_BASE, IDE_SECONDARY_CTRL, 0, &ide_disks[2])) disk_count++;
-    if (ide_identify(IDE_SECONDARY_BASE, IDE_SECONDARY_CTRL, 1, &ide_disks[3])) disk_count++;
-
-    printk("[IDE] Found %d disk(s)\n", disk_count);
-
-    ide_print_disks();
-
+    printk("[IDE] Initializing IDE driver...\n");
+    
+    g_disk_index = 0;
+    g_pci_ide_found = 0;
+    
+    /* Try PCI detection first */
+    printk("[IDE] Scanning PCI bus for IDE controllers...\n");
+    pci_scan_devices(PCI_CLASS_STORAGE, PCI_SUBCLASS_IDE, ide_pci_callback);
+    
+    /* If no PCI IDE found, try legacy ports */
+    if (!g_pci_ide_found) {
+        printk("[IDE] No PCI IDE found, trying legacy ports...\n");
+        ide_detect_channel(IDE_PRIMARY_BASE, IDE_PRIMARY_CTRL, "Primary");
+        ide_detect_channel(IDE_SECONDARY_BASE, IDE_SECONDARY_CTRL, "Secondary");
+    }
+    
+    printk("[IDE] Found %d disk(s)\n", g_disk_index);
+    
     /* Register every found disk as a block device + devfs node */
     static const char *names[] = {"hda", "hdb", "hdc", "hdd"};
     block_ops_t ops = { .read = ide_block_read, .write = ide_block_write, .ioctl = NULL };
-
-    for (int i = 0; i < IDE_MAX_DISKS; i++) {
+    
+    for (int i = 0; i < g_disk_index && i < IDE_MAX_DISKS; i++) {
         if (!ide_disks[i].exists) continue;
-
+        
+        uint32_t size_mb = ide_disks[i].sectors / 2048;
+        printk("[IDE] %s: %s, %u MB (%u sectors)\n",
+               names[i], ide_disks[i].model, size_mb, ide_disks[i].sectors);
+        
         if (register_block_device(i, &ops) == 0) {
             printk("[IDE] Registered %s as block device %d\n", names[i], i);
         } else {

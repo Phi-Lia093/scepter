@@ -1,9 +1,9 @@
 # ============================================================================
-# Memory Management Module Makefile
+# PCI Driver Makefile
 # ============================================================================
 
 # Source files
-SRCS = mminit.c buddy.c slab.c pgtable.c vmalloc.c
+SRCS = pci.c
 
 # Object files (in build directory)
 OBJS = $(addprefix $(BUILD_DIR)/, $(SRCS:.c=.o))
@@ -13,7 +13,7 @@ all: $(OBJS)
 
 # Compilation rule
 $(BUILD_DIR)/%.o: %.c
-	@echo "  CC      mm/$<"
+	@echo "  CC      pci/$<"
 	@$(CC) $(CFLAGS) $(INCLUDE) $< -o $@
 
 .PHONY: all

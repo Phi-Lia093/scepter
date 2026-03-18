@@ -1,9 +1,9 @@
 # ============================================================================
-# Memory Management Module Makefile
+# APIC Driver Makefile
 # ============================================================================
 
 # Source files
-SRCS = mminit.c buddy.c slab.c pgtable.c vmalloc.c
+SRCS = lapic.c ioapic.c interrupt.c
 
 # Object files (in build directory)
 OBJS = $(addprefix $(BUILD_DIR)/, $(SRCS:.c=.o))
@@ -13,7 +13,7 @@ all: $(OBJS)
 
 # Compilation rule
 $(BUILD_DIR)/%.o: %.c
-	@echo "  CC      mm/$<"
+	@echo "  CC      apic/$<"
 	@$(CC) $(CFLAGS) $(INCLUDE) $< -o $@
 
 .PHONY: all
