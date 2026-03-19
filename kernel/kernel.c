@@ -34,16 +34,13 @@ static void test_userspace_exec(void)
     printk("  USERSPACE EXECUTION TEST\n");
     printk("========================================\n\n");
     
-    printk("[TEST] Attempting to execute /test.bin\n");
+    printk("[TEST] Attempting to execute /hello.bin\n");
     printk("[TEST] This should:\n");
-    printk("[TEST]   1. Load flat binary\n");
-    printk("[TEST]   2. Create user page directory (no kernel mappings)\n");
-    printk("[TEST]   3. Map binary at 0x08000000 with RWX\n");
-    printk("[TEST]   4. Switch CR3 to user page directory\n");
-    printk("[TEST]   5. IRET to userspace\n");
-    printk("[TEST]   6. Execute: mov eax, 0xDEADBEEF; jmp $\n");
-    printk("[TEST] Expected: Infinite loop in userspace\n");
-    printk("[TEST] Use (qemu) info registers to verify EAX=0xDEADBEEF\n\n");
+    printk("[TEST]   1. Load flat binary at 0x08000000\n");
+    printk("[TEST]   2. Create user page directory (kernel as supervisor)\n");
+    printk("[TEST]   3. Execute syscalls: open(), write(), close()\n");
+    printk("[TEST]   4. Write 'Hello from userspace!' to /test.txt\n");
+    printk("[TEST] Expected: EAX=0x600DC0DE on success, 0xBADC0DE on error\n\n");
     
     /* This call does NOT return! */
     exec_flat("/test.bin");

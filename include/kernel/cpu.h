@@ -96,6 +96,9 @@ extern void isr24(void); extern void isr25(void); extern void isr26(void);
 extern void isr27(void); extern void isr28(void); extern void isr29(void);
 extern void isr30(void); extern void isr31(void);
 
+/* Syscall interrupt (int 0x80) */
+extern void isr128(void);
+
 /* Register all 32 exception stubs in the IDT */
 void isr_init(void);
 

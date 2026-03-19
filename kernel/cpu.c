@@ -162,6 +162,9 @@ void isr_init(void)
     idt_set_gate(29, (uint32_t)isr29, GDT_KERNEL_CODE, IDT_GATE_INT32);
     idt_set_gate(30, (uint32_t)isr30, GDT_KERNEL_CODE, IDT_GATE_INT32);
     idt_set_gate(31, (uint32_t)isr31, GDT_KERNEL_CODE, IDT_GATE_INT32);
+    
+    /* Syscall gate (int 0x80) - user-accessible (DPL=3) */
+    idt_set_gate(128, (uint32_t)isr128, GDT_KERNEL_CODE, IDT_GATE_USER);
 }
 
 /* =========================================================================
