@@ -130,6 +130,12 @@ run: $(TARGET)
 		-drive file=data.img,format=raw,if=ide,index=1,media=disk \
 		-serial file:kernel.log
 
+app:
+	make -C userspace
+	make mountd
+	cp userspace/test.bin mnt/
+	make umountd
+
 # ===========================================================================
 # Clean
 # ===========================================================================

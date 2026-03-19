@@ -47,7 +47,7 @@ enter_userspace:
     /* Push EFLAGS with interrupts enabled */
     pushfl
     popl %eax
-    // orl $0x200, %eax             /* Set IF (interrupt enable) flag */
+    orl $0x200, %eax             /* Set IF (interrupt enable) flag */
     pushl %eax
     
     /* Push user code segment selector (CS) */

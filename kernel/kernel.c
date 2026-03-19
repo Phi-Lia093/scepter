@@ -62,6 +62,7 @@ void kernel_main(void)
      * CPU / interrupt infrastructure (PIC for early boot)
      * ------------------------------------------------------------------ */
     gdt_init();
+    tss_init();
     idt_init();
     isr_init();
     

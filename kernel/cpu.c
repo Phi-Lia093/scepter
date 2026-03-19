@@ -5,10 +5,16 @@
  * GDT
  * ========================================================================= */
 
-#define GDT_ENTRIES 5
+#define GDT_ENTRIES 6  /* null, kcode, kdata, ucode, udata, TSS */
 
 static gdt_entry_t gdt[GDT_ENTRIES];
 static gdt_ptr_t   gdt_ptr;
+
+/* =========================================================================
+ * TSS (Task State Segment)
+ * ========================================================================= */
+
+tss_entry_t tss;  /* Global TSS */
 
 /* Fill one GDT entry with a flat segment descriptor */
 static void gdt_set_entry(int idx, uint32_t base, uint32_t limit,
@@ -56,7 +62,39 @@ void gdt_init(void)
     /* 4: user data    - selector 0x20 (DPL=3) */
     gdt_set_entry(4, 0x00000000, 0xFFFFFFFF, 0xF2, 0xCF);
 
+    /* 5: TSS - selector 0x28 */
+    /* Will be initialized by tss_init() */
+
     gdt_flush(&gdt_ptr);
+}
+
+void tss_init(void)
+{
+    uint32_t base = (uint32_t)&tss;
+    uint32_t limit = sizeof(tss) - 1;
+    
+    /* Clear TSS */
+    for (int i = 0; i < sizeof(tss); i++) {
+        ((uint8_t*)&tss)[i] = 0;
+    }
+    
+    /* Set ss0 to kernel data segment */
+    tss.ss0 = GDT_KERNEL_DATA;
+    
+    /* esp0 will be set dynamically when entering userspace */
+    tss.esp0 = 0;
+    
+    /* Add TSS descriptor to GDT 
+     * access: 0x89 = 1000 1001 -> P=1, DPL=0, S=0 (system), Type=1001 (available 32-bit TSS)
+     * gran: 0x40 = 0100 0000 -> G=0 (byte granularity), DB=1, L=0, AVL=0
+     */
+    gdt_set_entry(5, base, limit, 0x89, 0x40);
+    
+    /* Reload GDT to include TSS */
+    gdt_flush(&gdt_ptr);
+    
+    /* Load TSS (selector 0x28 with RPL=0) */
+    __asm__ volatile("ltr %%ax" :: "a"(GDT_TSS));
 }
 
 /* =========================================================================

@@ -86,6 +86,10 @@ irq\num:
     movw  %gs, %ax
     pushl %eax
     
+    /* Save CR3 (user page directory) */
+    movl  %cr3, %eax
+    pushl %eax
+    
     /* Switch to kernel data segment */
     movw  $0x10, %ax
     movw  %ax, %ds
@@ -93,12 +97,16 @@ irq\num:
     movw  %ax, %fs
     movw  %ax, %gs
     
-    /* Switch to kernel page directory */
-    movl  kernel_page_table, %eax
-    movl  %eax, %cr3
+    /* NOTE: Don't switch CR3! Kernel is mapped as supervisor-only,
+     * so kernel code/data is accessible even with user CR3 active.
+     * User CR3 will be restored before IRET. */
     
     /* Call the C handler */
     call  \handler
+    
+    /* Restore CR3 (user page directory) */
+    popl  %eax
+    movl  %eax, %cr3
     
     /* Restore segment registers */
     popl  %eax

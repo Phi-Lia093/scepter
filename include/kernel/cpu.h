@@ -27,6 +27,34 @@ typedef struct {
 #define GDT_KERNEL_DATA  0x10
 #define GDT_USER_CODE    0x18
 #define GDT_USER_DATA    0x20
+#define GDT_TSS          0x28
+
+/* =========================================================================
+ * TSS (Task State Segment)
+ * ========================================================================= */
+
+typedef struct {
+    uint32_t prev_tss;   /* Previous TSS (unused) */
+    uint32_t esp0;       /* Stack pointer for ring 0 (kernel) */
+    uint32_t ss0;        /* Stack segment for ring 0 (kernel) */
+    uint32_t esp1;       /* Ring 1 (unused) */
+    uint32_t ss1;
+    uint32_t esp2;       /* Ring 2 (unused) */
+    uint32_t ss2;
+    uint32_t cr3;
+    uint32_t eip;
+    uint32_t eflags;
+    uint32_t eax, ecx, edx, ebx, esp, ebp, esi, edi;
+    uint32_t es, cs, ss, ds, fs, gs;
+    uint32_t ldt;
+    uint16_t trap;
+    uint16_t iomap_base;
+} __attribute__((packed)) tss_entry_t;
+
+/* Global TSS - used to set esp0 for ring 3->0 transitions */
+extern tss_entry_t tss;
+
+void tss_init(void);
 
 /* Load GDT and reload all segment registers (inline asm) */
 static inline void gdt_flush(gdt_ptr_t *ptr)
@@ -104,23 +132,5 @@ static inline void idt_flush(idt_ptr_t *ptr)
 
 void idt_init(void);
 void idt_set_gate(uint8_t num, uint32_t handler, uint16_t sel, uint8_t flags);
-
-/* =========================================================================
- * Paging
- * ========================================================================= */
-
-typedef uint32_t pde_t;   /* page directory entry */
-typedef uint32_t pte_t;   /* page table entry     */
-
-/* Page flags */
-#define PAGE_PRESENT   (1u << 0)
-#define PAGE_WRITE     (1u << 1)
-#define PAGE_USER      (1u << 2)
-#define PAGE_PWT       (1u << 3)  /* write-through */
-#define PAGE_PCD       (1u << 4)  /* cache disable */
-#define PAGE_SIZE_4MB  (1u << 7)  /* PSE – only valid in PDE */
-
-/* Map a single 4 KB page: virt → phys in page_dir */
-void map_page(pde_t *page_dir, uint32_t virt, uint32_t phys, uint32_t flags);
 
 #endif /* CPU_H */
