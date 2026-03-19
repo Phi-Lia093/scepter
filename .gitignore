@@ -8,5 +8,4 @@ build/
 
 # Log files
 *.log
-
-userspace/
+*.bin

@@ -76,8 +76,13 @@ int map_page(uint32_t *pgdir, uint32_t virt_addr, uint32_t phys_addr, uint32_t f
             return -1;
         }
         
-        /* Set page directory entry */
-        *pde = (uint32_t)pt_phys | 0x3;  /* Present | Writable */
+        /* Set page directory entry with proper flags
+         * Must include U/S bit if mapping user pages */
+        uint32_t pde_flags = 0x3;  /* Present | Writable */
+        if (flags & 0x4) {  /* If PTE has U/S bit */
+            pde_flags |= 0x4;  /* Set U/S in PDE too */
+        }
+        *pde = (uint32_t)pt_phys | pde_flags;
         
         /* Zero the page table (access via direct-mapped region)
          * Page tables themselves are allocated from direct-mapped region */
@@ -152,6 +157,46 @@ void flush_tlb(void)
     uint32_t cr3;
     asm volatile("mov %%cr3, %0" : "=r"(cr3));
     asm volatile("mov %0, %%cr3" :: "r"(cr3) : "memory");
+}
+
+/* ============================================================================
+ * Page Directory Management
+ * ============================================================================ */
+
+/**
+ * Create a new user page directory with kernel mappings (supervisor-only)
+ * User space (0-767): empty, will be filled by exec
+ * Kernel space (768-1023): copied from boot pgdir, supervisor-only
+ * 
+ * @return Physical address of new page directory, or NULL on error
+ */
+uint32_t* create_user_pgdir(void)
+{
+    /* Allocate page directory (must be page-aligned) */
+    uint32_t *pgdir_phys = (uint32_t*)page_alloc_flags(PAGE_SIZE, MEM_PHY);
+    if (!pgdir_phys) {
+        printk("[PGTABLE] Failed to allocate user page directory\n");
+        return NULL;
+    }
+    
+    /* Get virtual address for accessing the page directory */
+    uint32_t *pgdir_virt = (uint32_t*)PHYS_TO_VIRT((uint32_t)pgdir_phys);
+    
+    /* Initialize user space entries (0-767) to 0 */
+    for (int i = 0; i < 768; i++) {
+        pgdir_virt[i] = 0;
+    }
+    
+    /* Copy kernel space entries (768-1023) from boot page directory */
+    /* These are already supervisor-only (U/S bit = 0) */
+    for (int i = 768; i < 1024; i++) {
+        pgdir_virt[i] = boot_page_directory[i];
+    }
+    
+    printk("[PGTABLE] Created user page directory at phys 0x%08x (kernel mapped as supervisor)\n",
+           (uint32_t)pgdir_phys);
+    
+    return pgdir_phys;
 }
 
 /* ============================================================================

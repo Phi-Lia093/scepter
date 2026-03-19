@@ -22,6 +22,35 @@
 #include "fs/devfs.h"
 #include "fs/minix3.h"
 #include "driver/acpi/acpi.h"
+#include "kernel/exec.h"
+
+/* =========================================================================
+ * Test userspace execution
+ * ========================================================================= */
+
+static void test_userspace_exec(void)
+{
+    printk("\n========================================\n");
+    printk("  USERSPACE EXECUTION TEST\n");
+    printk("========================================\n\n");
+    
+    printk("[TEST] Attempting to execute /test.bin\n");
+    printk("[TEST] This should:\n");
+    printk("[TEST]   1. Load flat binary\n");
+    printk("[TEST]   2. Create user page directory (no kernel mappings)\n");
+    printk("[TEST]   3. Map binary at 0x08000000 with RWX\n");
+    printk("[TEST]   4. Switch CR3 to user page directory\n");
+    printk("[TEST]   5. IRET to userspace\n");
+    printk("[TEST]   6. Execute: mov eax, 0xDEADBEEF; jmp $\n");
+    printk("[TEST] Expected: Infinite loop in userspace\n");
+    printk("[TEST] Use (qemu) info registers to verify EAX=0xDEADBEEF\n\n");
+    
+    /* This call does NOT return! */
+    exec_flat("/test.bin");
+    
+    /* Should never reach here */
+    printk("[TEST] ERROR: exec_flat returned!\n");
+}
 
 /* =========================================================================
  * kernel_main
@@ -102,6 +131,14 @@ void kernel_main(void)
         sti();
         while (1);
     }
+    
+    /* ------------------------------------------------------------------
+     * Test userspace execution
+     * ------------------------------------------------------------------ */
+    test_userspace_exec();  /* Does NOT return! */
+    
+    /* Should never reach here */
+    printk("[KERNEL] ERROR: Returned from test!\n");
     sti();
     while (1);
 }

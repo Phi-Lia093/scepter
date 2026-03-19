@@ -69,4 +69,14 @@ void flush_tlb(void);
  */
 uint32_t count_mapped_pages(uint32_t virt_start, uint32_t virt_end);
 
+/* ============================================================================
+ * Page Directory Management
+ * ============================================================================ */
+
+/**
+ * Create a new user page directory with NO kernel mappings
+ * @return Physical address of new page directory, or NULL on error
+ */
+uint32_t* create_user_pgdir(void);
+
 #endif /* PGTABLE_H */
