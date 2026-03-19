@@ -201,12 +201,12 @@ void *ioremap(uint32_t phys_addr, uint32_t size)
         return NULL;
     }
     
-    /* Map each page */
+    /* Map each page (NULL = use boot page directory for kernel mappings) */
     for (uint32_t i = 0; i < num_pages; i++) {
         uint32_t virt = virt_base + (i * PAGE_SIZE);
         uint32_t phys = phys_base + (i * PAGE_SIZE);
         
-        if (map_page(virt, phys, 0x3) < 0) {  /* Present | Writable */
+        if (map_page(NULL, virt, phys, 0x3) < 0) {  /* Present | Writable */
             printk("[IOREMAP] ERROR: Failed to map page %u\n", i);
             /* Unmap what we've mapped so far */
             for (uint32_t j = 0; j < i; j++) {

@@ -68,6 +68,15 @@ void mm_init(void)
            kernel_end_phys, (uint32_t)kernel_end);
     printk("[MM] First free page:  phys=0x%08x\n",
            mem_first_free_phys);
+    
+    /* CRITICAL: Verify we're not allocating from low memory (below 1MB) */
+    if (mem_first_free_phys < 0x100000) {
+        printk("[MM] ERROR: Kernel ends below 1MB (0x%08x)!\n", mem_first_free_phys);
+        printk("[MM] This would cause buddy allocator to use low memory.\n");
+        printk("[MM] Low memory (0x0-0x100000) is reserved for BIOS/DMA.\n");
+        while(1);  /* Halt - cannot continue safely */
+    }
+    printk("[MM] ✓ Low memory check passed (kernel above 1MB)\n");
 
     /* Calculate direct-mapped region size (Linux-style):
      * - Map 1/4 of total physical RAM

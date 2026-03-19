@@ -29,13 +29,14 @@ uint32_t* get_pte(uint32_t virt_addr);
  * ============================================================================ */
 
 /**
- * Map a physical page to a virtual page
+ * Map a physical page to a virtual page in a specific page directory
+ * @param pgdir Page directory to map in (NULL = current/boot)
  * @param virt_addr Virtual address (will be page-aligned)
  * @param phys_addr Physical address (will be page-aligned)
  * @param flags Page flags (Present | Writable | User | etc.)
  * @return 0 on success, -1 on error
  */
-int map_page(uint32_t virt_addr, uint32_t phys_addr, uint32_t flags);
+int map_page(uint32_t *pgdir, uint32_t virt_addr, uint32_t phys_addr, uint32_t flags);
 
 /**
  * Invalidate (unmap) a single virtual page

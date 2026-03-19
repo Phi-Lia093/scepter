@@ -8,3 +8,5 @@ build/
 
 # Log files
 *.log
+
+userspace/

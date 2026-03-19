@@ -45,21 +45,27 @@ uint32_t* get_pte(uint32_t virt_addr)
  * ============================================================================ */
 
 /**
- * Map a physical page to a virtual page
+ * Map a physical page to a virtual page in a specific page directory
+ * @param pgdir Page directory to map in (NULL = current/boot)
  * @param virt_addr Virtual address (will be page-aligned)
  * @param phys_addr Physical address (will be page-aligned)
  * @param flags Page flags (Present | Writable | User | etc.)
  * @return 0 on success, -1 on error
  */
-int map_page(uint32_t virt_addr, uint32_t phys_addr, uint32_t flags)
+int map_page(uint32_t *pgdir, uint32_t virt_addr, uint32_t phys_addr, uint32_t flags)
 {
+    /* Use boot page directory if none specified */
+    if (!pgdir) {
+        pgdir = boot_page_directory;
+    }
+    
     /* Page-align addresses */
     virt_addr &= ~0xFFF;
     phys_addr &= ~0xFFF;
     
     /* Get page directory entry */
     uint32_t pde_idx = virt_addr >> 22;
-    uint32_t *pde = &boot_page_directory[pde_idx];
+    uint32_t *pde = &pgdir[pde_idx];
     
     /* Allocate page table if not present */
     if (!(*pde & 0x1)) {
