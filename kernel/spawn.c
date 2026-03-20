@@ -167,29 +167,83 @@ int spawn_init(const char *path)
     task->mm.brk_start = (task->mm.code_end + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
     task->mm.brk_end = task->mm.brk_start;
     
+    /* Allocate user stack (1 page for now) */
+    void *stack_page = page_alloc(PAGE_SIZE);
+    if (!stack_page) {
+        printk("[SPAWN] Failed to allocate stack page\n");
+        free_task(task);
+        return -1;
+    }
+    
+    /* Map stack at top of user space (just below kernel at 0xC0000000) */
+    uint32_t stack_vaddr = USER_STACK_TOP - PAGE_SIZE;
+    uint32_t stack_phys = VIRT_TO_PHYS((uint32_t)stack_page);
+    
+    if (map_user_page(task, stack_vaddr, stack_phys, 0x7) < 0) {
+        printk("[SPAWN] Failed to map stack page\n");
+        free_task(task);
+        return -1;
+    }
+    
+    printk("[SPAWN] Mapped stack: vaddr=0x%08x phys=0x%08x\n", stack_vaddr, stack_phys);
+    
     printk("[SPAWN] Memory layout:\n");
     printk("[SPAWN]   Code:  0x%08x - 0x%08x\n", task->mm.code_start, task->mm.code_end);
     printk("[SPAWN]   Heap:  0x%08x - 0x%08x\n", task->mm.brk_start, task->mm.brk_end);
     printk("[SPAWN]   Stack: 0x%08x - 0x%08x\n", task->mm.stack_start, task->mm.stack_end);
     
-    /* Set up initial CPU context on kernel stack */
-    uint32_t *kstack = (uint32_t*)(task->kernel_esp);
+    /* Set up initial kernel stack for this task.
+     *
+     * switch_to() does: popa, popfl, ret
+     * Stack must be laid out so that:
+     *   ESP+0  = EDI  (popa reads first)
+     *   ESP+4  = ESI
+     *   ESP+8  = EBP
+     *   ESP+12 = dummy (popa skips ESP)
+     *   ESP+16 = EBX
+     *   ESP+20 = EDX
+     *   ESP+24 = ECX
+     *   ESP+28 = EAX  (popa reads last, ESP now +32)
+     *   ESP+32 = EFLAGS  (popfl reads, ESP now +36)
+     *   ESP+36 = first_entry_trampoline  (ret jumps here, ESP +40)
+     *   ESP+40 = EIP=USER_TEXT_START  \
+     *   ESP+44 = CS=0x1B               |  IRET frame
+     *   ESP+48 = EFLAGS=0x202          |
+     *   ESP+52 = ESP=USER_STACK_TOP    |
+     *   ESP+56 = SS=0x23              /
+     *
+     * Since kstack-- goes to lower addresses, push HIGH-address items first:
+     */
+    extern void first_entry_trampoline(void);
     
-    /* Build fake switch_to frame: [ret_addr] [regs] [eflags] */
-    kstack--; *kstack = (uint32_t)&&enter_userspace;  /* Return address */
-    kstack--; *kstack = 0;  /* EDI */
-    kstack--; *kstack = 0;  /* ESI */
-    kstack--; *kstack = 0;  /* EBP */
-    kstack--; *kstack = 0;  /* ESP (ignored) */
-    kstack--; *kstack = 0;  /* EBX */
-    kstack--; *kstack = 0;  /* EDX */
-    kstack--; *kstack = 0;  /* ECX */
-    kstack--; *kstack = 0;  /* EAX */
-    kstack--; *kstack = 0x202;  /* EFLAGS (IF set) */
+    uint32_t *kstack = (uint32_t *)(task->kernel_esp);
+    
+    /* IRET frame (highest address = pushed first) */
+    kstack--; *kstack = 0x23;            /* SS            ESP+56 */
+    kstack--; *kstack = USER_STACK_TOP;  /* user ESP      ESP+52 */
+    kstack--; *kstack = 0x202;           /* EFLAGS (iret) ESP+48 */
+    kstack--; *kstack = 0x1B;            /* CS            ESP+44 */
+    kstack--; *kstack = USER_TEXT_START; /* EIP           ESP+40 */
+    
+    /* Return address for switch_to's ret */
+    kstack--; *kstack = (uint32_t)first_entry_trampoline; /* ESP+36 */
+    
+    /* EFLAGS for switch_to's popfl */
+    kstack--; *kstack = 0x202;           /* EFLAGS        ESP+32 */
+    
+    /* popa frame: push in REVERSE order (EAX first, EDI last) */
+    kstack--; *kstack = 0;  /* EAX   ESP+28 */
+    kstack--; *kstack = 0;  /* ECX   ESP+24 */
+    kstack--; *kstack = 0;  /* EDX   ESP+20 */
+    kstack--; *kstack = 0;  /* EBX   ESP+16 */
+    kstack--; *kstack = 0;  /* dummy ESP+12 */
+    kstack--; *kstack = 0;  /* EBP   ESP+8  */
+    kstack--; *kstack = 0;  /* ESI   ESP+4  */
+    kstack--; *kstack = 0;  /* EDI   ESP+0  (popa reads this first!) */
     
     task->kernel_esp = (uint32_t)kstack;
     
-    /* Set TSS.esp0 for syscalls */
+    /* Set TSS.esp0 to top of kernel stack (for ring3→ring0 transitions) */
     extern tss_entry_t tss;
     tss.esp0 = task->kernel_stack + 8192;
     
@@ -197,51 +251,9 @@ int spawn_init(const char *path)
     task->state = TASK_READY;
     add_task(task);
     
-    printk("[SPAWN] Init process created: PID %u, entry=0x%08x\n\n",
-           task->pid, USER_TEXT_START);
+    printk("[SPAWN] Init process created: PID %u, entry=0x%08x, CR3=0x%08x\n\n",
+           task->pid, USER_TEXT_START,
+           VIRT_TO_PHYS((uint32_t)&task->mm.pgdir[0]));
     
     return 0;
-
-enter_userspace:
-    /* This runs when init is first scheduled */
-    printk("[SPAWN] First schedule to PID %u, entering userspace\n", current->pid);
-    
-    /* Calculate CR3 */
-    uint32_t cr3 = VIRT_TO_PHYS((uint32_t)&current->mm.pgdir[0]);
-    
-    /* Enter Ring 3 */
-    __asm__ volatile (
-        "cli\n"
-        
-        /* Load task's CR3 */
-        "movl %0, %%eax\n"
-        "movl %%eax, %%cr3\n"
-        
-        /* Set up user segments */
-        "movw $0x23, %%ax\n"
-        "movw %%ax, %%ds\n"
-        "movw %%ax, %%es\n"
-        "movw %%ax, %%fs\n"
-        "movw %%ax, %%gs\n"
-        
-        /* Build IRET frame */
-        "pushl $0x23\n"        /* SS */
-        "pushl %2\n"           /* ESP (user stack top) */
-        "pushfl\n"
-        "popl %%eax\n"
-        "orl $0x200, %%eax\n"  /* Enable interrupts */
-        "pushl %%eax\n"        /* EFLAGS */
-        "pushl $0x1B\n"        /* CS */
-        "pushl %1\n"           /* EIP */
-        
-        "iret\n"
-        :
-        : "r"(cr3),
-          "r"(USER_TEXT_START),
-          "r"(USER_STACK_TOP)
-        : "eax"
-    );
-    
-    /* Should never return */
-    while(1);
 }

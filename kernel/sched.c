@@ -13,7 +13,13 @@
  * External Symbols
  * ============================================================================ */
 
-extern uint32_t kernel_page_table[];  /* Defined in boot.s */
+/* boot_page_directory: the actual kernel page directory (virtual address) */
+extern uint32_t boot_page_directory[];
+
+/* kernel_page_table: 4-byte variable holding the PHYSICAL address of
+ * boot_page_directory (set in boot.s via:
+ *   mov $boot_page_directory-0xC0000000, kernel_page_table) */
+extern uint32_t kernel_page_table;
 
 /* ============================================================================
  * Global Variables
@@ -49,8 +55,8 @@ void init_task_mm(task_struct_t *task)
     /* Clear user space page directory entries (0-767) */
     memset(&task->mm.pgdir[0], 0, 768 * sizeof(uint32_t));
     
-    /* Copy kernel space page directory entries (768-1023) */
-    memcpy(&task->mm.pgdir[768], &kernel_page_table[768], 256 * sizeof(uint32_t));
+    /* Copy kernel space page directory entries (768-1023) from actual page directory */
+    memcpy(&task->mm.pgdir[768], &boot_page_directory[768], 256 * sizeof(uint32_t));
     
     /* Initialize page table pointers (all NULL initially) */
     memset(task->mm.page_tables, 0, sizeof(task->mm.page_tables));
@@ -65,6 +71,8 @@ void init_task_mm(task_struct_t *task)
     
     printk("[SCHED] Initialized mm for task PID %u: pgdir=%p (phys=0x%08x)\n",
            task->pid, &task->mm.pgdir[0], VIRT_TO_PHYS((uint32_t)&task->mm.pgdir[0]));
+    printk("[SCHED]   boot_pgdir[768]=0x%08x task->pgdir[768]=0x%08x\n",
+           boot_page_directory[768], task->mm.pgdir[768]);
 }
 
 /* ============================================================================
@@ -235,8 +243,16 @@ void schedule(void)
     /* Update current */
     current = next;
     
-    /* Get CR3 (physical address of page directory) */
-    uint32_t new_cr3 = VIRT_TO_PHYS((uint32_t)&next->mm.pgdir[0]);
+    /* Get CR3 (physical address of page directory)
+     * kernel_page_table is a uint32_t holding the PHYSICAL addr of boot_page_directory
+     * For user tasks, compute from their embedded (aligned) page directory */
+    uint32_t new_cr3;
+    if (next->pid == 0) {
+        /* Kernel task: use stored physical address directly */
+        new_cr3 = kernel_page_table;
+    } else {
+        new_cr3 = VIRT_TO_PHYS((uint32_t)&next->mm.pgdir[0]);
+    }
     
     /* Perform context switch */
     switch_to(&prev->kernel_esp, next->kernel_esp, new_cr3);

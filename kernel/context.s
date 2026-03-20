@@ -4,6 +4,7 @@
 
 .global enter_userspace
 .global switch_to
+.global first_entry_trampoline
 
 /* ============================================================================
  * enter_userspace(uint32_t cr3, uint32_t entry)
@@ -102,3 +103,27 @@ switch_to:
     popfl                        /* Restore EFLAGS */
     
     ret                          /* Return to new task */
+
+/* ============================================================================
+ * first_entry_trampoline
+ *
+ * Called (via ret) when a task is scheduled for the FIRST TIME.
+ * The kernel stack already has a ring-3 IRET frame waiting:
+ *   [ESP+0]  EIP  (user entry point)
+ *   [ESP+4]  CS   (0x1B = user code, RPL=3)
+ *   [ESP+8]  EFLAGS
+ *   [ESP+12] ESP  (user stack pointer)
+ *   [ESP+16] SS   (0x23 = user data, RPL=3)
+ *
+ * Just execute IRET to drop into ring 3.
+ * ============================================================================ */
+
+first_entry_trampoline:
+    /* Set user data segments before iret */
+    movl $0x23, %eax
+    movw %ax, %ds
+    movw %ax, %es
+    movw %ax, %fs
+    movw %ax, %gs
+    
+    iret                         /* Jump
