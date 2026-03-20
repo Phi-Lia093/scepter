@@ -3,6 +3,7 @@
  * ============================================================================ */
 
 #include "kernel/sched.h"
+#include "kernel/cpu.h"
 #include "lib/string.h"
 #include "lib/printk.h"
 #include "mm/slab.h"
@@ -234,14 +235,28 @@ void schedule(void)
     
     printk("[SCHED] Switch: PID %u -> PID %u\n", prev->pid, next->pid);
     
-    /* Update states */
+    /* Update states:
+     * When leaving kernel task for a user task, block kernel so it's not
+     * rescheduled - the idle loop has no useful work once init is running */
     if (prev->state == TASK_RUNNING) {
-        prev->state = TASK_READY;
+        if (prev->pid == 0 && next->pid != 0) {
+            prev->state = TASK_BLOCKED;  /* Kernel task: don't reschedule */
+        } else {
+            prev->state = TASK_READY;
+        }
     }
     next->state = TASK_RUNNING;
     
     /* Update current */
     current = next;
+    
+    /* Update TSS.esp0 to new task's kernel stack top.
+     * This is CRITICAL for ring-3 tasks: when a timer fires while PID N is
+     * in ring 3, the CPU uses TSS.esp0 as the ring-0 stack pointer.
+     * If esp0 points to the wrong stack, the interrupt frame goes to garbage. */
+    if (next->pid != 0) {
+        tss.esp0 = next->kernel_stack + 8192;
+    }
     
     /* Get CR3 (physical address of page directory)
      * kernel_page_table is a uint32_t holding the PHYSICAL addr of boot_page_directory

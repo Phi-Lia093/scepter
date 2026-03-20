@@ -325,44 +325,24 @@ int fs_unmount(const char *mount_path)
 
 int fs_open(const char *path, int flags)
 {
-    if (!path) {
-        printk("[VFS] fs_open: path is NULL\n");
-        return -1;
-    }
+    if (!path) return -1;
 
     char abs[MAX_PATH_LEN];
-    if (resolve_path(path, abs, sizeof(abs)) != 0) {
-        printk("[VFS] fs_open: resolve_path failed for '%s'\n", path);
-        return -1;
-    }
-    
-    printk("[VFS] fs_open: abs='%s'\n", abs);
+    if (resolve_path(path, abs, sizeof(abs)) != 0) return -1;
 
     const char *rel_path;
     mount_point_t *mp = resolve_mount(abs, &rel_path);
-    if (!mp) { 
-        printk("[VFS] No mount point for: %s\n", abs); 
-        return -1; 
-    }
-    
-    printk("[VFS] fs_open: mount found, rel='%s'\n", rel_path);
+    if (!mp) { printk("[VFS] No mount point for: %s\n", abs); return -1; }
 
     file_handle_t *fh = alloc_file_handle();
-    if (!fh) { 
-        printk("[VFS] OOM: file handle\n"); 
-        return -1; 
-    }
-    
-    printk("[VFS] fs_open: allocated fd=%d\n", fh->fd);
+    if (!fh) { printk("[VFS] OOM: file handle\n"); return -1; }
 
     int   fs_id       = mp->fs_id;
     void *file_private = NULL;
 
     if (fs_drivers[fs_id].ops.open) {
-        printk("[VFS] fs_open: calling fs open for '%s'\n", rel_path);
         if (fs_drivers[fs_id].ops.open(mp->fs_private, rel_path,
                                        flags, &file_private) != 0) {
-            printk("[VFS] fs_open: filesystem open failed\n");
             free_file_handle(fh->fd);
             return -1;
         }
@@ -373,8 +353,6 @@ int fs_open(const char *path, int flags)
     fh->file_private = file_private;
     fh->offset       = 0;
     fh->flags        = flags;
-    
-    printk("[VFS] fs_open: success, returning fd=%d\n", fh->fd);
     return fh->fd;
 }
 

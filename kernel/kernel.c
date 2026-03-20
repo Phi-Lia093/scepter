@@ -122,6 +122,6 @@ void kernel_main(void)
     
     /* Kernel idle loop - scheduler will preempt us */
     while (1) {
-        __asm__ volatile("hlt");
+        printk("kernel\n");
     }
 }

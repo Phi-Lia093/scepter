@@ -27,13 +27,11 @@ uint32_t pit_get_ticks(void)
 void pit_isr(void)
 {
     pit_ticks++;
-    
+    interrupt_eoi(IRQ0);
     /* Call scheduler every 10 ticks (100ms at 100Hz) */
     if (pit_ticks % 10 == 0) {
         schedule();
     }
-    
-    interrupt_eoi(IRQ0);
 }
 
 /* =========================================================================

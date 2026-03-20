@@ -220,7 +220,7 @@ int spawn_init(const char *path)
     
     /* IRET frame (highest address = pushed first) */
     kstack--; *kstack = 0x23;            /* SS            ESP+56 */
-    kstack--; *kstack = USER_STACK_TOP;  /* user ESP      ESP+52 */
+    kstack--; *kstack = USER_STACK_TOP - 4;  /* user ESP      ESP+52 (0xBFFFFFFC, within mapped page) */
     kstack--; *kstack = 0x202;           /* EFLAGS (iret) ESP+48 */
     kstack--; *kstack = 0x1B;            /* CS            ESP+44 */
     kstack--; *kstack = USER_TEXT_START; /* EIP           ESP+40 */
@@ -228,8 +228,11 @@ int spawn_init(const char *path)
     /* Return address for switch_to's ret */
     kstack--; *kstack = (uint32_t)first_entry_trampoline; /* ESP+36 */
     
-    /* EFLAGS for switch_to's popfl */
-    kstack--; *kstack = 0x202;           /* EFLAGS        ESP+32 */
+    /* EFLAGS for switch_to's popfl: IF=0 (keep interrupts disabled).
+     * Interrupts will be enabled atomically by the iret in first_entry_trampoline.
+     * Enabling IF here (inside the interrupt handler) would risk a nested timer
+     * interrupt corrupting the ring-3 IRET frame still on the kernel stack. */
+    kstack--; *kstack = 0x002;           /* EFLAGS        ESP+32  (IF=0!) */
     
     /* popa frame: push in REVERSE order (EAX first, EDI last) */
     kstack--; *kstack = 0;  /* EAX   ESP+28 */

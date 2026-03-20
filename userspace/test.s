@@ -26,7 +26,7 @@ start:
     
     ; Infinite loop
 .loop:
-    jmp .loop
+    jmp start
 
 
 name: db "/dev/vga0", 0

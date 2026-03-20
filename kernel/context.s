@@ -28,7 +28,6 @@ enter_userspace:
     /* Load user CR3 - kernel is still mapped (supervisor-only) */
     movl %eax, %cr3
     
-    
     /* Set up user data segment (GDT entry 4, RPL=3) */
     movl $0x23, %eax             /* 0x20 (GDT offset) | 0x3 (RPL=3) */
     movw %ax, %ds
@@ -84,7 +83,13 @@ switch_to:
     pusha                        /* Save: EAX ECX EDX EBX ESP EBP ESI EDI */
     
     /* Get parameters from stack
-     * Stack: [EFLAGS] [EAX] [ECX] [EDX] [EBX] [ESP] [EBP] [ESI] [EDI] [ret] [old_esp] [new_esp] [new_cr3] */
+     * Stack layout after pushfl + pusha (9 dwords = 36 bytes):
+     * [ESP+0..28] = pusha regs (EDI first)
+     * [ESP+32]    = EFLAGS (pushfl)
+     * [ESP+36]    = return address
+     * [ESP+40]    = old_esp (arg0)
+     * [ESP+44]    = new_esp (arg1)
+     * [ESP+48]    = new_cr3 (arg2) */
     movl 40(%esp), %eax          /* old_esp pointer */
     movl 44(%esp), %edx          /* new_esp value */
     movl 48(%esp), %ecx          /* new_cr3 value */
@@ -100,30 +105,38 @@ switch_to:
     
     /* Restore new context */
     popa                         /* Restore: EDI ESI EBP ESP EBX EDX ECX EAX */
-    popfl                        /* Restore EFLAGS */
+    popfl                        /* Restore EFLAGS (IF bit comes from saved value) */
     
     ret                          /* Return to new task */
 
 /* ============================================================================
  * first_entry_trampoline
  *
- * Called (via ret) when a task is scheduled for the FIRST TIME.
+ * Called (via ret from switch_to) when a task is scheduled for the FIRST TIME.
  * The kernel stack already has a ring-3 IRET frame waiting:
  *   [ESP+0]  EIP  (user entry point)
  *   [ESP+4]  CS   (0x1B = user code, RPL=3)
- *   [ESP+8]  EFLAGS
- *   [ESP+12] ESP  (user stack pointer)
+ *   [ESP+8]  EFLAGS (0x202, IF=1)
+ *   [ESP+12] ESP  (user stack pointer, 0xBFFFFFFC)
  *   [ESP+16] SS   (0x23 = user data, RPL=3)
  *
- * Just execute IRET to drop into ring 3.
+ * The EFLAGS saved by switch_to's popfl has IF=0 (set in spawn.c as 0x002),
+ * so interrupts are disabled when we arrive here.
+ * The iret atomically enables interrupts (via EFLAGS=0x202) when entering ring 3.
  * ============================================================================ */
 
 first_entry_trampoline:
-    /* Set user data segments before iret */
+    cli                          /* Ensure interrupts disabled until iret */
+
+    /* Set user data segments before privilege switch */
     movl $0x23, %eax
     movw %ax, %ds
     movw %ax, %es
     movw %ax, %fs
     movw %ax, %gs
-    
-    iret                         /* Jump
+
+    /* iret atomically:
+     *   - Pops EIP, CS (ring 3), EFLAGS (IF=1), ESP (user), SS (ring 3)
+     *   - Switches privilege level to ring 3
+     *   - Enables interrupts via EFLAGS.IF=1                              */
+    iret
