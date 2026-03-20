@@ -24,30 +24,6 @@
 #include "driver/acpi/acpi.h"
 #include "kernel/exec.h"
 
-/* =========================================================================
- * Test userspace execution
- * ========================================================================= */
-
-static void test_userspace_exec(void)
-{
-    printk("\n========================================\n");
-    printk("  USERSPACE EXECUTION TEST\n");
-    printk("========================================\n\n");
-    
-    printk("[TEST] Attempting to execute /hello.bin\n");
-    printk("[TEST] This should:\n");
-    printk("[TEST]   1. Load flat binary at 0x08000000\n");
-    printk("[TEST]   2. Create user page directory (kernel as supervisor)\n");
-    printk("[TEST]   3. Execute syscalls: open(), write(), close()\n");
-    printk("[TEST]   4. Write 'Hello from userspace!' to /test.txt\n");
-    printk("[TEST] Expected: EAX=0x600DC0DE on success, 0xBADC0DE on error\n\n");
-    
-    /* This call does NOT return! */
-    exec_flat("/test.bin");
-    
-    /* Should never reach here */
-    printk("[TEST] ERROR: exec_flat returned!\n");
-}
 
 /* =========================================================================
  * kernel_main
@@ -131,12 +107,21 @@ void kernel_main(void)
     }
     
     /* ------------------------------------------------------------------
-     * Test userspace execution
+     * Spawn init process
      * ------------------------------------------------------------------ */
-    test_userspace_exec();  /* Does NOT return! */
+    if (spawn_init("/test.bin") < 0) {
+        printk("[KERNEL] Failed to spawn init process\n");
+        sti();
+        while (1);
+    }
     
-    /* Should never reach here */
-    printk("[KERNEL] ERROR: Returned from test!\n");
+    printk("[KERNEL] Init process spawned, entering scheduler loop\n\n");
+    
+    /* Enable interrupts and idle - scheduler will switch to init */
     sti();
-    while (1);
+    
+    /* Kernel idle loop - scheduler will preempt us */
+    while (1) {
+        __asm__ volatile("hlt");
+    }
 }

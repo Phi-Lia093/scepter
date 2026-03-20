@@ -35,4 +35,12 @@ typedef struct {
  */
 int exec_flat(const char *path);
 
+/**
+ * Spawn init process (PID 1) from a binary file
+ * Creates a task with proper memory management and adds to scheduler
+ * @param path Path to binary file
+ * @return 0 on success, -1 on error
+ */
+int spawn_init(const char *path);
+
 #endif /* EXEC_H */

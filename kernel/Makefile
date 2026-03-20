@@ -3,7 +3,7 @@
 # ============================================================================
 
 # Source files
-SRCS_C = kernel.c cpu.c panic.c sched.c exec.c syscall.c
+SRCS_C = kernel.c cpu.c panic.c sched.c exec.c syscall.c spawn.c
 SRCS_S = boot.s isr.s context.s
 
 # Object files (in build directory)

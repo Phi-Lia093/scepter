@@ -2,6 +2,7 @@
 #include "driver/char/char.h"
 #include "driver/apic/interrupt.h"
 #include "kernel/cpu.h"
+#include "kernel/sched.h"
 #include "fs/devfs.h"
 #include "lib/printk.h"
 #include "kernel/asm.h"
@@ -26,9 +27,11 @@ uint32_t pit_get_ticks(void)
 void pit_isr(void)
 {
     pit_ticks++;
-    // if(pit_ticks%100==0){
-    //     printk("1sec\n");
-    // }
+    
+    /* Call scheduler every 10 ticks (100ms at 100Hz) */
+    if (pit_ticks % 10 == 0) {
+        schedule();
+    }
     
     interrupt_eoi(IRQ0);
 }

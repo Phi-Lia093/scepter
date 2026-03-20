@@ -110,8 +110,6 @@ static int sys_open(const char *user_path, int flags)
     }
     kernel_path[sizeof(kernel_path) - 1] = '\0';
     
-    printk("[SYSCALL] open(\"%s\", 0x%x)\n", kernel_path, flags);
-    
     /* Call kernel VFS */
     return fs_open(kernel_path, flags);
 }
@@ -134,8 +132,6 @@ static int sys_write(int fd, const char *user_buf, size_t count)
         return -1;
     }
     
-    printk("[SYSCALL] write(fd=%d, buf=0x%08x, count=%u)\n",
-           fd, (uint32_t)user_buf, count);
     
     /* Write in chunks to avoid large kernel buffer */
     size_t total_written = 0;
@@ -164,7 +160,6 @@ static int sys_write(int fd, const char *user_buf, size_t count)
         }
     }
     
-    printk("[SYSCALL] write: wrote %u bytes\n", total_written);
     return (int)total_written;
 }
 
@@ -226,7 +221,6 @@ static int sys_read(int fd, char *user_buf, size_t count)
  */
 static int sys_close(int fd)
 {
-    printk("[SYSCALL] close(fd=%d)\n", fd);
     return fs_close(fd);
 }
 
@@ -242,9 +236,6 @@ int syscall_handler(int num, uint32_t arg1, uint32_t arg2,
 {
     (void)arg4;  /* Unused */
     (void)arg5;  /* Unused */
-    
-    printk("[SYSCALL] num=%d arg1=0x%08x arg2=0x%08x arg3=0x%08x %08x %08x\n",
-           num, arg1, arg2, arg3, arg4, arg5);
     
     switch (num) {
         case SYS_OPEN:

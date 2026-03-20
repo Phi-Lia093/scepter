@@ -21,7 +21,7 @@ start:
     mov ebx, eax
     mov eax, 4
     mov ecx, str
-    mov edx, 3
+    mov edx, 11
     int 0x80
     
     ; Infinite loop
@@ -29,5 +29,5 @@ start:
     jmp .loop
 
 
-name: db "/dev/tty0", 0
-str: db "AAA", 0
+name: db "/dev/vga0", 0
+str: db "Hello World", 0

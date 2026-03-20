@@ -3,6 +3,7 @@
  * ============================================================================ */
 
 .global enter_userspace
+.global switch_to
 
 /* ============================================================================
  * enter_userspace(uint32_t cr3, uint32_t entry)
@@ -63,3 +64,41 @@ enter_userspace:
 .loop:
     hlt
     jmp .loop
+
+/* ============================================================================
+ * switch_to(uint32_t *old_esp, uint32_t new_esp, uint32_t new_cr3)
+ *
+ * Low-level context switch between tasks:
+ * 1. Save current task's context (registers + EFLAGS)
+ * 2. Save current ESP to *old_esp
+ * 3. Load new task's ESP
+ * 4. Switch to new task's CR3 (page directory)
+ * 5. Restore new task's context
+ * 6. Return (now running as new task)
+ * ============================================================================ */
+
+switch_to:
+    /* Save current context */
+    pushfl                       /* Save EFLAGS */
+    pusha                        /* Save: EAX ECX EDX EBX ESP EBP ESI EDI */
+    
+    /* Get parameters from stack
+     * Stack: [EFLAGS] [EAX] [ECX] [EDX] [EBX] [ESP] [EBP] [ESI] [EDI] [ret] [old_esp] [new_esp] [new_cr3] */
+    movl 40(%esp), %eax          /* old_esp pointer */
+    movl 44(%esp), %edx          /* new_esp value */
+    movl 48(%esp), %ecx          /* new_cr3 value */
+    
+    /* Save old ESP */
+    movl %esp, (%eax)            /* *old_esp = current ESP */
+    
+    /* Switch to new stack */
+    movl %edx, %esp              /* ESP = new_esp */
+    
+    /* Switch page directory */
+    movl %ecx, %cr3              /* CR3 = new_cr3 */
+    
+    /* Restore new context */
+    popa                         /* Restore: EDI ESI EBP ESP EBX EDX ECX EAX */
+    popfl                        /* Restore EFLAGS */
+    
+    ret                          /* Return to new task */
