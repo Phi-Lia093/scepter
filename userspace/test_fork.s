@@ -27,6 +27,9 @@ parent:
 child:
     mov eax, 5678
     int 0x80
+    mov eax, 1
+    mov ebx, 0
+    int 0x80
     b:
     jmp b
     

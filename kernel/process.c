@@ -47,38 +47,40 @@ void sys_exit(int status)
     /* Free user memory (pages, page tables, VMAs) */
     /* Note: We keep the kernel stack and task_struct for parent to reap */
     
-    /* Free all VMAs */
+    /* Switch to kernel CR3 immediately - we'll map page tables as needed */
+    extern uint32_t kernel_page_table;
+    __asm__ volatile("mov %0, %%cr3" : : "r"(kernel_page_table));
+    
+    /* Free all VMAs and their pages */
     list_for_each_safe(pos, tmp, &task->mm.vma_list) {
         vma_t *vma = list_entry(pos, vma_t, list);
         
-        /* Unmap all pages in this VMA */
+        /* Free all pages in this VMA by directly accessing physical addresses */
         for (uint32_t addr = vma->vm_start; addr < vma->vm_end; addr += PAGE_SIZE) {
             uint32_t pdi = addr >> 22;
             uint32_t pti = (addr >> 12) & 0x3FF;
             
-            if (task->mm.page_tables[pdi]) {
-                uint32_t *pt = task->mm.page_tables[pdi];
+            /* Page tables are stored as kernel virtual addresses (direct-mapped) */
+            uint32_t *pt = task->mm.page_tables[pdi];
+            if (pt) {
                 uint32_t pte = pt[pti];
                 
                 if (pte & 0x1) {  /* Present */
                     uint32_t phys = pte & ~0xFFF;
                     void *virt = (void *)PHYS_TO_VIRT(phys);
                     page_free(virt);
-                    pt[pti] = 0;
                 }
             }
         }
         
-        list_del(&vma->list);
-        vma_destroy(vma);
+        vma_destroy(vma);  /* vma_destroy handles list_del internally */
     }
     
-    /* Free page tables */
+    /* Free page tables (these are already kernel virtual addresses) */
     for (int i = 0; i < 768; i++) {
         if (task->mm.page_tables[i]) {
             page_free(task->mm.page_tables[i]);
             task->mm.page_tables[i] = NULL;
-            task->mm.pgdir[i] = 0;
         }
     }
     

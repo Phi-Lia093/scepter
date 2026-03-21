@@ -74,7 +74,7 @@ void tss_init(void)
     uint32_t limit = sizeof(tss) - 1;
     
     /* Clear TSS */
-    for (int i = 0; i < sizeof(tss); i++) {
+    for (int i = 0; i < (int)sizeof(tss); i++) {
         ((uint8_t*)&tss)[i] = 0;
     }
     
