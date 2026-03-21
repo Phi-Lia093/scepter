@@ -131,10 +131,10 @@ run: $(TARGET)
 		-serial file:kernel.log
 
 app:
-	make -C userspace
-	make mountd
-	cp userspace/*.bin mnt/
-	make umountd
+	@make mountd
+	@make -C crt init
+	@cp crt/build/init mnt/
+	@make umountd
 
 # ===========================================================================
 # Clean
@@ -142,6 +142,7 @@ app:
 clean:
 	@echo "Cleaning build artifacts..."
 	@rm -rf $(BUILD_DIR)
+	@make -C crt clean
 	@rm -f *.sym
 	@echo "✓ Clean complete"
 
