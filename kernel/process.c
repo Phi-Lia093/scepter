@@ -30,18 +30,21 @@ void sys_exit(int status)
 {
     task_struct_t *task = current;
     
-    printk("[PROCESS] PID %u exiting with status %d\n", task->pid, status);
-    
     /* Store exit code */
     task->exit_code = status;
     
-    /* Close all open file descriptors */
+    /* Declare loop variables once for all uses */
     list_head_t *pos, *tmp;
-    list_for_each_safe(pos, tmp, &task->files) {
-        file_handle_t *file = list_entry(pos, file_handle_t, node);
-        fs_close(file->fd);
-        list_del(&file->node);
-        kfree(file);
+    
+    /* Close all open file descriptors (with proper reference counting) */
+    if (!list_empty(&task->files)) {
+        list_for_each_safe(pos, tmp, &task->files) {
+            fd_entry_t *fde = list_entry(pos, fd_entry_t, node);
+            if (fde) {
+                /* fs_close handles refcounting and closes file if last ref */
+                fs_close(fde->fd);
+            }
+        }
     }
     
     /* Free user memory (pages, page tables, VMAs) */
@@ -111,8 +114,6 @@ void sys_exit(int status)
     /* Wake up parent if it's waiting */
     /* Note: Will implement wait queue later */
     
-    printk("[PROCESS] PID %u is now zombie, scheduling next task\n", task->pid);
-    
     /* Schedule next task (this never returns) */
     schedule();
     
@@ -148,28 +149,35 @@ int sys_fork(registers_t *regs)
     /* Add child to parent's children list */
     list_add_tail(&child->sibling, &parent->children);
     
-    /* Duplicate file descriptors */
+    /* Duplicate file descriptors - share open files with parent */
     list_head_t *pos;
     list_for_each(pos, &parent->files) {
-        file_handle_t *pf = list_entry(pos, file_handle_t, node);
+        fd_entry_t *pfd = list_entry(pos, fd_entry_t, node);
         
-        /* Allocate new file handle for child */
-        file_handle_t *cf = (file_handle_t *)kalloc(sizeof(file_handle_t));
-        if (!cf) {
-            printk("[PROCESS] Fork failed: could not duplicate file descriptor\n");
+        /* Allocate new fd_entry for child */
+        fd_entry_t *cfd = (fd_entry_t *)kalloc(sizeof(fd_entry_t));
+        if (!cfd) {
+            printk("[PROCESS] Fork failed: could not duplicate fd_entry\n");
             free_task(child);
             return -1;
         }
         
-        /* Copy file handle */
-        memcpy(cf, pf, sizeof(file_handle_t));
-        INIT_LIST_HEAD(&cf->node);
+        /* Point to the SAME open_file (shared!) */
+        cfd->fd = pfd->fd;           /* Same fd number */
+        cfd->file = pfd->file;       /* Shared open_file pointer */
+        INIT_LIST_HEAD(&cfd->node);
+        
+        /* Increment refcount on shared open_file */
+        if (cfd->file) {
+            cfd->file->refcount++;
+        }
         
         /* Add to child's file list */
-        list_add_tail(&cf->node, &child->files);
+        list_add_tail(&cfd->node, &child->files);
     }
     
     /* Duplicate memory: VMAs and page tables */
+    
     list_for_each(pos, &parent->mm.vma_list) {
         vma_t *pvma = list_entry(pos, vma_t, list);
         
@@ -185,6 +193,7 @@ int sys_fork(registers_t *regs)
         vma_insert(child, cvma);
         
         /* Copy all pages in this VMA */
+        int pages_copied = 0;
         for (uint32_t addr = pvma->vm_start; addr < pvma->vm_end; addr += PAGE_SIZE) {
             uint32_t pdi = addr >> 22;
             uint32_t pti = (addr >> 12) & 0x3FF;
@@ -234,7 +243,10 @@ int sys_fork(registers_t *regs)
             uint32_t child_phys = VIRT_TO_PHYS((uint32_t)child_page);
             uint32_t flags = parent_pte & 0xFFF;  /* Copy flags */
             child_pt[pti] = child_phys | flags;
+            pages_copied++;
         }
+        
+        (void)pages_copied;  /* Suppress unused variable warning */
     }
     
     /* Copy memory region info */

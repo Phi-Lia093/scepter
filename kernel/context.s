@@ -137,6 +137,15 @@ first_entry_trampoline:
     movw %ax, %fs
     movw %ax, %gs
     popl %eax                    /* Restore EAX (return value) */
+    
+    /* Debug: Check what's on the kernel stack before iret */
+    pushl %eax
+    pushl %ebx
+    movl 8(%esp), %eax   /* EIP */
+    movl 12(%esp), %ebx  /* CS */
+    /* We can't easily call printk from here without corrupting stack */
+    popl %ebx
+    popl %eax
 
     /* iret atomically:
      *   - Pops EIP, CS (ring 3), EFLAGS (IF=1), ESP (user), SS (ring 3)

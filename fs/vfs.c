@@ -137,41 +137,71 @@ static int resolve_path(const char *input, char *out, size_t size)
 }
 
 /* =========================================================================
- * File Handle Management
+ * Open File Management (with reference counting)
  * ========================================================================= */
 
-static file_handle_t *alloc_file_handle(void)
+static open_file_t *alloc_open_file(int fs_id, void *fs_priv, 
+                                     void *file_priv, int flags)
 {
-    file_handle_t *fh = (file_handle_t *)kalloc(sizeof(file_handle_t));
-    if (!fh) return NULL;
+    open_file_t *file = (open_file_t *)kalloc(sizeof(open_file_t));
+    if (!file) return NULL;
 
-    fh->fd           = current->next_fd++;
-    fh->fs_id        = -1;
-    fh->fs_private   = NULL;
-    fh->file_private = NULL;
-    fh->offset       = 0;
-    fh->flags        = 0;
+    file->fs_id        = fs_id;
+    file->fs_private   = fs_priv;
+    file->file_private = file_priv;
+    file->offset       = 0;
+    file->flags        = flags;
+    file->refcount     = 1;  /* Initial reference */
 
-    list_add_tail(&fh->node, &current->files);
-    return fh;
+    return file;
 }
 
-static file_handle_t *find_file_handle(int fd)
+static void open_file_put(open_file_t *file)
 {
-    file_handle_t *fh;
-    list_for_each_entry(fh, &current->files, node) {
-        if (fh->fd == fd) return fh;
+    if (!file) return;
+
+    file->refcount--;
+    if (file->refcount == 0) {
+        /* Last reference - actually close the file */
+        if (fs_drivers[file->fs_id].ops.close) {
+            fs_drivers[file->fs_id].ops.close(file->file_private);
+        }
+        kfree(file);
+    }
+}
+
+/* =========================================================================
+ * File Descriptor Entry Management
+ * ========================================================================= */
+
+static fd_entry_t *alloc_fd_entry(open_file_t *file)
+{
+    fd_entry_t *fde = (fd_entry_t *)kalloc(sizeof(fd_entry_t));
+    if (!fde) return NULL;
+
+    fde->fd   = current->next_fd++;
+    fde->file = file;
+
+    list_add_tail(&fde->node, &current->files);
+    return fde;
+}
+
+static fd_entry_t *find_fd_entry(int fd)
+{
+    fd_entry_t *fde;
+    list_for_each_entry(fde, &current->files, node) {
+        if (fde->fd == fd) return fde;
     }
     return NULL;
 }
 
-static void free_file_handle(int fd)
+static void free_fd_entry(int fd)
 {
-    file_handle_t *fh;
-    list_for_each_entry(fh, &current->files, node) {
-        if (fh->fd == fd) {
-            list_del(&fh->node);
-            kfree(fh);
+    fd_entry_t *fde;
+    list_for_each_entry(fde, &current->files, node) {
+        if (fde->fd == fd) {
+            list_del(&fde->node);
+            kfree(fde);
             return;
         }
     }
@@ -334,37 +364,51 @@ int fs_open(const char *path, int flags)
     mount_point_t *mp = resolve_mount(abs, &rel_path);
     if (!mp) { printk("[VFS] No mount point for: %s\n", abs); return -1; }
 
-    file_handle_t *fh = alloc_file_handle();
-    if (!fh) { printk("[VFS] OOM: file handle\n"); return -1; }
-
-    int   fs_id       = mp->fs_id;
+    int   fs_id        = mp->fs_id;
     void *file_private = NULL;
 
+    /* Open the file via filesystem driver */
     if (fs_drivers[fs_id].ops.open) {
         if (fs_drivers[fs_id].ops.open(mp->fs_private, rel_path,
                                        flags, &file_private) != 0) {
-            free_file_handle(fh->fd);
             return -1;
         }
     }
 
-    fh->fs_id        = fs_id;
-    fh->fs_private   = mp->fs_private;
-    fh->file_private = file_private;
-    fh->offset       = 0;
-    fh->flags        = flags;
-    return fh->fd;
+    /* Create shared open_file structure with refcount=1 */
+    open_file_t *file = alloc_open_file(fs_id, mp->fs_private, 
+                                         file_private, flags);
+    if (!file) {
+        /* Cleanup on allocation failure */
+        if (fs_drivers[fs_id].ops.close) {
+            fs_drivers[fs_id].ops.close(file_private);
+        }
+        printk("[VFS] OOM: open_file\n");
+        return -1;
+    }
+
+    /* Create fd_entry pointing to the open_file */
+    fd_entry_t *fde = alloc_fd_entry(file);
+    if (!fde) {
+        /* Cleanup on allocation failure */
+        open_file_put(file);  /* Will close the file since refcount=1 */
+        printk("[VFS] OOM: fd_entry\n");
+        return -1;
+    }
+
+    return fde->fd;
 }
 
 int fs_close(int fd)
 {
-    file_handle_t *fh = find_file_handle(fd);
-    if (!fh) return -1;
+    fd_entry_t *fde = find_fd_entry(fd);
+    if (!fde) return -1;
 
-    if (fs_drivers[fh->fs_id].ops.close)
-        fs_drivers[fh->fs_id].ops.close(fh->file_private);
+    /* Decrement reference count on open_file (closes if last ref) */
+    open_file_put(fde->file);
 
-    free_file_handle(fd);
+    /* Free the fd_entry */
+    free_fd_entry(fd);
     return 0;
 }
 
@@ -372,45 +416,71 @@ int fs_read(int fd, void *buf, size_t count)
 {
     if (!buf) return -1;
 
-    file_handle_t *fh = find_file_handle(fd);
-    if (!fh) return -1;
-    if ((fh->flags & O_RDWR) == O_WRONLY) return -1;
+    fd_entry_t *fde = find_fd_entry(fd);
+    if (!fde || !fde->file) return -1;
+    
+    open_file_t *file = fde->file;
+    if ((file->flags & O_RDWR) == O_WRONLY) return -1;
 
     int n = -1;
-    if (fs_drivers[fh->fs_id].ops.read) {
-        n = fs_drivers[fh->fs_id].ops.read(fh->file_private, buf, count);
-        if (n > 0) fh->offset += n;
+    if (fs_drivers[file->fs_id].ops.read) {
+        n = fs_drivers[file->fs_id].ops.read(file->file_private, buf, count);
+        if (n > 0) file->offset += n;  /* Shared offset updated! */
     }
     return n;
 }
 
 int fs_write(int fd, const void *buf, size_t count)
 {
-    if (!buf) return -1;
+    extern task_struct_t *current;
+    
+    if (!buf) {
+        printk("[VFS] fs_write: buf is NULL\n");
+        return -1;
+    }
 
-    file_handle_t *fh = find_file_handle(fd);
-    if (!fh) return -1;
-    if ((fh->flags & O_RDWR) == O_RDONLY) return -1;
+    fd_entry_t *fde = find_fd_entry(fd);
+    if (!fde) {
+        printk("[VFS] fs_write: fd %d not found in PID=%u files list\n", fd, current->pid);
+        return -1;
+    }
+    
+    if (!fde->file) {
+        printk("[VFS] fs_write: fd %d has NULL file pointer\n", fd);
+        return -1;
+    }
+    
+    open_file_t *file = fde->file;
+    if ((file->flags & O_RDWR) == O_RDONLY) {
+        printk("[VFS] fs_write: fd %d is read-only\n", fd);
+        return -1;
+    }
 
     int n = -1;
-    if (fs_drivers[fh->fs_id].ops.write) {
-        n = fs_drivers[fh->fs_id].ops.write(fh->file_private, buf, count);
-        if (n > 0) fh->offset += n;
+    if (fs_drivers[file->fs_id].ops.write) {
+        n = fs_drivers[file->fs_id].ops.write(file->file_private, buf, count);
+        if (n > 0) {
+            file->offset += n;  /* Shared offset updated! */
+        }
+    } else {
+        printk("[VFS] fs_write: filesystem has no write operation\n");
     }
     return n;
 }
 
 int fs_seek(int fd, int32_t offset, int whence)
 {
-    file_handle_t *fh = find_file_handle(fd);
-    if (!fh) return -1;
+    fd_entry_t *fde = find_fd_entry(fd);
+    if (!fde || !fde->file) return -1;
+    
+    open_file_t *file = fde->file;
 
-    if (fs_drivers[fh->fs_id].ops.seek) {
+    if (fs_drivers[file->fs_id].ops.seek) {
         uint32_t new_offset = 0;
-        if (fs_drivers[fh->fs_id].ops.seek(fh->file_private, offset,
-                                            whence, &new_offset) != 0)
+        if (fs_drivers[file->fs_id].ops.seek(file->file_private, offset,
+                                              whence, &new_offset) != 0)
             return -1;
-        fh->offset = new_offset;
+        file->offset = new_offset;  /* Shared offset updated! */
         return (int)new_offset;
     }
 
@@ -422,7 +492,7 @@ int fs_seek(int fd, int32_t offset, int whence)
         new_off = offset;
         break;
     case SEEK_CUR:
-        new_off = (int32_t)fh->offset + offset;
+        new_off = (int32_t)file->offset + offset;
         if (new_off < 0) return -1;
         break;
     case SEEK_END:
@@ -431,18 +501,20 @@ int fs_seek(int fd, int32_t offset, int whence)
     default:
         return -1;
     }
-    fh->offset = (uint32_t)new_off;
-    return (int)fh->offset;
+    file->offset = (uint32_t)new_off;  /* Shared offset updated! */
+    return (int)file->offset;
 }
 
 int fs_truncate(int fd, uint32_t length)
 {
-    file_handle_t *fh = find_file_handle(fd);
-    if (!fh) return -1;
-    if ((fh->flags & O_RDWR) == O_RDONLY) return -1;
+    fd_entry_t *fde = find_fd_entry(fd);
+    if (!fde || !fde->file) return -1;
+    
+    open_file_t *file = fde->file;
+    if ((file->flags & O_RDWR) == O_RDONLY) return -1;
 
-    if (fs_drivers[fh->fs_id].ops.truncate)
-        return fs_drivers[fh->fs_id].ops.truncate(fh->file_private, length);
+    if (fs_drivers[file->fs_id].ops.truncate)
+        return fs_drivers[file->fs_id].ops.truncate(file->file_private, length);
 
     return -1;  /* FS driver does not support truncate */
 }
@@ -451,11 +523,13 @@ int fs_readdir(int fd, dirent_t *dirent)
 {
     if (!dirent) return -1;
 
-    file_handle_t *fh = find_file_handle(fd);
-    if (!fh) return -1;
+    fd_entry_t *fde = find_fd_entry(fd);
+    if (!fde || !fde->file) return -1;
+    
+    open_file_t *file = fde->file;
 
-    if (fs_drivers[fh->fs_id].ops.readdir)
-        return fs_drivers[fh->fs_id].ops.readdir(fh->file_private, dirent);
+    if (fs_drivers[file->fs_id].ops.readdir)
+        return fs_drivers[file->fs_id].ops.readdir(file->file_private, dirent);
 
     return -1;
 }

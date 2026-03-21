@@ -106,20 +106,33 @@ typedef struct fs_ops {
 } fs_ops_t;
 
 /* -------------------------------------------------------------------------
- * File Handle (open file descriptor)
+ * Open File Description (shared between processes after fork)
  *
- * Allocated per open file, stored in task_struct.files linked list.
+ * This structure represents an open file and can be shared by multiple
+ * file descriptors (potentially across different processes).
  * ------------------------------------------------------------------------- */
 
-typedef struct file_handle {
-    list_head_t  node;          /* embedded in task_struct.files           */
-    int          fd;            /* file descriptor number                  */
+typedef struct open_file {
     int          fs_id;         /* index into fs_drivers[]                 */
     void        *fs_private;    /* filesystem-level mount data             */
     void        *file_private;  /* file-specific data (inode, etc.)        */
-    uint32_t     offset;        /* current read/write position             */
+    uint32_t     offset;        /* current read/write position (SHARED!)   */
     int          flags;         /* open flags (O_RDONLY, etc.)             */
-} file_handle_t;
+    int          refcount;      /* number of fd_entry's referencing this   */
+} open_file_t;
+
+/* -------------------------------------------------------------------------
+ * File Descriptor Entry (per-process)
+ *
+ * Allocated per open file descriptor, stored in task_struct.files list.
+ * Points to a potentially-shared open_file_t.
+ * ------------------------------------------------------------------------- */
+
+typedef struct fd_entry {
+    list_head_t  node;          /* embedded in task_struct.files           */
+    int          fd;            /* file descriptor number                  */
+    open_file_t *file;          /* pointer to shared open file description */
+} fd_entry_t;
 
 /* -------------------------------------------------------------------------
  * Filesystem Registration

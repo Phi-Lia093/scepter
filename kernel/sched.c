@@ -105,7 +105,7 @@ task_struct_t *alloc_task(void)
     /* Assign PID */
     task->pid = next_pid++;
     task->state = TASK_READY;
-    task->next_fd = 3;
+    task->next_fd = 0;
     
     /* Allocate kernel stack (8KB, from direct-mapped region) */
     task->kernel_stack = (uint32_t)page_alloc(8192);
