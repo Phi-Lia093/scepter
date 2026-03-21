@@ -29,13 +29,18 @@ typedef struct mm_struct {
      * Indices 768-1023 are kernel space (copied from kernel_page_table) */
     uint32_t *page_tables[768];
     
-    /* Memory regions */
+    /* Memory regions (legacy, for compatibility) */
     uint32_t code_start;       /* Code segment start (e.g., 0x08000000) */
     uint32_t code_end;         /* Code segment end */
     uint32_t brk_start;        /* Heap start */
     uint32_t brk_end;          /* Current heap end (for sbrk/brk) */
     uint32_t stack_start;      /* User stack bottom */
     uint32_t stack_end;        /* User stack top (e.g., 0xC0000000) */
+    
+    /* VMA management */
+    list_head_t vma_list;      /* List of all VMAs */
+    uint32_t mmap_base;        /* Start of mmap region (0x40000000) */
+    uint32_t mmap_end;         /* End of mmap region (0xBF000000) */
 } mm_struct_t;
 
 /* =========================================================================

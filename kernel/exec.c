@@ -4,9 +4,11 @@
 
 #include "kernel/exec.h"
 #include "kernel/cpu.h"
+#include "kernel/sched.h"
 #include "mm/pgtable.h"
 #include "mm/buddy.h"
 #include "mm/mm.h"
+#include "mm/vma.h"
 #include "fs/fs.h"
 #include "lib/printk.h"
 #include "lib/string.h"
@@ -125,6 +127,37 @@ int exec_flat(const char *path)
     
     printk("[EXEC] Kernel stack: 0x%08x-0x%08x (TSS.esp0 = 0x%08x)\n",
            (uint32_t)kernel_stack, (uint32_t)kernel_stack + 8192, tss.esp0);
+    
+    /* Create VMAs for the loaded process */
+    task_struct_t *task = current;
+    
+    /* Create code VMA (read + execute) */
+    vma_t *code_vma = vma_create(USER_BASE, USER_BASE + file_size,
+                                  VM_READ | VM_EXEC, VMA_CODE);
+    if (code_vma) {
+        vma_insert(task, code_vma);
+        printk("[EXEC] Created code VMA: 0x%08x-0x%08x\n",
+               code_vma->vm_start, code_vma->vm_end);
+    }
+    
+    /* Create stack VMA (read + write + grows down) */
+    vma_t *stack_vma = vma_create(0xBFFF0000U, 0xC0000000U,
+                                   VM_READ | VM_WRITE | VM_GROWSDOWN, VMA_STACK);
+    if (stack_vma) {
+        vma_insert(task, stack_vma);
+        printk("[EXEC] Created stack VMA: 0x%08x-0x%08x (growsdown)\n",
+               stack_vma->vm_start, stack_vma->vm_end);
+    }
+    
+    /* Update task memory regions */
+    task->mm.code_start = USER_BASE;
+    task->mm.code_end = USER_BASE + file_size;
+    task->mm.stack_start = 0xBFFF0000U;
+    task->mm.stack_end = 0xC0000000U;
+    
+    printk("[EXEC] VMA setup complete, dumping VMAs:\n");
+    vma_dump(task);
+    
     printk("[EXEC] Switching to user CR3: 0x%08x\n", (uint32_t)pgdir_phys);
     printk("[EXEC] *** Entering userspace ***\n\n");
     

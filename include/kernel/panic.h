@@ -15,7 +15,8 @@
  * ========================================================================= */
 
 typedef struct {
-    uint32_t gs, fs, es, ds;          /* segment registers (saved last → first) */
+    uint32_t cr3_saved;               /* saved CR3 (pushed before call) */
+    uint32_t gs, fs, es, ds;          /* segment registers (pushed in this order) */
     uint32_t edi, esi, ebp,
              esp_dummy,               /* ESP value at pusha time (not usable)   */
              ebx, edx, ecx, eax;     /* general-purpose registers               */

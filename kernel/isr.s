@@ -141,24 +141,55 @@ isr128:
 
 /* -------------------------------------------------------------------------
  * Exception common handler
+ * Stack layout on entry (from bottom to top):
+ *   [SS]          - if privilege change
+ *   [ESP]         - if privilege change  
+ *   EFLAGS
+ *   CS
+ *   EIP
+ *   error_code    - pushed by CPU or stub
+ *   int_num       - pushed by stub
  * ------------------------------------------------------------------------- */
 isr_common:
     cli
-    pusha
+    pusha                       /* Push: EAX ECX EDX EBX ESP EBP ESI EDI */
     pushl %ds
     pushl %es
     pushl %fs
     pushl %gs
-    movw  $0x10, %ax
+    
+    movw  $0x10, %ax            /* Load kernel data segment */
     movw  %ax, %ds
     movw  %ax, %es
     movw  %ax, %fs
     movw  %ax, %gs
-    movw  %ax, %ss
+    
+    /* Save user CR3 and switch to kernel page table */
+    movl  %cr3, %eax
+    pushl %eax
     movl  kernel_page_table, %eax
     movl  %eax, %cr3
+    
+    /* Call C handler with pointer to register state */
     pushl %esp
     call  panic_isr
-1:  cli
-    hlt
-    jmp 1b
+    addl  $4, %esp
+    
+    /* Restore user CR3 */
+    popl  %eax
+    movl  %eax, %cr3
+    
+    /* Restore segment registers */
+    popl  %gs
+    popl  %fs
+    popl  %es
+    popl  %ds
+    
+    /* Restore general registers */
+    popa
+    
+    /* Remove error code and interrupt number from stack */
+    addl  $8, %esp
+    
+    /* Return to interrupted code */
+    iret

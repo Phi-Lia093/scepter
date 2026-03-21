@@ -4,6 +4,7 @@
 
 #include "kernel/sched.h"
 #include "kernel/cpu.h"
+#include "mm/vma.h"
 #include "lib/string.h"
 #include "lib/printk.h"
 #include "mm/slab.h"
@@ -70,10 +71,10 @@ void init_task_mm(task_struct_t *task)
     task->mm.stack_start = USER_STACK_TOP - USER_STACK_SIZE;
     task->mm.stack_end = USER_STACK_TOP;
     
-    printk("[SCHED] Initialized mm for task PID %u: pgdir=%p (phys=0x%08x)\n",
-           task->pid, &task->mm.pgdir[0], VIRT_TO_PHYS((uint32_t)&task->mm.pgdir[0]));
-    printk("[SCHED]   boot_pgdir[768]=0x%08x task->pgdir[768]=0x%08x\n",
-           boot_page_directory[768], task->mm.pgdir[768]);
+    /* Initialize VMA list */
+    INIT_LIST_HEAD(&task->mm.vma_list);
+    task->mm.mmap_base = 0x40000000U;  /* 1GB */
+    task->mm.mmap_end = 0xBF000000U;   /* 3GB - 16MB */
 }
 
 /* ============================================================================
@@ -120,9 +121,6 @@ task_struct_t *alloc_task(void)
     /* Initialize memory management */
     init_task_mm(task);
     
-    printk("[SCHED] Allocated task PID %u: struct=%p, kstack=0x%08x-0x%08x\n",
-           task->pid, task, task->kernel_stack, task->kernel_stack + 8192);
-    
     return task;
 }
 
@@ -164,7 +162,6 @@ void add_task(task_struct_t *task)
     if (!task) return;
     
     list_add_tail(&task->task_list, &task_list);
-    printk("[SCHED] Added task PID %u (%s) to scheduler\n", task->pid, task->name);
 }
 
 void remove_task(task_struct_t *task)
@@ -232,8 +229,6 @@ void schedule(void)
     if (next == prev) {
         return;
     }
-    
-    printk("[SCHED] Switch: PID %u -> PID %u\n", prev->pid, next->pid);
     
     /* Update states:
      * When leaving kernel task for a user task, block kernel so it's not

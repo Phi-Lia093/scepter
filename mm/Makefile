@@ -3,7 +3,7 @@
 # ============================================================================
 
 # Source files
-SRCS = mminit.c buddy.c slab.c pgtable.c vmalloc.c
+SRCS = mminit.c buddy.c slab.c pgtable.c vmalloc.c vma.c pagefault.c
 
 # Object files (in build directory)
 OBJS = $(addprefix $(BUILD_DIR)/, $(SRCS:.c=.o))

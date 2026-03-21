@@ -133,7 +133,7 @@ run: $(TARGET)
 app:
 	make -C userspace
 	make mountd
-	cp userspace/test.bin mnt/
+	cp userspace/*.bin mnt/
 	make umountd
 
 # ===========================================================================

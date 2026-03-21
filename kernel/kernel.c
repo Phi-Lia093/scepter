@@ -1,5 +1,6 @@
 #include "kernel/cpu.h"
 #include "kernel/sched.h"
+#include "mm/pagefault.h"
 #include "driver/char/vga.h"
 #include "driver/char/tty.h"
 #include "driver/char/pit.h"
@@ -54,6 +55,7 @@ void kernel_main(void)
     /* ------------------------------------------------------------------
      * Kernel services
      * ------------------------------------------------------------------ */
+    pagefault_init();
     sched_init();
     cache_init();
 
@@ -109,7 +111,7 @@ void kernel_main(void)
     /* ------------------------------------------------------------------
      * Spawn init process
      * ------------------------------------------------------------------ */
-    if (spawn_init("/test.bin") < 0) {
+    if (spawn_init("/test_mm.bin") < 0) {
         printk("[KERNEL] Failed to spawn init process\n");
         sti();
         while (1);
@@ -122,6 +124,6 @@ void kernel_main(void)
     
     /* Kernel idle loop - scheduler will preempt us */
     while (1) {
-        printk("kernel\n");
+        hlt();
     }
 }

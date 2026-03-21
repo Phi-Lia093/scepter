@@ -1,4 +1,5 @@
 #include "kernel/panic.h"
+#include "mm/pagefault.h"
 #include "lib/printk.h"
 #include "kernel/asm.h"
 #include <stdint.h>
@@ -80,6 +81,14 @@ static inline uint32_t read_cr4(void)
 
 void panic_isr(regs_t *r)
 {
+    /* Special handling for page faults (exception 14) */
+    if (r->int_no == 14) {
+        uint32_t fault_addr = read_cr2();
+        page_fault_handler(r->err_code, fault_addr);
+        /* If we get here, the page fault was handled successfully */
+        return;
+    }
+    
     const char *name = (r->int_no < 32)
                        ? exception_names[r->int_no]
                        : "Unknown Exception";

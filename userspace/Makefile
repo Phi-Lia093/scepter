@@ -3,7 +3,7 @@
 # ============================================================================
 
 # Programs to build
-PROGRAMS = test.bin
+PROGRAMS = test.bin test_mm.bin
 
 # Build all programs
 all: $(PROGRAMS)

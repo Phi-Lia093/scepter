@@ -8,10 +8,13 @@
  * System Call Numbers (Linux-compatible subset)
  * ========================================================================= */
 
-#define SYS_OPEN   1
-#define SYS_CLOSE  6
-#define SYS_WRITE  4
 #define SYS_READ   3
+#define SYS_WRITE  4
+#define SYS_OPEN   5
+#define SYS_CLOSE  6
+#define SYS_BRK    45
+#define SYS_MMAP   90   /* Old 32-bit mmap */
+#define SYS_MUNMAP 91
 
 /* =========================================================================
  * User Pointer Validation

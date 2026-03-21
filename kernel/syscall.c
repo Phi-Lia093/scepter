@@ -3,6 +3,9 @@
  * ============================================================================ */
 
 #include "kernel/syscall.h"
+#include "kernel/sched.h"
+#include "mm/vma.h"
+#include "mm/pgtable.h"
 #include "fs/fs.h"
 #include "lib/printk.h"
 #include "lib/string.h"
@@ -224,6 +227,166 @@ static int sys_close(int fd)
     return fs_close(fd);
 }
 
+/**
+ * sys_brk - Set program break (heap end)
+ * @param addr New heap end address (0 = query current)
+ * @return New heap end on success, -1 on error
+ */
+static int sys_brk(uint32_t addr)
+{
+    task_struct_t *task = current;
+    
+    /* Query current brk */
+    if (addr == 0) {
+        return (int)task->mm.brk_end;
+    }
+    
+    /* Validate address is in heap region */
+    if (addr < task->mm.brk_start) {
+        printk("[SYSCALL] brk: addr 0x%08x < brk_start 0x%08x\n", addr, task->mm.brk_start);
+        return -1;
+    }
+    
+    /* Don't allow heap to grow into mmap region */
+    if (addr >= task->mm.mmap_base) {
+        printk("[SYSCALL] brk: addr 0x%08x >= mmap_base 0x%08x\n", addr, task->mm.mmap_base);
+        return -1;
+    }
+    
+    /* Find or create heap VMA */
+    vma_t *heap_vma = NULL;
+    list_head_t *pos;
+    list_for_each(pos, &task->mm.vma_list) {
+        vma_t *vma = list_entry(pos, vma_t, list);
+        if (vma->vm_type == VMA_HEAP) {
+            heap_vma = vma;
+            break;
+        }
+    }
+    
+    /* Create heap VMA if it doesn't exist */
+    if (!heap_vma) {
+        heap_vma = vma_create(task->mm.brk_start, addr, 
+                              VM_READ | VM_WRITE, VMA_HEAP);
+        if (!heap_vma) {
+            printk("[SYSCALL] brk: Failed to create heap VMA\n");
+            return -1;
+        }
+        vma_insert(task, heap_vma);
+    } else {
+        /* Expand existing heap VMA */
+        if (vma_expand(heap_vma, addr) < 0) {
+            printk("[SYSCALL] brk: Failed to expand heap VMA\n");
+            return -1;
+        }
+    }
+    
+    /* Update brk_end */
+    task->mm.brk_end = addr;
+    
+    /* Pages will be allocated on-demand via page fault handler */
+    
+    return (int)addr;
+}
+
+/**
+ * sys_mmap - Map anonymous memory
+ * @param addr Hint address (0 = kernel chooses)
+ * @param length Size of mapping
+ * @param prot Protection flags (PROT_READ|PROT_WRITE|PROT_EXEC)
+ * @param flags Mapping flags (MAP_PRIVATE|MAP_ANONYMOUS)
+ * @param fd File descriptor (must be -1 for anonymous)
+ * @param offset File offset (must be 0 for anonymous)
+ * @return Mapped address on success, -1 on error
+ */
+static int sys_mmap(uint32_t addr, size_t length, int prot, int flags,
+                    int fd, uint32_t offset)
+{
+    task_struct_t *task = current;
+    
+    /* Only support anonymous mapping for now */
+    if (fd != -1 || offset != 0) {
+        printk("[SYSCALL] mmap: File-backed mapping not yet supported\n");
+        return -1;
+    }
+    
+    if (!(flags & 0x20)) {  /* MAP_ANONYMOUS */
+        printk("[SYSCALL] mmap: Non-anonymous mapping not supported\n");
+        return -1;
+    }
+    
+    /* Validate length */
+    if (length == 0) {
+        printk("[SYSCALL] mmap: Invalid length 0\n");
+        return -1;
+    }
+    
+    /* Find free region */
+    uint32_t map_addr = vma_find_free_region(task, length, addr);
+    if (map_addr == 0) {
+        printk("[SYSCALL] mmap: No free region found for length %u\n", length);
+        return -1;
+    }
+    
+    /* Convert prot flags to VMA flags */
+    uint32_t vm_flags = 0;
+    if (prot & 0x1) vm_flags |= VM_READ;   /* PROT_READ */
+    if (prot & 0x2) vm_flags |= VM_WRITE;  /* PROT_WRITE */
+    if (prot & 0x4) vm_flags |= VM_EXEC;   /* PROT_EXEC */
+    
+    /* Create VMA for mmap region */
+    vma_t *vma = vma_create(map_addr, map_addr + length, vm_flags, VMA_MMAP);
+    if (!vma) {
+        printk("[SYSCALL] mmap: Failed to create VMA\n");
+        return -1;
+    }
+    
+    vma_insert(task, vma);
+    
+    /* Pages will be allocated on-demand via page fault handler */
+    
+    return (int)map_addr;
+}
+
+/**
+ * sys_munmap - Unmap memory region
+ * @param addr Start address
+ * @param length Size of region
+ * @return 0 on success, -1 on error
+ */
+static int sys_munmap(uint32_t addr, size_t length)
+{
+    task_struct_t *task = current;
+    
+    /* Page-align address and length */
+    uint32_t start = addr & ~0xFFF;
+    uint32_t end = (addr + length + 0xFFF) & ~0xFFF;
+    
+    /* Find and remove overlapping VMAs */
+    list_head_t *pos, *tmp;
+    list_for_each_safe(pos, tmp, &task->mm.vma_list) {
+        vma_t *vma = list_entry(pos, vma_t, list);
+        
+        /* Check for overlap */
+        if (start < vma->vm_end && end > vma->vm_start) {
+            /* For simplicity, only handle exact match for now */
+            if (start == vma->vm_start && end == vma->vm_end) {
+                /* Unmap pages in this region */
+                unmap_range(vma->vm_start, vma->vm_end);
+                
+                /* Remove and destroy VMA */
+                vma_remove(task, vma);
+                vma_destroy(vma);
+            } else {
+                printk("[SYSCALL] munmap: Partial unmap not yet supported\n");
+                return -1;
+            }
+        }
+    }
+    
+    return 0;
+}
+
 /* ============================================================================
  * System Call Dispatcher
  * ============================================================================ */
@@ -238,17 +401,27 @@ int syscall_handler(int num, uint32_t arg1, uint32_t arg2,
     (void)arg5;  /* Unused */
     
     switch (num) {
-        case SYS_OPEN:
-            return sys_open((const char *)arg1, (int)arg2);
+        case SYS_READ:
+            return sys_read((int)arg1, (char *)arg2, (size_t)arg3);
         
         case SYS_WRITE:
             return sys_write((int)arg1, (const char *)arg2, (size_t)arg3);
         
-        case SYS_READ:
-            return sys_read((int)arg1, (char *)arg2, (size_t)arg3);
+        case SYS_OPEN:
+            return sys_open((const char *)arg1, (int)arg2);
         
         case SYS_CLOSE:
             return sys_close((int)arg1);
+        
+        case SYS_BRK:
+            return sys_brk(arg1);
+        
+        case SYS_MMAP:
+            return sys_mmap(arg1, (size_t)arg2, (int)arg3, 
+                           (int)arg4, (int)arg5, 0);
+        
+        case SYS_MUNMAP:
+            return sys_munmap(arg1, (size_t)arg2);
         
         default:
             printk("[SYSCALL] Unknown syscall number: %d\n", num);

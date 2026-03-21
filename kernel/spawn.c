@@ -8,6 +8,7 @@
 #include "mm/pgtable.h"
 #include "mm/buddy.h"
 #include "mm/mm.h"
+#include "mm/vma.h"
 #include "fs/fs.h"
 #include "lib/printk.h"
 #include "lib/string.h"
@@ -45,8 +46,6 @@ static int map_user_page(task_struct_t *task, uint32_t vaddr, uint32_t phys, uin
         uint32_t pt_phys = VIRT_TO_PHYS((uint32_t)pt);
         task->mm.pgdir[pdi] = pt_phys | 0x7;  /* Present | RW | User */
         
-        printk("[SPAWN] Allocated page table %u at virt=%p phys=0x%08x\n", 
-               pdi, pt, pt_phys);
     }
     
     /* Get page table and index */
@@ -156,8 +155,6 @@ int spawn_init(const char *path)
             return -1;
         }
         
-        printk("[SPAWN] Mapped page %u: vaddr=0x%08x phys=0x%08x (%u bytes)\n",
-               i, vaddr, phys, offset);
     }
     
     fs_close(fd);
@@ -186,6 +183,20 @@ int spawn_init(const char *path)
     }
     
     printk("[SPAWN] Mapped stack: vaddr=0x%08x phys=0x%08x\n", stack_vaddr, stack_phys);
+    
+    /* Create VMAs for the loaded process */
+    vma_t *code_vma = vma_create(USER_TEXT_START, task->mm.code_end,
+                                  VM_READ | VM_EXEC, VMA_CODE);
+    if (code_vma) {
+        vma_insert(task, code_vma);
+    }
+    
+    /* Create stack VMA (read + write + grows down) */
+    vma_t *stack_vma = vma_create(task->mm.stack_start, task->mm.stack_end,
+                                   VM_READ | VM_WRITE | VM_GROWSDOWN, VMA_STACK);
+    if (stack_vma) {
+        vma_insert(task, stack_vma);
+    }
     
     printk("[SPAWN] Memory layout:\n");
     printk("[SPAWN]   Code:  0x%08x - 0x%08x\n", task->mm.code_start, task->mm.code_end);
