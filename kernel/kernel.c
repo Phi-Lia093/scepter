@@ -111,7 +111,7 @@ void kernel_main(void)
     /* ------------------------------------------------------------------
      * Spawn init process
      * ------------------------------------------------------------------ */
-    if (spawn_init("/test_mm.bin") < 0) {
+    if (spawn_init("/test_fork.bin") < 0) {
         printk("[KERNEL] Failed to spawn init process\n");
         sti();
         while (1);

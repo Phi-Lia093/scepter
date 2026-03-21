@@ -210,8 +210,7 @@ recursive_test:
     call recursive_test
 .done:
     add esp, 1024
-    l:
-    jmp l
+    ret
 
 ; ============================================================================
 ; Data Section
@@ -223,7 +222,7 @@ initial_brk: dd 0
 new_brk: dd 0
 mmap_addr: dd 0
 
-dev_vga: db "/dev/vga0", 0
+dev_vga: db "/dev/serial0", 0
 
 banner: db "=== Memory Management Test ===", 10, 0
 banner_len equ $ - banner

@@ -4,6 +4,7 @@
 
 #include "kernel/syscall.h"
 #include "kernel/sched.h"
+#include "kernel/process.h"
 #include "mm/vma.h"
 #include "mm/pgtable.h"
 #include "fs/fs.h"
@@ -394,13 +395,21 @@ static int sys_munmap(uint32_t addr, size_t length)
 /**
  * Main syscall dispatcher - called from isr128 (int 0x80)
  */
-int syscall_handler(int num, uint32_t arg1, uint32_t arg2,
+int syscall_handler(registers_t *regs, int num, uint32_t arg1, uint32_t arg2,
                     uint32_t arg3, uint32_t arg4, uint32_t arg5)
 {
     (void)arg4;  /* Unused */
     (void)arg5;  /* Unused */
     
     switch (num) {
+        case SYS_EXIT:
+            sys_exit((int)arg1);
+            /* Never returns */
+            return 0;
+        
+        case SYS_FORK:
+            return sys_fork(regs);
+        
         case SYS_READ:
             return sys_read((int)arg1, (char *)arg2, (size_t)arg3);
         
@@ -412,6 +421,9 @@ int syscall_handler(int num, uint32_t arg1, uint32_t arg2,
         
         case SYS_CLOSE:
             return sys_close((int)arg1);
+        
+        case SYS_WAIT4:
+            return sys_wait((int *)arg1);
         
         case SYS_BRK:
             return sys_brk(arg1);

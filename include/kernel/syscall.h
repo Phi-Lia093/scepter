@@ -5,13 +5,35 @@
 #include <stddef.h>
 
 /* =========================================================================
+ * CPU Register State (for fork context preservation)
+ * ========================================================================= */
+
+typedef struct registers {
+    /* Pushed by pusha */
+    uint32_t edi, esi, ebp, esp_dummy, ebx, edx, ecx, eax;
+    
+    /* Segment selectors */
+    uint32_t gs, fs, es, ds;
+    
+    /* Saved CR3 */
+    uint32_t cr3;
+    
+    /* IRET frame (pushed by CPU) */
+    uint32_t eip, cs, eflags, user_esp, ss;
+} registers_t;
+
+/* =========================================================================
  * System Call Numbers (Linux-compatible subset)
  * ========================================================================= */
 
+#define SYS_EXIT   1
+#define SYS_FORK   2
 #define SYS_READ   3
 #define SYS_WRITE  4
 #define SYS_OPEN   5
 #define SYS_CLOSE  6
+#define SYS_WAIT4  7    /* Simplified as SYS_WAIT */
+#define SYS_EXECVE 11   /* Simplified as SYS_EXEC */
 #define SYS_BRK    45
 #define SYS_MMAP   90   /* Old 32-bit mmap */
 #define SYS_MUNMAP 91
@@ -52,6 +74,7 @@ int copy_to_user(void *user_dst, const void *kernel_src, size_t n);
 
 /**
  * Main syscall dispatcher - called from isr128 (int 0x80)
+ * @param regs Pointer to saved register state
  * @param num Syscall number (from EAX)
  * @param arg1 First argument (from EBX)
  * @param arg2 Second argument (from ECX)
@@ -60,7 +83,7 @@ int copy_to_user(void *user_dst, const void *kernel_src, size_t n);
  * @param arg5 Fifth argument (from EDI)
  * @return Syscall return value (stored in EAX)
  */
-int syscall_handler(int num, uint32_t arg1, uint32_t arg2,
+int syscall_handler(registers_t *regs, int num, uint32_t arg1, uint32_t arg2,
                     uint32_t arg3, uint32_t arg4, uint32_t arg5)
     __attribute__((cdecl));
 

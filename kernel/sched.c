@@ -181,10 +181,15 @@ task_struct_t *pick_next_task(void)
     task_struct_t *next = NULL;
     list_head_t *pos;
     
-    /* Find next READY task after current */
+    /* Find next READY or RUNNING task after current */
     int found_current = 0;
     list_for_each(pos, &task_list) {
         task_struct_t *task = list_entry(pos, task_struct_t, task_list);
+        
+        /* Skip ZOMBIE and BLOCKED tasks */
+        if (task->state == TASK_ZOMBIE || task->state == TASK_BLOCKED) {
+            continue;
+        }
         
         if (found_current && task->state == TASK_READY) {
             next = task;
@@ -200,6 +205,11 @@ task_struct_t *pick_next_task(void)
     if (!next) {
         list_for_each(pos, &task_list) {
             task_struct_t *task = list_entry(pos, task_struct_t, task_list);
+            
+            /* Skip ZOMBIE and BLOCKED tasks */
+            if (task->state == TASK_ZOMBIE || task->state == TASK_BLOCKED) {
+                continue;
+            }
             
             if (task->state == TASK_READY && task != current) {
                 next = task;
@@ -225,6 +235,10 @@ void schedule(void)
 {
     task_struct_t *prev = current;
     task_struct_t *next = pick_next_task();
+    
+    // if (next != prev) {
+    //     printk("[SCHED] Switching: PID %u -> PID %u\n", prev->pid, next->pid);
+    // }
     
     if (next == prev) {
         return;

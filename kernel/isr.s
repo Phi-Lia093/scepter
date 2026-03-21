@@ -90,53 +90,112 @@ IRQ_STUB 1, kbd_isr
  * Syscall stub (int 0x80)
  * ------------------------------------------------------------------------- */
 
- .section .data
- rege:
- .align 16
- .skip 16
+.section .data
+.align 16
+syscall_regs:
+    .skip 80    /* sizeof(registers_t) = 20 * 4 = 80 bytes */
 
 .global isr128
 isr128:
     cli
-    mov %eax, rege
-    pusha                       /* Save: EAX ECX EDX EBX ESP EBP ESI EDI */
-    pushl %ds
-    pushl %es
-    pushl %fs
-    pushl %gs
-    movl  %cr3, %eax            /* Save user CR3 */
-    pushl %eax
     
-    movw  $0x10, %ax            /* Switch to kernel segments */
-    movw  %ax, %ds
-    movw  %ax, %es
-    movw  %ax, %fs
-    movw  %ax, %gs
+    /* Save all registers directly to static buffer
+     * This avoids complex stack calculations
+     * Layout matches registers_t: EDI, ESI, EBP, ESP, EBX, EDX, ECX, EAX,
+     *                              GS, FS, ES, DS, CR3, EIP, CS, EFLAGS, ESP, SS */
     
-    /* Push arguments for syscall_handler(num, arg1, arg2, arg3, arg4, arg5)
-     * From pusha: EAX=num, EBX=arg1, ECX=arg2, EDX=arg3, ESI=arg4, EDI=arg5 */
-    pushl %edi                  /* arg5 */
-    pushl %esi                  /* arg4 */
-    pushl %edx                  /* arg3 */
-    pushl %ecx                  /* arg2 */
-    pushl %ebx                  /* arg1 */
-    pushl rege                  /* num */
+    /* Save general-purpose registers (offsets match pusha order) */
+    movl %edi, syscall_regs + 0       /* EDI offset 0 */
+    movl %esi, syscall_regs + 4       /* ESI offset 4 */
+    movl %ebp, syscall_regs + 8       /* EBP offset 8 */
+    movl %esp, syscall_regs + 12      /* ESP offset 12 */
+    movl %ebx, syscall_regs + 16      /* EBX offset 16 */
+    movl %edx, syscall_regs + 20      /* EDX offset 20 */
+    movl %ecx, syscall_regs + 24      /* ECX offset 24 */
+    movl %eax, syscall_regs + 28      /* EAX offset 28 */
     
-    call  syscall_handler
+    /* Save segment registers */
+    movw %gs, %ax
+    movl %eax, syscall_regs + 32      /* GS offset 32 */
+    movw %fs, %ax
+    movl %eax, syscall_regs + 36      /* FS offset 36 */
+    movw %es, %ax
+    movl %eax, syscall_regs + 40      /* ES offset 40 */
+    movw %ds, %ax
+    movl %eax, syscall_regs + 44      /* DS offset 44 */
     
-    addl  $24, %esp             /* Clean 6 args */
-    movl  %eax, %edx            /* Save return value */
+    /* Save CR3 */
+    movl %cr3, %eax
+    movl %eax, syscall_regs + 48      /* CR3 offset 48 */
     
-    popl  %eax                  /* Restore CR3 */
-    movl  %eax, %cr3
-    popl  %gs
-    popl  %fs
-    popl  %es
-    popl  %ds
+    /* Save IRET frame from stack (CPU pushed: EIP, CS, EFLAGS, ESP, SS) */
+    movl 0(%esp), %eax                /* EIP */
+    movl %eax, syscall_regs + 52
+    movl 4(%esp), %eax                /* CS */
+    movl %eax, syscall_regs + 56
+    movl 8(%esp), %eax                /* EFLAGS */
+    movl %eax, syscall_regs + 60
+    movl 12(%esp), %eax               /* User ESP */
+    movl %eax, syscall_regs + 64
+    movl 16(%esp), %eax               /* SS */
+    movl %eax, syscall_regs + 68
     
-    /* Restore pusha registers, but replace EAX with return value */
-    movl  %edx, 28(%esp)        /* Store return in saved EAX slot */
-    popa
+    /* Switch to kernel segments */
+    movw $0x10, %ax
+    movw %ax, %ds
+    movw %ax, %es
+    movw %ax, %fs
+    movw %ax, %gs
+    
+    /* Get syscall arguments from saved registers */
+    movl syscall_regs + 28, %eax      /* num (from EAX) */
+    movl syscall_regs + 16, %ebx      /* arg1 (from EBX) */
+    movl syscall_regs + 24, %ecx      /* arg2 (from ECX) */
+    movl syscall_regs + 20, %edx      /* arg3 (from EDX) */
+    movl syscall_regs + 4, %esi       /* arg4 (from ESI) */
+    movl syscall_regs + 0, %edi       /* arg5 (from EDI) */
+    
+    /* Push arguments for syscall_handler(regs, num, arg1, arg2, arg3, arg4, arg5) */
+    pushl %edi                        /* arg5 */
+    pushl %esi                        /* arg4 */
+    pushl %edx                        /* arg3 */
+    pushl %ecx                        /* arg2 */
+    pushl %ebx                        /* arg1 */
+    pushl %eax                        /* num */
+    pushl $syscall_regs               /* regs - simple static address! */
+    
+    call syscall_handler
+    
+    addl $28, %esp                    /* Clean 7 args */
+    
+    /* Return value is in EAX - save it */
+    movl %eax, %edx
+    
+    /* Restore CR3 */
+    movl syscall_regs + 48, %eax
+    movl %eax, %cr3
+    
+    /* Restore segment registers */
+    movl syscall_regs + 32, %eax
+    movw %ax, %gs
+    movl syscall_regs + 36, %eax
+    movw %ax, %fs
+    movl syscall_regs + 40, %eax
+    movw %ax, %es
+    movl syscall_regs + 44, %eax
+    movw %ax, %ds
+    
+    /* Restore general-purpose registers, but put return value in EAX */
+    movl syscall_regs + 0, %edi
+    movl syscall_regs + 4, %esi
+    movl syscall_regs + 8, %ebp
+    /* Skip ESP at offset 12 */
+    movl syscall_regs + 16, %ebx
+    /* Skip EDX - we need it for return value */
+    movl syscall_regs + 24, %ecx
+    movl %edx, %eax                   /* Return value in EAX */
+    movl syscall_regs + 20, %edx      /* Now restore EDX */
+    
     iret
 
 /* -------------------------------------------------------------------------

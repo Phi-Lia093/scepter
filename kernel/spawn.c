@@ -64,13 +64,6 @@ static int map_user_page(task_struct_t *task, uint32_t vaddr, uint32_t phys, uin
 
 int spawn_init(const char *path)
 {
-    extern task_struct_t *current;
-    
-    printk("\n[SPAWN] Creating init process from: %s\n", path);
-    printk("[SPAWN] current=%p, current->pid=%u, current->next_fd=%d\n", 
-           current, current->pid, current->next_fd);
-    printk("[SPAWN] current->files=%p (next=%p, prev=%p)\n",
-           &current->files, current->files.next, current->files.prev);
     
     /* Allocate task structure (from direct-mapped kernel memory) */
     task_struct_t *task = alloc_task();
@@ -84,8 +77,6 @@ int spawn_init(const char *path)
     strncpy(task->name, "init", sizeof(task->name) - 1);
     task->cwd[0] = '/';
     task->cwd[1] = '\0';
-    
-    printk("[SPAWN] Task PID %u allocated\n", task->pid);
     
     /* Open binary file */
     int fd = fs_open(path, O_RDONLY);
@@ -106,11 +97,9 @@ int spawn_init(const char *path)
     fs_seek(fd, 0, SEEK_SET);
     
     uint32_t file_size = (uint32_t)file_size_tmp;
-    printk("[SPAWN] Binary size: %u bytes\n", file_size);
     
     /* Calculate pages needed */
     uint32_t num_pages = (file_size + PAGE_SIZE - 1) / PAGE_SIZE;
-    printk("[SPAWN] Loading %u pages into user space\n", num_pages);
     
     /* Load binary into user space (non-premapped region) */
     uint32_t bytes_loaded = 0;
@@ -182,8 +171,6 @@ int spawn_init(const char *path)
         return -1;
     }
     
-    printk("[SPAWN] Mapped stack: vaddr=0x%08x phys=0x%08x\n", stack_vaddr, stack_phys);
-    
     /* Create VMAs for the loaded process */
     vma_t *code_vma = vma_create(USER_TEXT_START, task->mm.code_end,
                                   VM_READ | VM_EXEC, VMA_CODE);
@@ -197,11 +184,6 @@ int spawn_init(const char *path)
     if (stack_vma) {
         vma_insert(task, stack_vma);
     }
-    
-    printk("[SPAWN] Memory layout:\n");
-    printk("[SPAWN]   Code:  0x%08x - 0x%08x\n", task->mm.code_start, task->mm.code_end);
-    printk("[SPAWN]   Heap:  0x%08x - 0x%08x\n", task->mm.brk_start, task->mm.brk_end);
-    printk("[SPAWN]   Stack: 0x%08x - 0x%08x\n", task->mm.stack_start, task->mm.stack_end);
     
     /* Set up initial kernel stack for this task.
      *

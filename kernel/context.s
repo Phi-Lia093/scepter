@@ -128,12 +128,15 @@ switch_to:
 first_entry_trampoline:
     cli                          /* Ensure interrupts disabled until iret */
 
-    /* Set user data segments before privilege switch */
+    /* Set user data segments before privilege switch
+     * IMPORTANT: Preserve EAX (contains return value for child process) */
+    pushl %eax                   /* Save EAX (return value) */
     movl $0x23, %eax
     movw %ax, %ds
     movw %ax, %es
     movw %ax, %fs
     movw %ax, %gs
+    popl %eax                    /* Restore EAX (return value) */
 
     /* iret atomically:
      *   - Pops EIP, CS (ring 3), EFLAGS (IF=1), ESP (user), SS (ring 3)

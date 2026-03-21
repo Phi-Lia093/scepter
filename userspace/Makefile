@@ -3,7 +3,7 @@
 # ============================================================================
 
 # Programs to build
-PROGRAMS = test.bin test_mm.bin
+PROGRAMS = test.bin test_mm.bin test_fork.bin
 
 # Build all programs
 all: $(PROGRAMS)
