@@ -425,6 +425,9 @@ int syscall_handler(registers_t *regs, int num, uint32_t arg1, uint32_t arg2,
         case SYS_WAIT4:
             return sys_wait((int *)arg1);
         
+        case SYS_EXECVE:
+            return sys_exec((const char *)arg1);
+        
         case SYS_BRK:
             return sys_brk(arg1);
         

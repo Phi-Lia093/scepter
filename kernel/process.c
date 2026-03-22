@@ -396,3 +396,233 @@ int sys_wait(int *status_ptr)
         /* When we wake up, loop again to check for zombies */
     }
 }
+
+/* ============================================================================
+ * Process Replacement (exec)
+ * ============================================================================ */
+
+/**
+ * sys_exec - Replace current process with new program
+ * @param user_path User pointer to executable path
+ * @return -1 on error (does not return on success)
+ * 
+ * This syscall replaces the current process's memory image with a new executable.
+ * It preserves the PID, open file descriptors, and parent relationship.
+ * On success, execution continues at the entry point of the new program.
+ */
+int sys_exec(const char *user_path)
+{
+    task_struct_t *task = current;
+    char kernel_path[256];
+    
+    /* Validate and copy path from userspace */
+    if (!valid_user_pointer(user_path, 1)) {
+        printk("[EXEC] Invalid path pointer\n");
+        return -1;
+    }
+    
+    size_t len = 0;
+    while (len < sizeof(kernel_path) - 1) {
+        if (copy_from_user(&kernel_path[len], &user_path[len], 1) < 0) {
+            return -1;
+        }
+        if (kernel_path[len] == '\0') {
+            break;
+        }
+        len++;
+    }
+    kernel_path[sizeof(kernel_path) - 1] = '\0';
+    
+    /* Open the executable file */
+    int fd = fs_open(kernel_path, O_RDONLY);
+    if (fd < 0) {
+        printk("[EXEC] Failed to open file\n");
+        return -1;
+    }
+    
+    /* Get file size */
+    int file_size_tmp = fs_seek(fd, 0, SEEK_END);
+    if (file_size_tmp <= 0) {
+        printk("[EXEC] Invalid file size: %d\n", file_size_tmp);
+        fs_close(fd);
+        return -1;
+    }
+    fs_seek(fd, 0, SEEK_SET);
+    uint32_t file_size = (uint32_t)file_size_tmp;
+    
+    /* Switch to kernel page tables before freeing user memory */
+    extern uint32_t kernel_page_table;
+    __asm__ volatile("mov %0, %%cr3" : : "r"(kernel_page_table));
+    
+    /* Free all existing user memory (VMAs and pages) */
+    list_head_t *pos, *tmp;
+    list_for_each_safe(pos, tmp, &task->mm.vma_list) {
+        vma_t *vma = list_entry(pos, vma_t, list);
+        
+        /* Free all pages in this VMA */
+        for (uint32_t addr = vma->vm_start; addr < vma->vm_end; addr += PAGE_SIZE) {
+            uint32_t pdi = addr >> 22;
+            uint32_t pti = (addr >> 12) & 0x3FF;
+            
+            uint32_t *pt = task->mm.page_tables[pdi];
+            if (pt) {
+                uint32_t pte = pt[pti];
+                if (pte & 0x1) {  /* Present */
+                    uint32_t phys = pte & ~0xFFF;
+                    void *virt = (void *)PHYS_TO_VIRT(phys);
+                    page_free(virt);
+                }
+            }
+        }
+        
+        vma_destroy(vma);
+    }
+    
+    /* Free all page tables */
+    for (int i = 0; i < 768; i++) {
+        if (task->mm.page_tables[i]) {
+            page_free(task->mm.page_tables[i]);
+            task->mm.page_tables[i] = NULL;
+            task->mm.pgdir[i] = 0;
+        }
+    }
+    
+    /* Reset memory regions */
+    task->mm.code_start = USER_TEXT_START;
+    task->mm.code_end = USER_TEXT_START;
+    task->mm.brk_start = USER_HEAP_START;
+    task->mm.brk_end = USER_HEAP_START;
+    
+    /* Load new binary into memory */
+    uint32_t num_pages = (file_size + PAGE_SIZE - 1) / PAGE_SIZE;
+    uint32_t bytes_loaded = 0;
+    
+    for (uint32_t i = 0; i < num_pages; i++) {
+        /* Allocate physical page */
+        void *page_virt = page_alloc(PAGE_SIZE);
+        if (!page_virt) {
+            printk("[EXEC] Failed to allocate page\n");
+            fs_close(fd);
+            return -1;
+        }
+        
+        /* Read binary data into page */
+        uint32_t bytes_to_read = PAGE_SIZE;
+        if (bytes_loaded + bytes_to_read > file_size) {
+            bytes_to_read = file_size - bytes_loaded;
+        }
+        
+        char *page_buf = (char*)page_virt;
+        uint32_t offset = 0;
+        while (offset < bytes_to_read) {
+            int n = fs_read(fd, page_buf + offset, bytes_to_read - offset);
+            if (n <= 0) break;
+            offset += n;
+        }
+        bytes_loaded += offset;
+        
+        /* Zero rest of page */
+        if (offset < PAGE_SIZE) {
+            memset(page_buf + offset, 0, PAGE_SIZE - offset);
+        }
+        
+        /* Map into user space */
+        uint32_t vaddr = USER_TEXT_START + (i * PAGE_SIZE);
+        uint32_t phys = VIRT_TO_PHYS((uint32_t)page_virt);
+        
+        /* Allocate page table if needed */
+        uint32_t pdi = vaddr >> 22;
+        uint32_t pti = (vaddr >> 12) & 0x3FF;
+        
+        if (!task->mm.page_tables[pdi]) {
+            uint32_t *pt = (uint32_t *)page_alloc(PAGE_SIZE);
+            if (!pt) {
+                printk("[EXEC] Failed to allocate page table\n");
+                fs_close(fd);
+                return -1;
+            }
+            memset(pt, 0, PAGE_SIZE);
+            task->mm.page_tables[pdi] = pt;
+            
+            uint32_t pt_phys = VIRT_TO_PHYS((uint32_t)pt);
+            task->mm.pgdir[pdi] = pt_phys | 0x7;  /* P | RW | U */
+        }
+        
+        /* Install PTE */
+        uint32_t *pt = task->mm.page_tables[pdi];
+        pt[pti] = phys | 0x7;  /* P | RW | U */
+    }
+    
+    fs_close(fd);
+    
+    /* Update code region */
+    task->mm.code_end = USER_TEXT_START + file_size;
+    
+    /* Create code VMA */
+    vma_t *code_vma = vma_create(USER_TEXT_START, task->mm.code_end,
+                                  VM_READ | VM_EXEC, VMA_CODE);
+    if (code_vma) {
+        vma_insert(task, code_vma);
+    }
+    
+    /* Allocate new user stack (1 page) */
+    void *stack_page = page_alloc(PAGE_SIZE);
+    if (!stack_page) {
+        printk("[EXEC] Failed to allocate stack page\n");
+        return -1;
+    }
+    
+    /* Map stack at top of user space */
+    uint32_t stack_vaddr = USER_STACK_TOP - PAGE_SIZE;
+    uint32_t stack_phys = VIRT_TO_PHYS((uint32_t)stack_page);
+    
+    uint32_t pdi = stack_vaddr >> 22;
+    uint32_t pti = (stack_vaddr >> 12) & 0x3FF;
+    
+    if (!task->mm.page_tables[pdi]) {
+        uint32_t *pt = (uint32_t *)page_alloc(PAGE_SIZE);
+        if (!pt) {
+            printk("[EXEC] Failed to allocate stack page table\n");
+            return -1;
+        }
+        memset(pt, 0, PAGE_SIZE);
+        task->mm.page_tables[pdi] = pt;
+        
+        uint32_t pt_phys = VIRT_TO_PHYS((uint32_t)pt);
+        task->mm.pgdir[pdi] = pt_phys | 0x7;
+    }
+    
+    uint32_t *pt = task->mm.page_tables[pdi];
+    pt[pti] = stack_phys | 0x7;
+    
+    /* Create stack VMA */
+    vma_t *stack_vma = vma_create(task->mm.stack_start, task->mm.stack_end,
+                                   VM_READ | VM_WRITE | VM_GROWSDOWN, VMA_STACK);
+    if (stack_vma) {
+        vma_insert(task, stack_vma);
+    }
+    
+    /* Set up registers for returning to userspace at new entry point
+     * We need to modify the saved register state on the kernel stack
+     * so that when we return from this syscall, we jump to the new program */
+    
+    /* The syscall was invoked via int 0x80, which pushed an IRET frame.
+     * We need to find and modify the EIP and ESP in that frame. */
+    
+    /* Current kernel stack has the syscall frame. We can't easily access it,
+     * so we'll use a different approach: set up a new IRET frame and
+     * use it to jump to the new program.
+     * 
+     * We'll modify the return path by directly manipulating the stack. */
+    
+    extern void enter_userspace(uint32_t cr3, uint32_t entry);
+    
+    /* Switch to the task's page directory */
+    uint32_t cr3 = VIRT_TO_PHYS((uint32_t)&task->mm.pgdir[0]);
+    
+    /* This will never return - it directly jumps to userspace */
+    enter_userspace(cr3, USER_TEXT_START);
+    
+    /* Should never reach here */
+    return -1;
+}

@@ -134,6 +134,7 @@ app:
 	@make mountd
 	@make -C crt init
 	@cp crt/build/init mnt/
+	@cp crt/build/sh mnt/
 	@make umountd
 
 # ===========================================================================
