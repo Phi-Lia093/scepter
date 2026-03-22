@@ -277,6 +277,24 @@ static int devfs_truncate(void *file_private, uint32_t length)
     return -1;
 }
 
+/* ---- ioctl ---- */
+
+static int devfs_ioctl(void *file_private, uint32_t cmd, uint32_t arg)
+{
+    devfs_file_t *f = (devfs_file_t *)file_private;
+    if (!f || !f->node) return -1;
+
+    devfs_node_t *node = f->node;
+
+    /* Only character devices support ioctl */
+    if (node->type == DT_CHRDEV) {
+        (void)arg;  /* arg is passed via cmd for now */
+        return cioctl(node->dev_id, node->minor, cmd);
+    }
+
+    return -1;  /* Block devices don't support ioctl yet */
+}
+
 /* ---- readdir ---- */
 
 static int devfs_readdir(void *file_private, dirent_t *dirent)
@@ -370,6 +388,7 @@ static fs_ops_t devfs_ops = {
     .write    = devfs_write,
     .seek     = devfs_seek,
     .truncate = devfs_truncate,
+    .ioctl    = devfs_ioctl,
     .readdir  = devfs_readdir,
     .mkdir    = devfs_mkdir,
     .rmdir    = devfs_rmdir,

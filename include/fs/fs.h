@@ -90,6 +90,9 @@ typedef struct fs_ops {
     int (*seek)(void *file_private, int32_t offset, int whence,
                 uint32_t *new_offset);
     int (*truncate)(void *file_private, uint32_t length);
+    
+    /* ---- I/O control ---- */
+    int (*ioctl)(void *file_private, uint32_t cmd, uint32_t arg);
 
     /* ---- Directory I/O ---- */
     /* readdir: fill *dirent with next entry; return 1 if entry returned,
@@ -182,6 +185,12 @@ int fs_truncate(int fd, uint32_t length);
  * Returns 1 if an entry was returned, 0 at end-of-directory, -1 on error.
  */
 int fs_readdir(int fd, dirent_t *dirent);
+
+/**
+ * Perform device-specific I/O control operation.
+ * Returns 0 on success, device-specific value, or -1 on error.
+ */
+int fs_ioctl(int fd, uint32_t cmd, uint32_t arg);
 
 /* -------------------------------------------------------------------------
  * Path-Based Operations

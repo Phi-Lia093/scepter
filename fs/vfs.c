@@ -534,6 +534,19 @@ int fs_readdir(int fd, dirent_t *dirent)
     return -1;
 }
 
+int fs_ioctl(int fd, uint32_t cmd, uint32_t arg)
+{
+    fd_entry_t *fde = find_fd_entry(fd);
+    if (!fde || !fde->file) return -1;
+    
+    open_file_t *file = fde->file;
+
+    if (fs_drivers[file->fs_id].ops.ioctl)
+        return fs_drivers[file->fs_id].ops.ioctl(file->file_private, cmd, arg);
+
+    return -1;  /* FS driver does not support ioctl */
+}
+
 /* =========================================================================
  * Path-Based Operations
  * ========================================================================= */

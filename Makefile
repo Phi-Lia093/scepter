@@ -132,9 +132,12 @@ run: $(TARGET)
 
 app:
 	@make mountd
-	@make -C crt init
-	@cp crt/build/init mnt/
-	@cp crt/build/sh mnt/
+	@make -C crt all
+	@echo "Copying userspace programs to disk..."
+	@cp crt/build/root/init mnt/
+	@mkdir -p mnt/bin
+	@cp crt/build/root/bin/* mnt/bin/
+	@echo "✓ Userspace programs installed"
 	@make umountd
 
 # ===========================================================================

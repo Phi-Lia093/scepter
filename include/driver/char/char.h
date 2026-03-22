@@ -39,6 +39,9 @@ int  cwrite(int prim_id, int scnd_id, char c);
 /** Send an ioctl command to a char device. Returns device value or -1. */
 int  char_ioctl(int prim_id, int scnd_id, unsigned int command);
 
+/** Short alias for char_ioctl */
+#define cioctl char_ioctl
+
 /**
  * Initialise all character devices: VGA, TTY, PIT, keyboard.
  * Safe to call before buddy/slab (uses no dynamic allocation).

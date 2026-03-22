@@ -34,9 +34,18 @@ typedef struct registers {
 #define SYS_CLOSE  6
 #define SYS_WAIT4  7    /* Simplified as SYS_WAIT */
 #define SYS_EXECVE 11   /* Simplified as SYS_EXEC */
+#define SYS_LSEEK  19   /* Reposition file offset */
+#define SYS_GETPID 20   /* Get process ID */
+#define SYS_DUP    41   /* Duplicate file descriptor */
 #define SYS_BRK    45
+#define SYS_IOCTL  54   /* I/O control */
+#define SYS_DUP2   63   /* Duplicate file descriptor to specific fd */
+#define SYS_GETPPID 64  /* Get parent process ID */
 #define SYS_MMAP   90   /* Old 32-bit mmap */
 #define SYS_MUNMAP 91
+#define SYS_FSTAT  108  /* Get file status by fd */
+#define SYS_STAT   106  /* Get file status by path */
+#define SYS_GETCWD 183  /* Get current working directory */
 
 /* =========================================================================
  * User Pointer Validation

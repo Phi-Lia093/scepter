@@ -7,6 +7,7 @@
 #include "kernel/process.h"
 #include "mm/vma.h"
 #include "mm/pgtable.h"
+#include "mm/slab.h"
 #include "fs/fs.h"
 #include "lib/printk.h"
 #include "lib/string.h"
@@ -229,6 +230,272 @@ static int sys_close(int fd)
 }
 
 /**
+ * sys_ioctl - I/O control operations on devices
+ * @param fd File descriptor
+ * @param cmd Control command
+ * @param arg Command argument (optional, device-specific)
+ * @return 0 on success, device-specific value, or -1 on error
+ */
+static int sys_ioctl(int fd, uint32_t cmd, uint32_t arg)
+{
+    return fs_ioctl(fd, cmd, arg);
+}
+
+/**
+ * sys_dup - Duplicate a file descriptor
+ * @param oldfd File descriptor to duplicate
+ * @return New file descriptor on success, -1 on error
+ * 
+ * Creates a copy of oldfd using the lowest-numbered available fd.
+ * The new fd shares the same open file description (offset, flags).
+ */
+static int sys_dup(int oldfd)
+{
+    task_struct_t *task = current;
+    
+    /* Find the old fd_entry */
+    fd_entry_t *old_fde = NULL;
+    list_head_t *pos;
+    list_for_each(pos, &task->files) {
+        fd_entry_t *fde = list_entry(pos, fd_entry_t, node);
+        if (fde->fd == oldfd) {
+            old_fde = fde;
+            break;
+        }
+    }
+    
+    if (!old_fde || !old_fde->file) {
+        printk("[SYSCALL] dup: invalid fd %d\n", oldfd);
+        return -1;
+    }
+    
+    /* Allocate new fd_entry */
+    fd_entry_t *new_fde = (fd_entry_t *)kalloc(sizeof(fd_entry_t));
+    if (!new_fde) {
+        printk("[SYSCALL] dup: OOM\n");
+        return -1;
+    }
+    
+    /* New fd shares the same open_file */
+    new_fde->fd = task->next_fd++;
+    new_fde->file = old_fde->file;
+    new_fde->file->refcount++;  /* Increment reference count */
+    
+    INIT_LIST_HEAD(&new_fde->node);
+    list_add_tail(&new_fde->node, &task->files);
+    
+    return new_fde->fd;
+}
+
+/**
+ * sys_dup2 - Duplicate a file descriptor to a specific fd number
+ * @param oldfd File descriptor to duplicate
+ * @param newfd Desired file descriptor number
+ * @return newfd on success, -1 on error
+ * 
+ * If newfd is already open, it is closed first.
+ * If oldfd == newfd, returns newfd without closing it.
+ */
+static int sys_dup2(int oldfd, int newfd)
+{
+    task_struct_t *task = current;
+    
+    /* Validate newfd range */
+    if (newfd < 0 || newfd >= 1024) {
+        printk("[SYSCALL] dup2: invalid newfd %d\n", newfd);
+        return -1;
+    }
+    
+    /* If oldfd == newfd, just validate and return */
+    if (oldfd == newfd) {
+        /* Check if oldfd is valid */
+        list_head_t *pos;
+        list_for_each(pos, &task->files) {
+            fd_entry_t *fde = list_entry(pos, fd_entry_t, node);
+            if (fde->fd == oldfd) {
+                return newfd;  /* Valid, return as-is */
+            }
+        }
+        printk("[SYSCALL] dup2: invalid oldfd %d\n", oldfd);
+        return -1;
+    }
+    
+    /* Find the old fd_entry */
+    fd_entry_t *old_fde = NULL;
+    list_head_t *pos;
+    list_for_each(pos, &task->files) {
+        fd_entry_t *fde = list_entry(pos, fd_entry_t, node);
+        if (fde->fd == oldfd) {
+            old_fde = fde;
+            break;
+        }
+    }
+    
+    if (!old_fde || !old_fde->file) {
+        printk("[SYSCALL] dup2: invalid oldfd %d\n", oldfd);
+        return -1;
+    }
+    
+    /* Close newfd if it's already open */
+    fd_entry_t *new_fde = NULL;
+    list_head_t *tmp;
+    list_for_each_safe(pos, tmp, &task->files) {
+        fd_entry_t *fde = list_entry(pos, fd_entry_t, node);
+        if (fde->fd == newfd) {
+            new_fde = fde;
+            break;
+        }
+    }
+    
+    if (new_fde) {
+        /* Close the existing newfd - just call fs_close which handles refcounting */
+        fs_close(newfd);
+        new_fde = NULL;  /* fs_close already freed it */
+    }
+    
+    /* Create new fd_entry for newfd */
+    new_fde = (fd_entry_t *)kalloc(sizeof(fd_entry_t));
+    if (!new_fde) {
+        printk("[SYSCALL] dup2: OOM\n");
+        return -1;
+    }
+    
+    /* New fd shares the same open_file */
+    new_fde->fd = newfd;
+    new_fde->file = old_fde->file;
+    new_fde->file->refcount++;  /* Increment reference count */
+    
+    INIT_LIST_HEAD(&new_fde->node);
+    list_add_tail(&new_fde->node, &task->files);
+    
+    /* Update next_fd if necessary */
+    if (newfd >= task->next_fd) {
+        task->next_fd = newfd + 1;
+    }
+    
+    return newfd;
+}
+
+/**
+ * sys_getpid - Get current process ID
+ * @return Current process PID
+ */
+static int sys_getpid(void)
+{
+    return current->pid;
+}
+
+/**
+ * sys_getppid - Get parent process ID
+ * @return Parent process PID, or 0 if no parent
+ */
+static int sys_getppid(void)
+{
+    return current->ppid;
+}
+
+/**
+ * sys_lseek - Reposition file offset
+ * @param fd File descriptor
+ * @param offset Offset value
+ * @param whence Position reference (SEEK_SET, SEEK_CUR, SEEK_END)
+ * @return New file offset on success, -1 on error
+ */
+static int sys_lseek(int fd, int32_t offset, int whence)
+{
+    return fs_seek(fd, offset, whence);
+}
+
+/**
+ * sys_getcwd - Get current working directory
+ * @param user_buf User buffer to store path
+ * @param size Buffer size
+ * @return Pointer to user_buf on success, -1 on error
+ */
+static int sys_getcwd(char *user_buf, size_t size)
+{
+    /* Validate user buffer */
+    if (!valid_user_pointer(user_buf, size)) {
+        printk("[SYSCALL] getcwd: Invalid buffer pointer\n");
+        return -1;
+    }
+    
+    /* Get current working directory from kernel */
+    char *cwd = fs_getcwd(user_buf, size);
+    if (!cwd) {
+        printk("[SYSCALL] getcwd: Failed to get cwd\n");
+        return -1;
+    }
+    
+    /* fs_getcwd already wrote to user_buf, so we just return it */
+    return (int)user_buf;
+}
+
+/**
+ * sys_stat - Get file status by path
+ * @param user_path User pointer to path string
+ * @param user_stat User pointer to stat structure
+ * @return 0 on success, -1 on error
+ */
+static int sys_stat(const char *user_path, stat_t *user_stat)
+{
+    char kernel_path[256];
+    stat_t kernel_stat;
+    
+    /* Validate pointers */
+    if (!valid_user_pointer(user_path, 1)) {
+        printk("[SYSCALL] stat: Invalid path pointer\n");
+        return -1;
+    }
+    
+    if (!valid_user_pointer(user_stat, sizeof(stat_t))) {
+        printk("[SYSCALL] stat: Invalid stat pointer\n");
+        return -1;
+    }
+    
+    /* Copy path string from userspace */
+    size_t len = 0;
+    while (len < sizeof(kernel_path) - 1) {
+        if (copy_from_user(&kernel_path[len], &user_path[len], 1) < 0) {
+            return -1;
+        }
+        if (kernel_path[len] == '\0') {
+            break;
+        }
+        len++;
+    }
+    kernel_path[sizeof(kernel_path) - 1] = '\0';
+    
+    /* Call VFS stat */
+    if (fs_stat(kernel_path, &kernel_stat) < 0) {
+        return -1;
+    }
+    
+    /* Copy result to userspace */
+    if (copy_to_user(user_stat, &kernel_stat, sizeof(stat_t)) < 0) {
+        return -1;
+    }
+    
+    return 0;
+}
+
+/**
+ * sys_fstat - Get file status by file descriptor
+ * @param fd File descriptor
+ * @param user_stat User pointer to stat structure
+ * @return 0 on success, -1 on error
+ */
+static int sys_fstat(int fd, stat_t *user_stat)
+{
+    /* TODO: Implement fstat via VFS
+     * For now, return error as VFS doesn't have fstat yet */
+    (void)fd;
+    (void)user_stat;
+    printk("[SYSCALL] fstat: Not yet implemented\n");
+    return -1;
+}
+
+/**
  * sys_brk - Set program break (heap end)
  * @param addr New heap end address (0 = query current)
  * @return New heap end on success, -1 on error
@@ -400,6 +667,8 @@ int syscall_handler(registers_t *regs, int num, uint32_t arg1, uint32_t arg2,
 {
     (void)arg4;  /* Unused */
     (void)arg5;  /* Unused */
+
+    // printk("%x %x %x %x %x %x\n", num, arg1, arg2, arg3, arg4, arg5);
     
     switch (num) {
         case SYS_EXIT:
@@ -422,14 +691,32 @@ int syscall_handler(registers_t *regs, int num, uint32_t arg1, uint32_t arg2,
         case SYS_CLOSE:
             return sys_close((int)arg1);
         
+        case SYS_LSEEK:
+            return sys_lseek((int)arg1, (int32_t)arg2, (int)arg3);
+        
+        case SYS_GETPID:
+            return sys_getpid();
+        
+        case SYS_DUP:
+            return sys_dup((int)arg1);
+        
+        case SYS_BRK:
+            return sys_brk(arg1);
+        
+        case SYS_IOCTL:
+            return sys_ioctl((int)arg1, arg2, arg3);
+        
+        case SYS_DUP2:
+            return sys_dup2((int)arg1, (int)arg2);
+        
+        case SYS_GETPPID:
+            return sys_getppid();
+        
         case SYS_WAIT4:
             return sys_wait((int *)arg1);
         
         case SYS_EXECVE:
             return sys_exec((const char *)arg1);
-        
-        case SYS_BRK:
-            return sys_brk(arg1);
         
         case SYS_MMAP:
             return sys_mmap(arg1, (size_t)arg2, (int)arg3, 
@@ -437,6 +724,15 @@ int syscall_handler(registers_t *regs, int num, uint32_t arg1, uint32_t arg2,
         
         case SYS_MUNMAP:
             return sys_munmap(arg1, (size_t)arg2);
+        
+        case SYS_STAT:
+            return sys_stat((const char *)arg1, (stat_t *)arg2);
+        
+        case SYS_FSTAT:
+            return sys_fstat((int)arg1, (stat_t *)arg2);
+        
+        case SYS_GETCWD:
+            return sys_getcwd((char *)arg1, (size_t)arg2);
         
         default:
             printk("[SYSCALL] Unknown syscall number: %d\n", num);
