@@ -16,6 +16,7 @@ SECTIONS
         *(.data)
         *(.rodata*)
         *(.bss)
+        *(COMMON*)
     }
 
     /* One-past-end marker used by kernel.c to find the first free page */

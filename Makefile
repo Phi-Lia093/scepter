@@ -130,6 +130,25 @@ run: $(TARGET)
 		-drive file=data.img,format=raw,if=ide,index=1,media=disk \
 		-serial file:kernel.log
 
+
+debug: $(TARGET)
+	@if [ ! -f disk.img ]; then \
+		echo "ERROR: disk.img not found. Run 'make grub' first."; \
+		exit 1; \
+	fi
+	@if ! mountpoint -q $(MOUNT_DIR); then \
+		echo "Mounting disk..."; \
+		$(MAKE) mount; \
+	fi
+	@echo "Copying kernel to disk..."
+	@cp $(TARGET) $(MOUNT_DIR)/boot/kernel.elf
+	@sync
+	@echo "Unmounting disk..."
+	@$(MAKE) umount
+	@echo "Starting bochs..."
+	@rm -f kernel.log
+	@bochs
+
 app:
 	@make mountd
 	@make -C crt all

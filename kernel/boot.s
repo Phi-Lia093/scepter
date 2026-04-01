@@ -127,7 +127,7 @@ _start_higher:
     /* Set up kernel stack (virtual address) */
     movl  $stack_top, %esp
 
-    mov $boot_page_directory-0xC0000000, kernel_page_table 
+    movl $boot_page_directory-0xC0000000, kernel_page_table 
 
     /* Call the C kernel (no arguments needed) */
     call  kernel_main

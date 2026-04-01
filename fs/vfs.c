@@ -608,7 +608,7 @@ int fs_rename(const char *old_path, const char *new_path)
     if (resolve_path(new_path, abs_new, sizeof(abs_new)) != 0) return -1;
 
     /* Both paths must be on the same filesystem */
-    const char *rel_old, *rel_new;
+    const char *rel_old = NULL , *rel_new = NULL;
     mount_point_t *mp_old = resolve_mount(abs_old, &rel_old);
     mount_point_t *mp_new = resolve_mount(abs_new, &rel_new);
 

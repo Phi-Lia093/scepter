@@ -237,7 +237,7 @@ void schedule(void)
     task_struct_t *next = pick_next_task();
     
     if (next != prev) {
-        printk("[SCHED] Switching: PID %u -> PID %u\n", prev->pid, next->pid);
+        // printk("[SCHED] Switching: PID %u -> PID %u\n", prev->pid, next->pid);
     }
     
     if (next == prev) {
