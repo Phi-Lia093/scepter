@@ -6,7 +6,7 @@
 SUBDIRS = minix3
 
 # Source files in fs/
-SRCS = vfs.c devfs.c
+SRCS = vfs.c devfs.c pipe.c
 
 # Object files (in build directory)
 OBJS = $(addprefix $(BUILD_DIR)/, $(SRCS:.c=.o))

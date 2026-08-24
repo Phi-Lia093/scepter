@@ -68,6 +68,16 @@ void sys_exit(int status) __attribute__((noreturn));
 int sys_fork(struct registers *regs);
 
 /**
+ * sys_wait4 - Wait for a child process to exit
+ * @param pid  -1: any child; 0: any group child; >0: specific child
+ * @param status_ptr User pointer to store exit status (can be NULL)
+ * @param options    Reserved (0)
+ * @param rusage     Reserved (NULL)
+ * @return Child PID on success, -1 on error
+ */
+int sys_wait4(int pid, int *status_ptr, int options, void *rusage);
+
+/**
  * sys_wait - Wait for any child process to exit
  * @param status_ptr User pointer to store exit status (can be NULL)
  * @return Child PID on success, -1 on error

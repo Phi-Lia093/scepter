@@ -656,6 +656,104 @@ static int sys_munmap(uint32_t addr, size_t length)
 }
 
 /* ============================================================================
+ * Pipes
+ * ============================================================================ */
+
+/**
+ * sys_pipe - Create an anonymous pipe
+ * @param user_fds User array of 2 ints; filled with [read_end, write_end]
+ * @return 0 on success, -1 on error
+ */
+static int sys_pipe(int *user_fds)
+{
+    if (!valid_user_pointer(user_fds, 2 * sizeof(int))) {
+        printk("[SYSCALL] pipe: Invalid fds pointer\n");
+        return -1;
+    }
+
+    int fds[2];
+    if (fs_pipe(fds) < 0)
+        return -1;
+
+    if (copy_to_user(user_fds, fds, 2 * sizeof(int)) < 0)
+        return -1;
+
+    return 0;
+}
+
+/* ============================================================================
+ * Path-based filesystem operations
+ * ============================================================================ */
+
+/* Copy a NUL-terminated path from userspace into kernel buffer. */
+static int copy_path_from_user(const char *user_path, char *kernel_path,
+                               size_t size)
+{
+    if (!valid_user_pointer(user_path, 1))
+        return -1;
+
+    size_t len = 0;
+    while (len < size - 1) {
+        if (copy_from_user(&kernel_path[len], &user_path[len], 1) < 0)
+            return -1;
+        if (kernel_path[len] == '\0')
+            return 0;
+        len++;
+    }
+    kernel_path[size - 1] = '\0';
+    return 0;
+}
+
+static int sys_mkdir(const char *user_path, uint32_t mode)
+{
+    char kernel_path[MAX_PATH_LEN];
+    if (copy_path_from_user(user_path, kernel_path, sizeof(kernel_path)) < 0)
+        return -1;
+    return fs_mkdir(kernel_path, mode);
+}
+
+static int sys_rmdir(const char *user_path)
+{
+    char kernel_path[MAX_PATH_LEN];
+    if (copy_path_from_user(user_path, kernel_path, sizeof(kernel_path)) < 0)
+        return -1;
+    return fs_rmdir(kernel_path);
+}
+
+static int sys_unlink(const char *user_path)
+{
+    char kernel_path[MAX_PATH_LEN];
+    if (copy_path_from_user(user_path, kernel_path, sizeof(kernel_path)) < 0)
+        return -1;
+    return fs_unlink(kernel_path);
+}
+
+static int sys_rename(const char *user_old, const char *user_new)
+{
+    char kernel_old[MAX_PATH_LEN], kernel_new[MAX_PATH_LEN];
+    if (copy_path_from_user(user_old, kernel_old, sizeof(kernel_old)) < 0)
+        return -1;
+    if (copy_path_from_user(user_new, kernel_new, sizeof(kernel_new)) < 0)
+        return -1;
+    return fs_rename(kernel_old, kernel_new);
+}
+
+static int sys_truncate(const char *user_path, uint32_t length)
+{
+    /* fs_truncate() works on an open fd, so open + truncate + close. */
+    char kernel_path[MAX_PATH_LEN];
+    if (copy_path_from_user(user_path, kernel_path, sizeof(kernel_path)) < 0)
+        return -1;
+
+    int fd = fs_open(kernel_path, O_WRONLY);
+    if (fd < 0)
+        return -1;
+    int ret = fs_truncate(fd, length);
+    fs_close(fd);
+    return ret;
+}
+
+/* ============================================================================
  * System Call Dispatcher
  * ============================================================================ */
 
@@ -714,7 +812,25 @@ int syscall_handler(registers_t *regs, int num, uint32_t arg1, uint32_t arg2,
             return sys_nanosleep((timespec_t *)arg1, (timespec_t *)arg2);
         
         case SYS_WAIT4:
-            return sys_wait((int *)arg1);
+            return sys_wait4((int)arg1, (int *)arg2, (int)arg3, (void *)arg4);
+        
+        case SYS_PIPE:
+            return sys_pipe((int *)arg1);
+        
+        case SYS_MKDIR:
+            return sys_mkdir((const char *)arg1, (uint32_t)arg2);
+        
+        case SYS_RMDIR:
+            return sys_rmdir((const char *)arg1);
+        
+        case SYS_UNLINK:
+            return sys_unlink((const char *)arg1);
+        
+        case SYS_RENAME:
+            return sys_rename((const char *)arg1, (const char *)arg2);
+        
+        case SYS_TRUNCATE:
+            return sys_truncate((const char *)arg1, (uint32_t)arg2);
         
         case SYS_EXEC:
             return sys_exec((const char *)arg1);

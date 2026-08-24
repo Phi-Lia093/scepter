@@ -10,6 +10,12 @@
 #include "lib/printk.h"
 #include "lib/string.h"
 
+/* Forward declarations (helpers are defined later in this file) */
+static int parse_parent_and_name(const char *path, char *parent, char *name);
+static int lookup_directory_by_path(minix3_fs_info_t *fs, const char *path,
+                                    uint32_t *ino_out,
+                                    struct minix3_inode *inode_out);
+
 /* ============================================================================
  * VFS Callback: open
  * ============================================================================ */
@@ -325,57 +331,63 @@ static int minix3_vfs_readdir(void *file_private, dirent_t *dirent)
     uint32_t dir_size = file->inode.i_size;
     uint32_t entries_per_block = file->fs->block_size / MINIX3_DIRENT_SIZE;
     uint32_t total_entries = dir_size / MINIX3_DIRENT_SIZE;
-    
-    /* Check if we've read all entries */
-    if (file->dir_pos >= total_entries) {
-        return 0;  /* End of directory */
-    }
-    
-    /* Calculate which block and entry index */
-    uint32_t block_num = file->dir_pos / entries_per_block;
-    uint32_t entry_in_block = file->dir_pos % entries_per_block;
-    
-    /* Map block to zone */
-    uint32_t zone;
-    if (minix3_bmap(file->fs, &file->inode, block_num, &zone) < 0) {
-        return -1;
-    }
-    
-    if (zone == 0) {
-        /* Sparse block - skip */
-        file->dir_pos++;
-        return minix3_vfs_readdir(file_private, dirent);  /* Try next entry */
-    }
-    
-    /* Read the block */
-    uint8_t buf[4096];
-    uint32_t sector = zone * (file->fs->block_size / 512);
-    int sectors = file->fs->block_size / 512;
-    
-    if (bread(file->fs->device_id, file->fs->partition_id, buf, sector, sectors) < 0) {
-        return -1;
-    }
-    
-    /* Extract the directory entry */
-    struct minix3_dirent *entry = 
-        (struct minix3_dirent *)(buf + entry_in_block * MINIX3_DIRENT_SIZE);
-    
-    /* Skip deleted entries */
-    if (entry->inode == 0) {
-        file->dir_pos++;
-        return minix3_vfs_readdir(file_private, dirent);  /* Try next entry */
-    }
-    
-    /* Fill dirent structure */
-    strncpy(dirent->name, entry->name, sizeof(dirent->name) - 1);
-    dirent->name[sizeof(dirent->name) - 1] = '\0';
-    dirent->inode = entry->inode;
-    
-    /* Determine type by reading inode */
-    struct minix3_inode entry_inode;
-    if (minix3_read_inode(file->fs, entry->inode, &entry_inode) == 0) {
-        if (MINIX3_ISDIR(entry_inode.i_mode)) {
-            dirent->type = DT_DIR;
+
+    /* Iterative scan: sparse blocks and deleted entries are SKIPPED in a
+     * loop (NOT via recursion). A recursive version allocated a 4 KB
+     * stack buffer per skipped entry, which overflowed the kernel stack
+     * (and corrupted the task_struct) on directories full of deleted
+     * entries (e.g. after many rm/rmdir operations). */
+    for (;;) {
+        /* Check if we've read all entries */
+        if (file->dir_pos >= total_entries) {
+            return 0;  /* End of directory */
+        }
+        
+        /* Calculate which block and entry index */
+        uint32_t block_num = file->dir_pos / entries_per_block;
+        uint32_t entry_in_block = file->dir_pos % entries_per_block;
+        
+        /* Map block to zone */
+        uint32_t zone;
+        if (minix3_bmap(file->fs, &file->inode, block_num, &zone) < 0) {
+            return -1;
+        }
+        
+        if (zone == 0) {
+            /* Sparse block - skip */
+            file->dir_pos++;
+            continue;
+        }
+        
+        /* Read the block */
+        uint8_t buf[4096];
+        uint32_t sector = zone * (file->fs->block_size / 512);
+        int sectors = file->fs->block_size / 512;
+        
+        if (bread(file->fs->device_id, file->fs->partition_id, buf, sector, sectors) < 0) {
+            return -1;
+        }
+        
+        /* Extract the directory entry */
+        struct minix3_dirent *entry = 
+            (struct minix3_dirent *)(buf + entry_in_block * MINIX3_DIRENT_SIZE);
+        
+        /* Skip deleted entries */
+        if (entry->inode == 0) {
+            file->dir_pos++;
+            continue;
+        }
+        
+        /* Fill dirent structure */
+        strncpy(dirent->name, entry->name, sizeof(dirent->name) - 1);
+        dirent->name[sizeof(dirent->name) - 1] = '\0';
+        dirent->inode = entry->inode;
+        
+        /* Determine type by reading inode */
+        struct minix3_inode entry_inode;
+        if (minix3_read_inode(file->fs, entry->inode, &entry_inode) == 0) {
+            if (MINIX3_ISDIR(entry_inode.i_mode)) {
+                dirent->type = DT_DIR;
         } else if (MINIX3_ISREG(entry_inode.i_mode)) {
             dirent->type = DT_REG;
         } else if (MINIX3_ISCHR(entry_inode.i_mode)) {
@@ -393,6 +405,7 @@ static int minix3_vfs_readdir(void *file_private, dirent_t *dirent)
     
     file->dir_pos++;
     return 1;  /* Entry returned */
+    }
 }
 
 /* ============================================================================
@@ -404,26 +417,17 @@ static int minix3_vfs_unlink(void *fs_private, const char *path)
     minix3_fs_info_t *fs = (minix3_fs_info_t *)fs_private;
     if (!fs || !path) return -1;
     
-    /* Parse path to find parent directory and filename */
-    const char *filename = path;
-    if (filename[0] == '/') filename++;
+    /* Resolve the parent directory from the path (supports subdirectories) */
+    char parent_path[256];
+    char name[MINIX3_NAME_LEN];
+    parse_parent_and_name(path, parent_path, name);
     
-    /* Find the last '/' to separate parent from filename */
-    const char *last_slash = NULL;
-    for (const char *p = filename; *p; p++) {
-        if (*p == '/') last_slash = p;
-    }
-    
-    /* Get parent directory inode (root for now if no slash) */
+    uint32_t parent_ino;
     struct minix3_inode parent_inode;
-    uint32_t parent_ino = MINIX3_ROOT_INO;
-    
-    if (minix3_read_inode(fs, parent_ino, &parent_inode) < 0) {
+    if (lookup_directory_by_path(fs, parent_path, &parent_ino, &parent_inode) < 0) {
+        printk("[minix3] unlink: parent directory not found\n");
         return -1;
     }
-    
-    /* Get the filename part */
-    const char *name = last_slash ? last_slash + 1 : filename;
     
     /* Lookup the file */
     uint32_t file_ino;
@@ -593,21 +597,21 @@ static int minix3_vfs_rmdir(void *fs_private, const char *path)
     minix3_fs_info_t *fs = (minix3_fs_info_t *)fs_private;
     if (!fs || !path) return -1;
     
-    /* Parse path */
-    const char *filename = path;
-    if (filename[0] == '/') filename++;
+    /* Resolve the parent directory from the path (supports subdirectories) */
+    char parent_path[256];
+    char name[MINIX3_NAME_LEN];
+    parse_parent_and_name(path, parent_path, name);
     
-    /* Get parent directory */
+    uint32_t parent_ino;
     struct minix3_inode parent_inode;
-    uint32_t parent_ino = MINIX3_ROOT_INO;
-    
-    if (minix3_read_inode(fs, parent_ino, &parent_inode) < 0) {
+    if (lookup_directory_by_path(fs, parent_path, &parent_ino, &parent_inode) < 0) {
+        printk("[minix3] rmdir: parent directory not found\n");
         return -1;
     }
     
     /* Lookup directory */
     uint32_t dir_ino;
-    if (minix3_lookup(fs, &parent_inode, filename, &dir_ino) < 0) {
+    if (minix3_lookup(fs, &parent_inode, name, &dir_ino) < 0) {
         return -1;
     }
     
@@ -665,7 +669,7 @@ static int minix3_vfs_rmdir(void *fs_private, const char *path)
     minix3_free_inode(fs, dir_ino);
     
     /* Remove from parent directory */
-    minix3_remove_dirent(fs, &parent_inode, filename);
+    minix3_remove_dirent(fs, &parent_inode, name);
     
     /* Decrement parent link count */
     parent_inode.i_nlinks--;

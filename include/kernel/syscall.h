@@ -47,10 +47,16 @@ typedef struct registers {
 #define SYS_GETPPID 64  /* Get parent process ID */
 #define SYS_MMAP   90   /* Old 32-bit mmap */
 #define SYS_MUNMAP 91
+#define SYS_TRUNCATE 92 /* Truncate a file by path */
 #define SYS_FSTAT  108  /* Get file status by fd */
 #define SYS_STAT   106  /* Get file status by path */
+#define SYS_UNLINK 137  /* Delete a file */
 #define SYS_GETDENTS 141 /* Read directory entries */
 #define SYS_GETCWD 183  /* Get current working directory */
+#define SYS_PIPE   42   /* Create an anonymous pipe */
+#define SYS_MKDIR  39   /* Create a directory */
+#define SYS_RMDIR  40   /* Remove an empty directory */
+#define SYS_RENAME 38   /* Rename / move a file or directory */
 
 /* =========================================================================
  * Time Structures

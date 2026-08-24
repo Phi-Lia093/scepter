@@ -1,4 +1,5 @@
 #include "fs/fs.h"
+#include "fs/pipe.h"
 #include "kernel/sched.h"
 #include "mm/slab.h"
 #include "lib/printk.h"
@@ -151,7 +152,8 @@ static open_file_t *alloc_open_file(int fs_id, void *fs_priv,
     file->file_private = file_priv;
     file->offset       = 0;
     file->flags        = flags;
-    file->refcount     = 1;  /* Initial reference */
+    file->refcount     = 1;
+    file->pipe         = NULL;   /* not a pipe end unless fs_pipe sets it */
 
     return file;
 }
@@ -163,7 +165,14 @@ static void open_file_put(open_file_t *file)
     file->refcount--;
     if (file->refcount == 0) {
         /* Last reference - actually close the file */
-        if (fs_drivers[file->fs_id].ops.close) {
+        if (file->pipe) {
+            /* Pipe end: release our side; pipe frees itself when both
+             * ends are gone. */
+            if (file->flags & O_WRONLY)
+                pipe_write_release(file->pipe);
+            else
+                pipe_read_release(file->pipe);
+        } else if (fs_drivers[file->fs_id].ops.close) {
             fs_drivers[file->fs_id].ops.close(file->file_private);
         }
         kfree(file);
@@ -412,6 +421,43 @@ int fs_close(int fd)
     return 0;
 }
 
+int fs_pipe(int fds[2])
+{
+    if (!fds) return -1;
+
+    pipe_t *pipe = pipe_create();
+    if (!pipe) {
+        printk("[VFS] fs_pipe: OOM\n");
+        return -1;
+    }
+
+    /* Read end */
+    open_file_t *rfile = alloc_open_file(-1, NULL, NULL, O_RDONLY);
+    if (!rfile) { pipe_read_release(pipe); return -1; }
+    rfile->pipe = pipe;
+
+    fd_entry_t *rfde = (fd_entry_t *)kalloc(sizeof(fd_entry_t));
+    if (!rfde) { kfree(rfile); pipe_read_release(pipe); return -1; }
+    rfde->fd   = current->next_fd++;
+    rfde->file = rfile;
+    list_add_tail(&rfde->node, &current->files);
+
+    /* Write end */
+    open_file_t *wfile = alloc_open_file(-1, NULL, NULL, O_WRONLY);
+    if (!wfile) { fs_close(rfde->fd); pipe_write_release(pipe); return -1; }
+    wfile->pipe = pipe;
+
+    fd_entry_t *wfde = (fd_entry_t *)kalloc(sizeof(fd_entry_t));
+    if (!wfde) { kfree(wfile); fs_close(rfde->fd); pipe_write_release(pipe); return -1; }
+    wfde->fd   = current->next_fd++;
+    wfde->file = wfile;
+    list_add_tail(&wfde->node, &current->files);
+
+    fds[0] = rfde->fd;
+    fds[1] = wfde->fd;
+    return 0;
+}
+
 int fs_read(int fd, void *buf, size_t count)
 {
     if (!buf) return -1;
@@ -421,6 +467,10 @@ int fs_read(int fd, void *buf, size_t count)
     
     open_file_t *file = fde->file;
     if ((file->flags & O_RDWR) == O_WRONLY) return -1;
+
+    /* Pipe read (may block until data or EOF) */
+    if (file->pipe)
+        return pipe_read(file->pipe, buf, count);
 
     int n = -1;
     if (fs_drivers[file->fs_id].ops.read) {
@@ -455,6 +505,10 @@ int fs_write(int fd, const void *buf, size_t count)
         printk("[VFS] fs_write: fd %d is read-only\n", fd);
         return -1;
     }
+
+    /* Pipe write (may block until space or EPIPE) */
+    if (file->pipe)
+        return pipe_write(file->pipe, buf, count);
 
     int n = -1;
     if (fs_drivers[file->fs_id].ops.write) {

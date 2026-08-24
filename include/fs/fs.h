@@ -122,6 +122,7 @@ typedef struct open_file {
     uint32_t     offset;        /* current read/write position (SHARED!)   */
     int          flags;         /* open flags (O_RDONLY, etc.)             */
     int          refcount;      /* number of fd_entry's referencing this   */
+    struct pipe *pipe;          /* non-NULL if this is a pipe end          */
 } open_file_t;
 
 /* -------------------------------------------------------------------------
@@ -157,6 +158,13 @@ int fs_unmount(const char *mount_path);
 
 /** Open a file or directory. Returns fd >= 3 on success, -1 on error. */
 int fs_open(const char *path, int flags);
+
+/**
+ * Create an anonymous pipe.
+ * @param fds On success holds [read_end, write_end].
+ * @return 0 on success, -1 on error.
+ */
+int fs_pipe(int fds[2]);
 
 /** Close an open fd. */
 int fs_close(int fd);

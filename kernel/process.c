@@ -383,34 +383,39 @@ int sys_fork(registers_t *regs)
  * ============================================================================ */
 
 /**
- * sys_wait - Wait for any child process to exit
+ * sys_wait4 - Wait for a child process to exit
+ * @param pid   -1: any child; 0: any child in our group (treated as any);
+ *               >0: that specific child
  * @param status_ptr User pointer to store exit status (can be NULL)
+ * @param options    Ignored for now (0)
+ * @param rusage     Ignored (NULL)
  * @return Child PID on success, -1 on error
  */
-int sys_wait(int *status_ptr)
+int sys_wait4(int pid, int *status_ptr, int options, void *rusage)
 {
+    (void)options;
+    (void)rusage;
     task_struct_t *parent = current;
-    
-    /* Check if we have any children */
-    if (list_empty(&parent->children)) {
-        printk("[PROCESS] Wait: PID %u has no children\n", parent->pid);
-        return -1;
-    }
-    
-    /* Look for zombie children */
+
     while (1) {
+        /* Look for a matching zombie child */
         list_head_t *pos, *tmp;
+        int found_live_child = 0;
+
         list_for_each_safe(pos, tmp, &parent->children) {
             task_struct_t *child = list_entry(pos, task_struct_t, sibling);
-            
+
+            if (pid > 0 && child->pid != (uint32_t)pid)
+                continue;   /* not the requested child */
+
             if (child->state == TASK_ZOMBIE) {
-                /* Found a zombie child! */
-                int pid = child->pid;
+                /* Found a matching zombie! */
+                int cpid = child->pid;
                 int status = child->exit_code;
-                
+
                 printk("[PROCESS] Wait: PID %u reaping zombie child PID %u (status=%d)\n",
-                       parent->pid, pid, status);
-                
+                       parent->pid, cpid, status);
+
                 /* Return status to user if requested */
                 if (status_ptr) {
                     if (copy_to_user(status_ptr, &status, sizeof(status)) < 0) {
@@ -418,26 +423,45 @@ int sys_wait(int *status_ptr)
                                (uint32_t)status_ptr);
                     }
                 }
-                
+
                 /* Remove from children list */
                 list_del(&child->sibling);
-                
+
                 /* Remove from scheduler and free task */
                 remove_task(child);
                 free_task(child);
-                
-                return pid;
+
+                return cpid;
             }
+
+            found_live_child = 1;
         }
-        
-        /* No zombie children yet - block and wait */
-        printk("[PROCESS] Wait: PID %u blocking (no zombie children yet)\n", 
+
+        /* No matching zombie. If there is no matching child at all,
+         * fail with ECHILD (no such child). */
+        if (!found_live_child && pid > 0) {
+            printk("[PROCESS] Wait: PID %u has no child %d\n", parent->pid, pid);
+            return -1;
+        }
+        if (!found_live_child && list_empty(&parent->children)) {
+            printk("[PROCESS] Wait: PID %u has no children\n", parent->pid);
+            return -1;
+        }
+
+        /* Matching children exist but none are zombies yet - block. */
+        printk("[PROCESS] Wait: PID %u blocking (no zombie children yet)\n",
                parent->pid);
-        
+
         sleep_on(&parent->wait);  /* Sleep until a child exits */
-        
+
         /* When we wake up, loop again to check for zombies */
     }
+}
+
+/* Backwards-compatible wait(): wait for any child. */
+int sys_wait(int *status_ptr)
+{
+    return sys_wait4(-1, status_ptr, 0, NULL);
 }
 
 /* ============================================================================
