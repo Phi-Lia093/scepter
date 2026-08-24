@@ -134,8 +134,6 @@ void free_task(task_struct_t *task)
         return;
     }
     
-    printk("[SCHED] Freeing task PID %u\n", task->pid);
-    
     /* Free kernel stack (16KB = 4 pages, page_free frees one page per call) */
     if (task->kernel_stack) {
         for (int i = 0; i < KERNEL_STACK_PAGES; i++)
@@ -254,7 +252,6 @@ void remove_task(task_struct_t *task)
     if (!task || task == &kernel_task) return;
     
     list_del(&task->task_list);
-    printk("[SCHED] Removed task PID %u (%s) from scheduler\n", task->pid, task->name);
 }
 
 /* ============================================================================
@@ -320,10 +317,6 @@ void schedule(void)
 {
     task_struct_t *prev = current;
     task_struct_t *next = pick_next_task();
-    
-    if (next != prev) {
-        // printk("[SCHED] Switching: PID %u -> PID %u\n", prev->pid, next->pid);
-    }
     
     if (next == prev) {
         return;
@@ -399,7 +392,4 @@ void sched_init(void)
     list_add(&kernel_task.task_list, &task_list);
     
     printk("[SCHED] Scheduler initialized (kernel task PID 0)\n");
-    printk("[SCHED] Kernel files list: %p (next=%p, prev=%p)\n",
-           &kernel_task.files, kernel_task.files.next, kernel_task.files.prev);
-    printk("[SCHED] current=%p, current->files=%p\n", current, &current->files);
 }

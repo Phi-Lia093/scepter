@@ -96,7 +96,6 @@ void sys_exit(int status)
             
             if (child->state == TASK_ZOMBIE) {
                 /* Auto-reap zombie children */
-                printk("[PROCESS] Auto-reaping zombie child PID %u\n", child->pid);
                 list_del(&child->sibling);
                 remove_task(child);
                 free_task(child);
@@ -108,12 +107,9 @@ void sys_exit(int status)
                 if (init_task && init_task != task) {
                     child->ppid = init_task->pid;
                     list_add_tail(&child->sibling, &init_task->children);
-                    printk("[PROCESS] Reparented PID %u to init (PID %u)\n",
-                           child->pid, init_task->pid);
                 } else {
                     /* No init yet (or init itself is exiting): orphan it */
                     child->ppid = 1;
-                    printk("[PROCESS] PID %u orphaned (no init)\n", child->pid);
                 }
             }
         }
@@ -127,8 +123,6 @@ void sys_exit(int status)
         task_struct_t *parent = find_task_by_pid(task->ppid);
         if (parent && parent != task) {
             wake_up(&parent->wait);
-            printk("[PROCESS] Woke parent PID %u (child PID %u exited)\n",
-                   parent->pid, task->pid);
         }
     }
     
@@ -413,9 +407,6 @@ int sys_wait4(int pid, int *status_ptr, int options, void *rusage)
                 int cpid = child->pid;
                 int status = child->exit_code;
 
-                printk("[PROCESS] Wait: PID %u reaping zombie child PID %u (status=%d)\n",
-                       parent->pid, cpid, status);
-
                 /* Return status to user if requested */
                 if (status_ptr) {
                     if (copy_to_user(status_ptr, &status, sizeof(status)) < 0) {
@@ -440,18 +431,13 @@ int sys_wait4(int pid, int *status_ptr, int options, void *rusage)
         /* No matching zombie. If there is no matching child at all,
          * fail with ECHILD (no such child). */
         if (!found_live_child && pid > 0) {
-            printk("[PROCESS] Wait: PID %u has no child %d\n", parent->pid, pid);
             return -1;
         }
         if (!found_live_child && list_empty(&parent->children)) {
-            printk("[PROCESS] Wait: PID %u has no children\n", parent->pid);
             return -1;
         }
 
         /* Matching children exist but none are zombies yet - block. */
-        printk("[PROCESS] Wait: PID %u blocking (no zombie children yet)\n",
-               parent->pid);
-
         sleep_on(&parent->wait);  /* Sleep until a child exits */
 
         /* When we wake up, loop again to check for zombies */
@@ -500,17 +486,11 @@ int sys_nanosleep(timespec_t *user_req, timespec_t *user_rem)
     
     uint32_t target = pit_get_ticks() + total_ticks;
     
-    printk("[TIME] pid %u nanosleep %u ticks (until tick %u)\n",
-           current->pid, total_ticks, target);
-    
     /* Sleep until the target tick. The timer IRQ (pit_isr) wakes us each
      * tick; we re-check and go back to sleep until the deadline. */
     while (pit_get_ticks() < target) {
         sleep_on(&timer_wq);
     }
-    
-    printk("[TIME] pid %u nanosleep done at tick %u\n",
-           current->pid, pit_get_ticks());
     
     /* Remaining time is zero (we slept the full requested duration) */
     if (user_rem && valid_user_pointer(user_rem, sizeof(timespec_t))) {
@@ -884,9 +864,6 @@ static int do_exec(const char *user_path, char **user_argv, char **user_envp)
         printk("[EXEC] Initial stack too small for argv/envp\n");
         return -1;
     }
-    
-    printk("[EXEC] pid %u -> %s (argc=%u, envc=%u, user_esp=0x%08x)\n",
-           task->pid, kernel_path, argv.count, envp.count, user_esp);
     
     extern void enter_userspace(uint32_t cr3, uint32_t entry, uint32_t user_esp);
     

@@ -253,13 +253,18 @@ int minix3_write_file(minix3_fs_info_t *fs, struct minix3_inode *inode,
             return bytes_written > 0 ? (int)bytes_written : -1;
         }
         
-        /* If partial block write, read existing data first */
+        /* If partial block write, read existing data first.
+         * A block "already has data" if it lies strictly within the file's
+         * current size (file_block * block_size < i_size). This is true even
+         * when appending at exactly EOF inside an existing block (offset ==
+         * i_size) - e.g. echo writes "aaa" then "\n" as two separate write()
+         * calls. The old check (offset + bytes_written < i_size) was false in
+         * that case and zeroed the whole block, destroying the first write. */
         if (block_offset != 0 || bytes_in_block < fs->block_size) {
             uint32_t sector = zone * (fs->block_size / 512);
             int sectors = fs->block_size / 512;
             
-            /* Only read if the block already has data (not a new allocation beyond EOF) */
-            if (offset + bytes_written < inode->i_size) {
+            if ((file_block * fs->block_size) < inode->i_size) {
                 if (bread(fs->device_id, fs->partition_id, block_buf, sector, sectors) < 0) {
                     return bytes_written > 0 ? (int)bytes_written : -1;
                 }

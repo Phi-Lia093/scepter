@@ -371,7 +371,6 @@ int fs_open(const char *path, int flags)
 
     const char *rel_path;
     mount_point_t *mp = resolve_mount(abs, &rel_path);
-    if (!mp) { printk("[VFS] No mount point for: %s\n", abs); return -1; }
 
     int   fs_id        = mp->fs_id;
     void *file_private = NULL;
@@ -392,7 +391,6 @@ int fs_open(const char *path, int flags)
         if (fs_drivers[fs_id].ops.close) {
             fs_drivers[fs_id].ops.close(file_private);
         }
-        printk("[VFS] OOM: open_file\n");
         return -1;
     }
 
@@ -401,7 +399,6 @@ int fs_open(const char *path, int flags)
     if (!fde) {
         /* Cleanup on allocation failure */
         open_file_put(file);  /* Will close the file since refcount=1 */
-        printk("[VFS] OOM: fd_entry\n");
         return -1;
     }
 
@@ -427,7 +424,6 @@ int fs_pipe(int fds[2])
 
     pipe_t *pipe = pipe_create();
     if (!pipe) {
-        printk("[VFS] fs_pipe: OOM\n");
         return -1;
     }
 
@@ -482,27 +478,21 @@ int fs_read(int fd, void *buf, size_t count)
 
 int fs_write(int fd, const void *buf, size_t count)
 {
-    extern task_struct_t *current;
-    
     if (!buf) {
-        printk("[VFS] fs_write: buf is NULL\n");
         return -1;
     }
 
     fd_entry_t *fde = find_fd_entry(fd);
     if (!fde) {
-        printk("[VFS] fs_write: fd %d not found in PID=%u files list\n", fd, current->pid);
         return -1;
     }
     
     if (!fde->file) {
-        printk("[VFS] fs_write: fd %d has NULL file pointer\n", fd);
         return -1;
     }
     
     open_file_t *file = fde->file;
     if ((file->flags & O_RDWR) == O_RDONLY) {
-        printk("[VFS] fs_write: fd %d is read-only\n", fd);
         return -1;
     }
 
@@ -517,7 +507,6 @@ int fs_write(int fd, const void *buf, size_t count)
             file->offset += n;  /* Shared offset updated! */
         }
     } else {
-        printk("[VFS] fs_write: filesystem has no write operation\n");
     }
     return n;
 }
@@ -667,7 +656,6 @@ int fs_rename(const char *old_path, const char *new_path)
     mount_point_t *mp_new = resolve_mount(abs_new, &rel_new);
 
     if (!mp_old || !mp_new || mp_old != mp_new) {
-        printk("[VFS] fs_rename: cross-device rename not supported\n");
         return -1;
     }
 
@@ -706,17 +694,14 @@ int fs_chdir(const char *path)
     /* Verify the target exists and is a directory via stat */
     const char *rel;
     mount_point_t *mp = resolve_mount(abs, &rel);
-    if (!mp) { printk("[VFS] chdir: no mount point for %s\n", abs); return -1; }
 
     int fs_id = mp->fs_id;
     if (fs_drivers[fs_id].ops.stat) {
         stat_t st;
         if (fs_drivers[fs_id].ops.stat(mp->fs_private, rel, &st) != 0) {
-            printk("[VFS] chdir: %s not found\n", abs);
             return -1;
         }
         if (st.type != DT_DIR) {
-            printk("[VFS] chdir: %s is not a directory\n", abs);
             return -1;
         }
     }

@@ -9,6 +9,8 @@
 #include "mm/pgtable.h"
 #include "mm/slab.h"
 #include "fs/fs.h"
+#include "driver/char/pit.h"
+#include "driver/char/rtc.h"
 #include "lib/printk.h"
 #include "lib/string.h"
 
@@ -55,8 +57,6 @@ int copy_from_user(void *kernel_dst, const void *user_src, size_t n)
 {
     /* Validate user pointer */
     if (!valid_user_pointer(user_src, n)) {
-        printk("[SYSCALL] Invalid user pointer: 0x%08x (len=%u)\n",
-               (uint32_t)user_src, n);
         return -1;
     }
     
@@ -72,8 +72,6 @@ int copy_to_user(void *user_dst, const void *kernel_src, size_t n)
 {
     /* Validate user pointer */
     if (!valid_user_pointer(user_dst, n)) {
-        printk("[SYSCALL] Invalid user pointer: 0x%08x (len=%u)\n",
-               (uint32_t)user_dst, n);
         return -1;
     }
     
@@ -98,7 +96,6 @@ static int sys_open(const char *user_path, int flags)
     
     /* Validate path pointer (at least 1 byte) */
     if (!valid_user_pointer(user_path, 1)) {
-        printk("[SYSCALL] open: Invalid path pointer\n");
         return -1;
     }
     
@@ -132,8 +129,6 @@ static int sys_write(int fd, const char *user_buf, size_t count)
     
     /* Validate buffer */
     if (!valid_user_pointer(user_buf, count)) {
-        printk("[SYSCALL] write: Invalid buffer (0x%08x, len=%u)\n",
-               (uint32_t)user_buf, count);
         return -1;
     }
     
@@ -181,8 +176,6 @@ static int sys_read(int fd, char *user_buf, size_t count)
     
     /* Validate buffer */
     if (!valid_user_pointer(user_buf, count)) {
-        printk("[SYSCALL] read: Invalid buffer (0x%08x, len=%u)\n",
-               (uint32_t)user_buf, count);
         return -1;
     }
     
@@ -265,14 +258,12 @@ static int sys_dup(int oldfd)
     }
     
     if (!old_fde || !old_fde->file) {
-        printk("[SYSCALL] dup: invalid fd %d\n", oldfd);
         return -1;
     }
     
     /* Allocate new fd_entry */
     fd_entry_t *new_fde = (fd_entry_t *)kalloc(sizeof(fd_entry_t));
     if (!new_fde) {
-        printk("[SYSCALL] dup: OOM\n");
         return -1;
     }
     
@@ -302,7 +293,6 @@ static int sys_dup2(int oldfd, int newfd)
     
     /* Validate newfd range */
     if (newfd < 0 || newfd >= 1024) {
-        printk("[SYSCALL] dup2: invalid newfd %d\n", newfd);
         return -1;
     }
     
@@ -316,7 +306,6 @@ static int sys_dup2(int oldfd, int newfd)
                 return newfd;  /* Valid, return as-is */
             }
         }
-        printk("[SYSCALL] dup2: invalid oldfd %d\n", oldfd);
         return -1;
     }
     
@@ -332,7 +321,6 @@ static int sys_dup2(int oldfd, int newfd)
     }
     
     if (!old_fde || !old_fde->file) {
-        printk("[SYSCALL] dup2: invalid oldfd %d\n", oldfd);
         return -1;
     }
     
@@ -356,7 +344,6 @@ static int sys_dup2(int oldfd, int newfd)
     /* Create new fd_entry for newfd */
     new_fde = (fd_entry_t *)kalloc(sizeof(fd_entry_t));
     if (!new_fde) {
-        printk("[SYSCALL] dup2: OOM\n");
         return -1;
     }
     
@@ -416,14 +403,12 @@ static int sys_getcwd(char *user_buf, size_t size)
 {
     /* Validate user buffer */
     if (!valid_user_pointer(user_buf, size)) {
-        printk("[SYSCALL] getcwd: Invalid buffer pointer\n");
         return -1;
     }
     
     /* Get current working directory from kernel */
     char *cwd = fs_getcwd(user_buf, size);
     if (!cwd) {
-        printk("[SYSCALL] getcwd: Failed to get cwd\n");
         return -1;
     }
     
@@ -444,12 +429,10 @@ static int sys_stat(const char *user_path, stat_t *user_stat)
     
     /* Validate pointers */
     if (!valid_user_pointer(user_path, 1)) {
-        printk("[SYSCALL] stat: Invalid path pointer\n");
         return -1;
     }
     
     if (!valid_user_pointer(user_stat, sizeof(stat_t))) {
-        printk("[SYSCALL] stat: Invalid stat pointer\n");
         return -1;
     }
     
@@ -511,13 +494,11 @@ static int sys_brk(uint32_t addr)
     
     /* Validate address is in heap region */
     if (addr < task->mm.brk_start) {
-        printk("[SYSCALL] brk: addr 0x%08x < brk_start 0x%08x\n", addr, task->mm.brk_start);
         return -1;
     }
     
     /* Don't allow heap to grow into mmap region */
     if (addr >= task->mm.mmap_base) {
-        printk("[SYSCALL] brk: addr 0x%08x >= mmap_base 0x%08x\n", addr, task->mm.mmap_base);
         return -1;
     }
     
@@ -537,14 +518,12 @@ static int sys_brk(uint32_t addr)
         heap_vma = vma_create(task->mm.brk_start, addr, 
                               VM_READ | VM_WRITE, VMA_HEAP);
         if (!heap_vma) {
-            printk("[SYSCALL] brk: Failed to create heap VMA\n");
             return -1;
         }
         vma_insert(task, heap_vma);
     } else {
         /* Expand existing heap VMA */
         if (vma_expand(heap_vma, addr) < 0) {
-            printk("[SYSCALL] brk: Failed to expand heap VMA\n");
             return -1;
         }
     }
@@ -574,25 +553,21 @@ static int sys_mmap(uint32_t addr, size_t length, int prot, int flags,
     
     /* Only support anonymous mapping for now */
     if (fd != -1 || offset != 0) {
-        printk("[SYSCALL] mmap: File-backed mapping not yet supported\n");
         return -1;
     }
     
     if (!(flags & 0x20)) {  /* MAP_ANONYMOUS */
-        printk("[SYSCALL] mmap: Non-anonymous mapping not supported\n");
         return -1;
     }
     
     /* Validate length */
     if (length == 0) {
-        printk("[SYSCALL] mmap: Invalid length 0\n");
         return -1;
     }
     
     /* Find free region */
     uint32_t map_addr = vma_find_free_region(task, length, addr);
     if (map_addr == 0) {
-        printk("[SYSCALL] mmap: No free region found for length %u\n", length);
         return -1;
     }
     
@@ -605,7 +580,6 @@ static int sys_mmap(uint32_t addr, size_t length, int prot, int flags,
     /* Create VMA for mmap region */
     vma_t *vma = vma_create(map_addr, map_addr + length, vm_flags, VMA_MMAP);
     if (!vma) {
-        printk("[SYSCALL] mmap: Failed to create VMA\n");
         return -1;
     }
     
@@ -646,7 +620,6 @@ static int sys_munmap(uint32_t addr, size_t length)
                 vma_remove(task, vma);
                 vma_destroy(vma);
             } else {
-                printk("[SYSCALL] munmap: Partial unmap not yet supported\n");
                 return -1;
             }
         }
@@ -660,6 +633,33 @@ static int sys_munmap(uint32_t addr, size_t length)
  * ============================================================================ */
 
 /**
+ * sys_gettimeofday - Get wall-clock time
+ * @param user_tv User pointer to struct timeval (seconds + microseconds)
+ * @param user_tz Timezone pointer; ignored (must be NULL)
+ * @return 0 on success, -1 on error
+ *
+ * Wall clock = RTC time captured at boot + PIT uptime (100 Hz ticks).
+ */
+static int sys_gettimeofday(struct timeval *user_tv, void *user_tz)
+{
+    (void)user_tz;
+
+    if (!valid_user_pointer(user_tv, sizeof(struct timeval)))
+        return -1;
+
+    struct timeval tv;
+    uint32_t ticks = pit_get_ticks();
+
+    tv.tv_sec  = (int32_t)rtc_get_boot_unix_time() + (int32_t)(ticks / 100);
+    tv.tv_usec = (int32_t)((ticks % 100) * 10000);   /* 10 ms per tick */
+
+    if (copy_to_user(user_tv, &tv, sizeof(struct timeval)) < 0)
+        return -1;
+
+    return 0;
+}
+
+/**
  * sys_pipe - Create an anonymous pipe
  * @param user_fds User array of 2 ints; filled with [read_end, write_end]
  * @return 0 on success, -1 on error
@@ -667,7 +667,6 @@ static int sys_munmap(uint32_t addr, size_t length)
 static int sys_pipe(int *user_fds)
 {
     if (!valid_user_pointer(user_fds, 2 * sizeof(int))) {
-        printk("[SYSCALL] pipe: Invalid fds pointer\n");
         return -1;
     }
 
@@ -831,6 +830,9 @@ int syscall_handler(registers_t *regs, int num, uint32_t arg1, uint32_t arg2,
         
         case SYS_TRUNCATE:
             return sys_truncate((const char *)arg1, (uint32_t)arg2);
+        
+        case SYS_GETTIMEOFDAY:
+            return sys_gettimeofday((struct timeval *)arg1, (void *)arg2);
         
         case SYS_EXEC:
             return sys_exec((const char *)arg1);

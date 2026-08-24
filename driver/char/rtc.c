@@ -11,6 +11,13 @@
 #include "kernel/asm.h"
 
 /* =========================================================================
+ * Global State
+ * ========================================================================= */
+
+/* Wall-clock timestamp captured at rtc_init(); gettimeofday adds PIT uptime. */
+static uint32_t rtc_boot_time = 1;
+
+/* =========================================================================
  * CMOS/RTC Hardware Interface
  * ========================================================================= */
 
@@ -134,6 +141,11 @@ uint32_t rtc_get_unix_time(void)
     return timestamp;
 }
 
+uint32_t rtc_get_boot_unix_time(void)
+{
+    return rtc_boot_time;
+}
+
 /* =========================================================================
  * Driver Callbacks (stub implementations)
  * ========================================================================= */
@@ -171,6 +183,9 @@ void rtc_init(void)
     
     /* Add devfs node */
     devfs_register_device("rtc0", DT_CHRDEV, 2, 0);
+    
+    /* Capture boot wall-clock time for gettimeofday() */
+    rtc_boot_time = rtc_get_unix_time();
     
     printk("[RTC] Real-Time Clock driver initialized\n");
     

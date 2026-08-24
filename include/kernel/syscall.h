@@ -57,6 +57,7 @@ typedef struct registers {
 #define SYS_MKDIR  39   /* Create a directory */
 #define SYS_RMDIR  40   /* Remove an empty directory */
 #define SYS_RENAME 38   /* Rename / move a file or directory */
+#define SYS_GETTIMEOFDAY 78 /* Get wall-clock time */
 
 /* =========================================================================
  * Time Structures
@@ -67,6 +68,12 @@ typedef struct timespec {
     int32_t tv_sec;    /* seconds      */
     int32_t tv_nsec;   /* nanoseconds  */
 } timespec_t;
+
+/* POSIX timeval (32-bit i386: both fields are 32-bit longs) */
+typedef struct timeval {
+    int32_t tv_sec;    /* seconds          */
+    int32_t tv_usec;   /* microseconds     */
+} timeval_t;
 
 /* =========================================================================
  * User Pointer Validation
