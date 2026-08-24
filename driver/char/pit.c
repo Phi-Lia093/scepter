@@ -15,6 +15,10 @@
 
 static volatile uint32_t pit_ticks = 0;
 
+/* Global wait queue for timer sleeps (nanosleep). pit_isr wakes it on
+ * every tick; sleeping tasks re-check their deadline and re-sleep. */
+wait_queue_head_t timer_wq;
+
 uint32_t pit_get_ticks(void)
 {
     return pit_ticks;
@@ -28,12 +32,15 @@ void pit_isr(void)
 {
     pit_ticks++;
     interrupt_eoi(IRQ0);
+    
+    /* Wake nanosleep() waiters every tick (100 Hz) */
+    wake_up(&timer_wq);
+    
     /* Call scheduler every 10 ticks (100ms at 100Hz) */
     if (pit_ticks % 10 == 0) {
         schedule();
     }
 }
-
 /* =========================================================================
  * Driver callbacks
  * ========================================================================= */
@@ -71,6 +78,9 @@ void pit_init(uint32_t hz)
 
     /* Register IRQ0 handler in IDT (vector 32 = PIC master offset 0x20) */
     idt_set_gate(32, (uint32_t)irq0, GDT_KERNEL_CODE, IDT_GATE_INT32);
+
+    /* Initialize the timer wake-up queue used by nanosleep() */
+    init_waitqueue_head(&timer_wq);
 
     /* Enable IRQ0 (works with both PIC and APIC) */
     interrupt_enable_irq(IRQ0);

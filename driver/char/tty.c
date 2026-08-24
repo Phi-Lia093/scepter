@@ -266,7 +266,9 @@ void tty_puts(const char *str)
 static char tty_read(int scnd_id)
 {
     (void)scnd_id;
-    return cread(3, 0);   /* forward to keyboard (char dev 3) */
+    /* Forward to the keyboard (char dev 3). The keyboard is a blocking
+     * device, so this blocks until a key is pressed. */
+    return char_read_block(3, 0);
 }
 
 static int tty_write_cb(int scnd_id, char c)

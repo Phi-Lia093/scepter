@@ -176,10 +176,12 @@ static int devfs_read(void *file_private, void *buf, size_t count)
     devfs_node_t *node = f->node;
 
     if (node->type == DT_CHRDEV) {
-        /* Read count characters one at a time */
+        /* Read count characters one at a time.
+         * char_read_block blocks on devices that enabled blocking reads
+         * (the keyboard), so an interactive process can wait for input. */
         char *cbuf = (char *)buf;
         for (size_t i = 0; i < count; i++) {
-            cbuf[i] = cread(node->dev_id, node->minor);
+            cbuf[i] = char_read_block(node->dev_id, node->minor);
         }
         return (int)count;
     }

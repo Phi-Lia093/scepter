@@ -37,4 +37,12 @@ int sys_wait(int *status_ptr);
  */
 int sys_exec(const char *path);
 
+/**
+ * sys_nanosleep - Sleep for a specified duration
+ * @param req User pointer to timespec (seconds + nanoseconds)
+ * @param rem User pointer to store remaining time (can be NULL)
+ * @return 0 on success, -1 on error
+ */
+int sys_nanosleep(timespec_t *req, timespec_t *rem);
+
 #endif /* PROCESS_H */

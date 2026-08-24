@@ -129,7 +129,11 @@ void kbd_isr(void)
             ascii = ascii - 'A' + 'a';
     }
 
-    if (ascii != 0) kbd_buffer_push(ascii);
+    if (ascii != 0) {
+        kbd_buffer_push(ascii);
+        /* Wake any process blocked in read() on the keyboard/tty */
+        char_wakeup(3);
+    }
     interrupt_eoi(IRQ1);
 }
 
@@ -174,5 +178,6 @@ void kbd_init(void)
 
     char_ops_t ops = { .read = kbd_read, .write = kbd_write, .ioctl = kbd_ioctl };
     register_char_device(3, &ops);
+    char_set_blocking(3, 1);   /* reads block until a key is pressed */
     devfs_register_device("kbd0", DT_CHRDEV, 3, 0);
 }

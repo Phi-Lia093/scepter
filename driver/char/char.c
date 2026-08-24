@@ -3,6 +3,7 @@
 #include "driver/char/tty.h"
 #include "driver/char/pit.h"
 #include "driver/char/kbd.h"
+#include "kernel/sched.h"
 #include <stdint.h>
 #include <stddef.h>
 
@@ -16,9 +17,11 @@
 #define MAX_CHAR_DEVICES 16
 
 typedef struct {
-    int        prim_id;
-    char_ops_t ops;
-    int        in_use;
+    int               prim_id;
+    char_ops_t        ops;
+    wait_queue_head_t read_wq;   /* waiters blocked in char_read_block() */
+    int               block_read; /* 1 = char_read_block() may sleep       */
+    int               in_use;
 } char_device_t;
 
 static char_device_t char_devices[MAX_CHAR_DEVICES];
@@ -52,6 +55,8 @@ int register_char_device(int prim_id, char_ops_t *ops)
         if (!char_devices[i].in_use) {
             char_devices[i].prim_id = prim_id;
             char_devices[i].ops    = *ops;
+            init_waitqueue_head(&char_devices[i].read_wq);
+            char_devices[i].block_read = 0;
             char_devices[i].in_use = 1;
             return 0;
         }
@@ -69,6 +74,42 @@ char cread(int prim_id, int scnd_id)
     if (!dev || !dev->ops.read)
         return 0;
     return dev->ops.read(scnd_id);
+}
+
+char char_read_block(int prim_id, int scnd_id)
+{
+    char_device_t *dev = find_char_device(prim_id);
+    if (!dev || !dev->ops.read)
+        return 0;
+
+    /* Loop until a character is available. For blocking devices this
+     * sleeps on the device's wait queue; the driver wakes us (e.g. the
+     * keyboard IRQ) when data arrives. Must run with IF=0 (syscall
+     * context) so the empty-check → sleep sequence has no missed wakeup. */
+    while (1) {
+        char c = dev->ops.read(scnd_id);
+        if (c)
+            return c;
+        if (!dev->block_read)
+            return 0;   /* non-blocking device: report empty */
+        sleep_on(&dev->read_wq);
+    }
+}
+
+void char_wakeup(int prim_id)
+{
+    char_device_t *dev = find_char_device(prim_id);
+    if (!dev)
+        return;
+    wake_up(&dev->read_wq);
+}
+
+void char_set_blocking(int prim_id, int enable)
+{
+    char_device_t *dev = find_char_device(prim_id);
+    if (!dev)
+        return;
+    dev->block_read = enable ? 1 : 0;
 }
 
 int cwrite(int prim_id, int scnd_id, char c)

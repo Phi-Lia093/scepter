@@ -2,6 +2,7 @@
 #define PIT_H
 
 #include <stdint.h>
+#include "kernel/sched.h"
 
 /* =========================================================================
  * 8253/8254 Programmable Interval Timer – channel 0 (IRQ0)
@@ -25,5 +26,8 @@ void pit_init(uint32_t hz);
 
 /* Returns the total tick count since pit_init() */
 uint32_t pit_get_ticks(void);
+
+/* Wait queue woken on every timer tick; used by nanosleep() */
+extern wait_queue_head_t timer_wq;
 
 #endif /* PIT_H */

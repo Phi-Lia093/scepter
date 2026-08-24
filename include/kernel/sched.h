@@ -17,6 +17,18 @@ typedef enum {
 } task_state_t;
 
 /* =========================================================================
+ * Wait Queue Head (forward declaration of the waiter type is below)
+ * ========================================================================= */
+
+/* A wait queue head – a linked list of wait_queue_t nodes.
+ * Defined before task_struct so tasks can embed one. */
+typedef struct {
+    list_head_t task_list;
+} wait_queue_head_t;
+
+#define init_waitqueue_head(wq) INIT_LIST_HEAD(&(wq)->task_list)
+
+/* =========================================================================
  * Memory Management Structure (Per-Process)
  * ========================================================================= */
 
@@ -58,6 +70,7 @@ typedef struct task_struct {
     list_head_t   task_list;     /* Node in global task list */
     list_head_t   children;      /* Head of children list */
     list_head_t   sibling;       /* Node in parent's children list */
+    wait_queue_head_t wait;      /* Wait queue (for wait()/blocking) */
     
     /* ---- CPU Context (saved on context switch) ---- */
     uint32_t      kernel_esp;    /* Kernel stack pointer */
@@ -147,6 +160,41 @@ void init_task_mm(task_struct_t *task);
  * @return Pointer to task, or NULL if not found
  */
 task_struct_t *find_task_by_pid(uint32_t pid);
+
+/* =========================================================================
+ * Wait Queues
+ *
+ * Simple wait-queue used by blocking operations:
+ *   - wait() sleeps on the parent's wait queue, woken by sys_exit
+ *   - blocking tty reads sleep on the keyboard device's wait queue
+ *   - nanosleep() sleeps on the PIT timer wait queue
+ *
+ * All blocking happens inside the int 0x80 syscall handler which runs with
+ * interrupts disabled (IF=0), so the add→block→schedule sequence in
+ * sleep_on() is atomic w.r.t. IRQ-driven wakeups (no missed wakeups).
+ * ========================================================================= */
+
+/* One waiter. Embedded on the sleeping task's kernel stack, so it stays
+ * valid for the whole sleep. */
+typedef struct wait_queue {
+    task_struct_t *task;   /* sleeping task                        */
+    list_head_t    node;   /* list node in wait_queue_head_t       */
+    int            active; /* 1 while linked; wake_up() clears it  */
+} wait_queue_t;
+
+/**
+ * Block the current task on a wait queue until wake_up().
+ * After resuming, the caller MUST re-check its condition (wake-ups are
+ * level-triggered: every waiter on the queue is woken).
+ * Must be called with interrupts disabled (true for all syscall handlers).
+ */
+void sleep_on(wait_queue_head_t *wq);
+
+/**
+ * Wake all tasks sleeping on a wait queue and clear it.
+ * Safe to call from interrupt context (IRQ handlers run with IF=0).
+ */
+void wake_up(wait_queue_head_t *wq);
 
 /* =========================================================================
  * Context Switching (implemented in context.s)

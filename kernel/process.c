@@ -12,6 +12,7 @@
 #include "mm/pgtable.h"
 #include "mm/vma.h"
 #include "fs/fs.h"
+#include "driver/char/pit.h"
 #include "lib/printk.h"
 #include "lib/string.h"
 
@@ -121,11 +122,11 @@ void sys_exit(int status)
     /* Transition to ZOMBIE state */
     task->state = TASK_ZOMBIE;
     
-    /* Wake up parent if it's blocked in wait() */
+    /* Wake up parent if it's waiting in wait() */
     {
         task_struct_t *parent = find_task_by_pid(task->ppid);
-        if (parent && parent->state == TASK_BLOCKED) {
-            parent->state = TASK_READY;
+        if (parent && parent != task) {
+            wake_up(&parent->wait);
             printk("[PROCESS] Woke parent PID %u (child PID %u exited)\n",
                    parent->pid, task->pid);
         }
@@ -156,21 +157,7 @@ static void fork_cleanup_failed(task_struct_t *child)
         list_del(&child->sibling);
     }
     
-    /* Free user pages that were copied into the child's page tables */
-    for (int i = 0; i < 768; i++) {
-        if (child->mm.page_tables[i]) {
-            uint32_t *pt = child->mm.page_tables[i];
-            for (int j = 0; j < 1024; j++) {
-                uint32_t pte = pt[j];
-                if (pte & 0x1) {  /* Present */
-                    uint32_t phys = pte & ~0xFFF;
-                    page_free((void *)PHYS_TO_VIRT(phys));
-                }
-            }
-        }
-    }
-    
-    /* free_task frees page tables + kernel stack + task struct */
+    /* free_task frees user pages, page tables, kernel stack + task struct */
     free_task(child);
 }
 
@@ -447,11 +434,67 @@ int sys_wait(int *status_ptr)
         printk("[PROCESS] Wait: PID %u blocking (no zombie children yet)\n", 
                parent->pid);
         
-        parent->state = TASK_BLOCKED;
-        schedule();  /* Sleep until a child exits */
+        sleep_on(&parent->wait);  /* Sleep until a child exits */
         
         /* When we wake up, loop again to check for zombies */
     }
+}
+
+/* ============================================================================
+ * Sleep (nanosleep)
+ * ============================================================================ */
+
+/**
+ * sys_nanosleep - Sleep for a specified duration
+ * @param user_req User pointer to timespec (seconds + nanoseconds)
+ * @param user_rem User pointer to store remaining time (may be NULL)
+ * @return 0 on success, -1 on error
+ *
+ * The PIT runs at 100 Hz, so each tick is 10 ms. Nanoseconds are rounded
+ * UP to whole ticks; a zero duration returns immediately.
+ */
+int sys_nanosleep(timespec_t *user_req, timespec_t *user_rem)
+{
+    timespec_t req;
+    
+    /* Validate and copy the request from userspace */
+    if (!user_req || !valid_user_pointer(user_req, sizeof(timespec_t))) {
+        printk("[TIME] nanosleep: bad req pointer 0x%08x\n", (uint32_t)user_req);
+        return -1;
+    }
+    if (copy_from_user(&req, user_req, sizeof(req)) < 0) {
+        return -1;
+    }
+    if (req.tv_sec < 0 || req.tv_nsec < 0 || req.tv_nsec >= 1000000000L) {
+        printk("[TIME] nanosleep: invalid time (%d, %d)\n", req.tv_sec, req.tv_nsec);
+        return -1;
+    }
+    
+    /* Convert to PIT ticks (100 Hz): 1 tick = 10 ms */
+    uint32_t total_ticks = (uint32_t)req.tv_sec * 100UL;
+    total_ticks += (uint32_t)((req.tv_nsec + 9999999L) / 10000000L);
+    
+    uint32_t target = pit_get_ticks() + total_ticks;
+    
+    printk("[TIME] pid %u nanosleep %u ticks (until tick %u)\n",
+           current->pid, total_ticks, target);
+    
+    /* Sleep until the target tick. The timer IRQ (pit_isr) wakes us each
+     * tick; we re-check and go back to sleep until the deadline. */
+    while (pit_get_ticks() < target) {
+        sleep_on(&timer_wq);
+    }
+    
+    printk("[TIME] pid %u nanosleep done at tick %u\n",
+           current->pid, pit_get_ticks());
+    
+    /* Remaining time is zero (we slept the full requested duration) */
+    if (user_rem && valid_user_pointer(user_rem, sizeof(timespec_t))) {
+        timespec_t rem = { 0, 0 };
+        copy_to_user(user_rem, &rem, sizeof(rem));
+    }
+    
+    return 0;
 }
 
 /* ============================================================================

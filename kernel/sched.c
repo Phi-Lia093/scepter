@@ -101,6 +101,7 @@ task_struct_t *alloc_task(void)
     INIT_LIST_HEAD(&task->children);
     INIT_LIST_HEAD(&task->sibling);
     INIT_LIST_HEAD(&task->files);
+    init_waitqueue_head(&task->wait);
     
     /* Assign PID */
     task->pid = next_pid++;
@@ -141,14 +142,26 @@ void free_task(task_struct_t *task)
         page_free((void *)(task->kernel_stack + PAGE_SIZE));
     }
     
+    /* Free user data pages mapped in each user page table.
+     * (sys_exec keeps task->mm.page_tables in sync with the active CR3,
+     * so this walks the process's real, current mappings.) */
+    for (int i = 0; i < 768; i++) {
+        uint32_t *pt = task->mm.page_tables[i];
+        if (!pt) continue;
+        for (int j = 0; j < 1024; j++) {
+            uint32_t pte = pt[j];
+            if (pte & 0x1) {  /* Present */
+                page_free((void *)PHYS_TO_VIRT(pte & ~0xFFF));
+            }
+        }
+    }
+    
     /* Free user page tables */
     for (int i = 0; i < 768; i++) {
         if (task->mm.page_tables[i]) {
             page_free(task->mm.page_tables[i]);
         }
     }
-    
-    /* TODO: Free user pages (walk page tables and free physical pages) */
     
     /* Free task structure itself.
      * task_struct is kalloc'd directly from the buddy allocator (its size
@@ -183,6 +196,57 @@ task_struct_t *find_task_by_pid(uint32_t pid)
         }
     }
     return NULL;
+}
+
+/* ============================================================================
+ * Wait Queues
+ * ============================================================================ */
+
+/**
+ * sleep_on - Block the current task on a wait queue.
+ *
+ * The caller is resumed by wake_up() and MUST re-check its condition after
+ * returning (wake-ups are level-triggered: every waiter on the queue wakes).
+ *
+ * Must be called with interrupts disabled: all blocking syscalls run inside
+ * the int 0x80 handler with IF=0, which makes the add → block → schedule
+ * sequence atomic w.r.t. IRQ-driven wakeups (no missed wakeup race).
+ */
+void sleep_on(wait_queue_head_t *wq)
+{
+    wait_queue_t wait;
+    wait.task = current;
+    wait.active = 1;
+    INIT_LIST_HEAD(&wait.node);
+
+    list_add_tail(&wait.node, &wq->task_list);
+    current->state = TASK_BLOCKED;
+    schedule();
+
+    /* Woken up: wake_up() may already have removed our node. */
+    if (wait.active) {
+        wait.active = 0;
+        list_del(&wait.node);
+    }
+}
+
+/**
+ * wake_up - Wake all tasks sleeping on a wait queue and clear it.
+ *
+ * Safe to call from interrupt context: IRQ handlers (kbd, pit) run with
+ * IF=0 so list manipulation is atomic on this single-CPU kernel.
+ */
+void wake_up(wait_queue_head_t *wq)
+{
+    list_head_t *pos, *tmp;
+    list_for_each_safe(pos, tmp, &wq->task_list) {
+        wait_queue_t *w = list_entry(pos, wait_queue_t, node);
+        if (w->task && w->task->state == TASK_BLOCKED) {
+            w->task->state = TASK_READY;
+        }
+        w->active = 0;
+        list_del(&w->node);
+    }
 }
 
 void remove_task(task_struct_t *task)
@@ -322,6 +386,7 @@ void sched_init(void)
     INIT_LIST_HEAD(&kernel_task.children);
     INIT_LIST_HEAD(&kernel_task.sibling);
     INIT_LIST_HEAD(&kernel_task.files);
+    init_waitqueue_head(&kernel_task.wait);
     
     kernel_task.next_fd = 3;
     kernel_task.cwd[0] = '/';

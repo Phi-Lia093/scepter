@@ -668,8 +668,6 @@ int syscall_handler(registers_t *regs, int num, uint32_t arg1, uint32_t arg2,
     (void)arg4;  /* Unused */
     (void)arg5;  /* Unused */
 
-    // printk("%x %x %x %x %x %x\n", num, arg1, arg2, arg3, arg4, arg5);
-    
     switch (num) {
         case SYS_EXIT:
             sys_exit((int)arg1);
@@ -711,6 +709,9 @@ int syscall_handler(registers_t *regs, int num, uint32_t arg1, uint32_t arg2,
         
         case SYS_GETPPID:
             return sys_getppid();
+        
+        case SYS_NANOSLEEP:
+            return sys_nanosleep((timespec_t *)arg1, (timespec_t *)arg2);
         
         case SYS_WAIT4:
             return sys_wait((int *)arg1);

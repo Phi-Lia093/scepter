@@ -47,6 +47,18 @@ typedef struct registers {
 #define SYS_STAT   106  /* Get file status by path */
 #define SYS_GETCWD 183  /* Get current working directory */
 
+#define SYS_NANOSLEEP 35  /* Sleep for specified time (PIT tick based) */
+
+/* =========================================================================
+ * Time Structures
+ * ========================================================================= */
+
+/* POSIX timespec (32-bit i386: both fields are 32-bit longs) */
+typedef struct timespec {
+    int32_t tv_sec;    /* seconds      */
+    int32_t tv_nsec;   /* nanoseconds  */
+} timespec_t;
+
 /* =========================================================================
  * User Pointer Validation
  * ========================================================================= */
