@@ -97,12 +97,12 @@ int bwrite(int prim_id, int scnd_id, const void *buf,
     return ret;
 }
 
-int block_ioctl(int prim_id, int scnd_id, unsigned int command)
+int block_ioctl(int prim_id, int scnd_id, unsigned int command, uint32_t arg)
 {
     block_device_t *dev = find_block_device(prim_id);
     if (!dev || !dev->ops.ioctl)
         return -1;
-    return dev->ops.ioctl(prim_id, scnd_id, command);
+    return dev->ops.ioctl(prim_id, scnd_id, command, arg);
 }
 
 /* =========================================================================

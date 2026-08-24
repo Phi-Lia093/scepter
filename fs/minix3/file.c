@@ -212,8 +212,72 @@ static int minix3_alloc_file_block(minix3_fs_info_t *fs, struct minix3_inode *in
         return 0;
     }
     
-    /* For simplicity, we'll only support up to single indirect for now */
-    printk("[minix3] File too large for write (double indirect not yet implemented)\n");
+    file_block -= zone_ptrs_per_block;
+    
+    /* Double indirect (block 8): file_block in [0, zone_ptrs_per_block^2) */
+    if (file_block < zone_ptrs_per_block * zone_ptrs_per_block) {
+        uint32_t ind1_index = file_block / zone_ptrs_per_block;
+        uint32_t ind2_index = file_block % zone_ptrs_per_block;
+        int sectors = fs->block_size / 512;
+        
+        /* Allocate the double-indirect block (level 1) if needed */
+        if (inode->i_zone[8] == 0) {
+            uint32_t new_zone;
+            if (minix3_alloc_zone(fs, &new_zone) < 0) {
+                return -1;
+            }
+            inode->i_zone[8] = new_zone;
+            uint8_t zero_buf[4096] = {0};
+            bwrite(fs->device_id, fs->partition_id, zero_buf,
+                   new_zone * sectors, sectors);
+        }
+        
+        /* Read level-1 block */
+        uint8_t ind1_buf[4096];
+        uint32_t sector = inode->i_zone[8] * sectors;
+        if (bread(fs->device_id, fs->partition_id, ind1_buf, sector, sectors) < 0) {
+            return -1;
+        }
+        uint32_t *zones1 = (uint32_t *)ind1_buf;
+        
+        /* Allocate the level-2 block if needed */
+        if (zones1[ind1_index] == 0) {
+            uint32_t new_zone;
+            if (minix3_alloc_zone(fs, &new_zone) < 0) {
+                return -1;
+            }
+            zones1[ind1_index] = new_zone;
+            if (bwrite(fs->device_id, fs->partition_id, ind1_buf, sector, sectors) < 0) {
+                return -1;
+            }
+            uint8_t zero_buf[4096] = {0};
+            bwrite(fs->device_id, fs->partition_id, zero_buf,
+                   new_zone * sectors, sectors);
+        }
+        
+        /* Read level-2 block and allocate the data zone if needed */
+        uint8_t ind2_buf[4096];
+        uint32_t ind2_zone = zones1[ind1_index];
+        uint32_t sector2 = ind2_zone * sectors;
+        if (bread(fs->device_id, fs->partition_id, ind2_buf, sector2, sectors) < 0) {
+            return -1;
+        }
+        uint32_t *zones2 = (uint32_t *)ind2_buf;
+        if (zones2[ind2_index] == 0) {
+            if (minix3_alloc_zone(fs, &zones2[ind2_index]) < 0) {
+                return -1;
+            }
+            if (bwrite(fs->device_id, fs->partition_id, ind2_buf, sector2, sectors) < 0) {
+                return -1;
+            }
+        }
+        
+        *zone_out = zones2[ind2_index];
+        return 0;
+    }
+    
+    /* Triple indirect not commonly used, return error */
+    printk("[minix3] File too large for write (triple indirect not implemented)\n");
     return -1;
 }
 
@@ -356,8 +420,13 @@ int minix3_truncate_file(minix3_fs_info_t *fs, struct minix3_inode *inode,
             uint32_t *zones = (uint32_t *)ind_buf;
             int modified = 0;
             
-            /* Free blocks beyond new size */
-            for (uint32_t i = new_blocks; i < old_blocks && i < indirect_end; i++) {
+            /* Free blocks beyond new size.  IMPORTANT: start at the first
+             * index that is both >= new_blocks and inside the single
+             * indirect range; otherwise (new_blocks < indirect_start) the
+             * index underflows and reads garbage past the buffer. */
+            uint32_t start = (new_blocks > indirect_start) ? new_blocks
+                                                           : indirect_start;
+            for (uint32_t i = start; i < old_blocks && i < indirect_end; i++) {
                 uint32_t idx = i - indirect_start;
                 if (zones[idx] != 0) {
                     minix3_free_zone(fs, zones[idx]);
@@ -378,6 +447,94 @@ int minix3_truncate_file(minix3_fs_info_t *fs, struct minix3_inode *inode,
             if (new_blocks <= MINIX3_DIRECT_ZONES) {
                 minix3_free_zone(fs, inode->i_zone[7]);
                 inode->i_zone[7] = 0;
+            }
+        }
+    }
+    
+    /* Free double indirect blocks (block 8) */
+    {
+        uint32_t zone_ptrs_per_block = fs->block_size / 4;
+        uint32_t dbl_start = MINIX3_DIRECT_ZONES + zone_ptrs_per_block;
+        uint32_t dbl_end   = dbl_start +
+                             zone_ptrs_per_block * zone_ptrs_per_block;
+        int sectors = fs->block_size / 512;
+
+        if (inode->i_zone[8] != 0 && old_blocks > dbl_start &&
+            new_blocks < dbl_end) {
+            uint8_t ind1_buf[4096];
+            uint32_t sector = inode->i_zone[8] * sectors;
+            if (bread(fs->device_id, fs->partition_id, ind1_buf,
+                      sector, sectors) < 0) {
+                printk("[minix3] Failed to read double-indirect block "
+                       "for truncate\n");
+                return -1;
+            }
+            uint32_t *zones1 = (uint32_t *)ind1_buf;
+            int modified = 0;
+
+            for (uint32_t i = 0; i < zone_ptrs_per_block; i++) {
+                if (zones1[i] == 0)
+                    continue;
+
+                uint32_t ind2_zone = zones1[i];
+                uint8_t ind2_buf[4096];
+                uint32_t s2 = ind2_zone * sectors;
+                if (bread(fs->device_id, fs->partition_id, ind2_buf,
+                          s2, sectors) < 0) {
+                    printk("[minix3] Failed to read level-2 block\n");
+                    return -1;
+                }
+                uint32_t *zones2 = (uint32_t *)ind2_buf;
+                int mod2 = 0;
+
+                /* Free data zones whose file block is past new_size */
+                for (uint32_t k = 0; k < zone_ptrs_per_block; k++) {
+                    uint32_t fblock = dbl_start +
+                                      i * zone_ptrs_per_block + k;
+                    if (fblock >= new_blocks && zones2[k] != 0) {
+                        minix3_free_zone(fs, zones2[k]);
+                        zones2[k] = 0;
+                        mod2 = 1;
+                    }
+                }
+                if (mod2) {
+                    if (bwrite(fs->device_id, fs->partition_id, ind2_buf,
+                               s2, sectors) < 0) {
+                        return -1;
+                    }
+                }
+
+                /* If the whole level-2 block is now empty, free it */
+                int empty2 = 1;
+                for (uint32_t k = 0; k < zone_ptrs_per_block; k++) {
+                    if (zones2[k] != 0) {
+                        empty2 = 0;
+                        break;
+                    }
+                }
+                if (empty2) {
+                    minix3_free_zone(fs, ind2_zone);
+                    zones1[i] = 0;
+                    modified = 1;
+                }
+            }
+
+            /* If the whole level-1 block is empty, free it too */
+            int empty1 = 1;
+            for (uint32_t i = 0; i < zone_ptrs_per_block; i++) {
+                if (zones1[i] != 0) {
+                    empty1 = 0;
+                    break;
+                }
+            }
+            if (empty1) {
+                minix3_free_zone(fs, inode->i_zone[8]);
+                inode->i_zone[8] = 0;
+            } else if (modified) {
+                if (bwrite(fs->device_id, fs->partition_id, ind1_buf,
+                           sector, sectors) < 0) {
+                    return -1;
+                }
             }
         }
     }

@@ -35,6 +35,10 @@ static struct {
     uint8_t bold;
 } tty;
 
+/* PID of the process group that owns the terminal (receives Ctrl-C etc.).
+ * 0 = no owner yet; the shell sets it around each foreground child. */
+static volatile int tty_foreground_pid = 0;
+
 /* =========================================================================
  * VGA Backend Functions
  * ========================================================================= */
@@ -61,6 +65,11 @@ static uint8_t tty_make_color(tty_color_t fg, tty_color_t bg)
 
 void tty_clear(void)
 {
+    /* Hand the VGA console over to userspace: after the first user clear,
+     * the kernel stops writing to the screen (serial only). */
+    extern int kernel_vga_enabled;
+    kernel_vga_enabled = 0;
+
     uint8_t color = tty_make_color(tty.fg, tty.bg);
     for (int row = 0; row < TTY_HEIGHT; row++)
         for (int col = 0; col < TTY_WIDTH; col++)
@@ -262,6 +271,20 @@ void tty_puts(const char *str)
  * ========================================================================= */
 
 #define TTY_IOCTL_CLEAR  0x1
+#define TTY_IOCTL_SET_FG 0x2
+#define TTY_IOCTL_GET_FG 0x3
+
+/* Set the foreground process PID (the one that receives Ctrl-C). */
+void tty_set_foreground(int pid)
+{
+    tty_foreground_pid = pid;
+}
+
+/* PID of the current foreground process, or 0 if none. */
+int tty_get_foreground(void)
+{
+    return tty_foreground_pid;
+}
 
 static char tty_read(int scnd_id)
 {
@@ -278,11 +301,13 @@ static int tty_write_cb(int scnd_id, char c)
     return 0;
 }
 
-static int tty_ioctl(int prim_id, int scnd_id, unsigned int command)
+static int tty_ioctl(int prim_id, int scnd_id, unsigned int command, uint32_t arg)
 {
     (void)prim_id;
     (void)scnd_id;
     if (command == TTY_IOCTL_CLEAR) { tty_clear(); return 0; }
+    if (command == TTY_IOCTL_SET_FG) { tty_set_foreground((int)arg); return 0; }
+    if (command == TTY_IOCTL_GET_FG) { return tty_get_foreground(); }
     return -1;
 }
 

@@ -122,8 +122,10 @@ void kernel_main(void)
     /* Enable interrupts and idle - scheduler will switch to init */
     sti();
     
-    /* Kernel idle loop - scheduler will preempt us */
-    while (1) {
+    /* Kernel idle loop - the scheduler preempts us when a user task is
+     * runnable; otherwise we halt here (true idle task). */
+    for (;;) {
+        sti();
         hlt();
     }
 }

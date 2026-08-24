@@ -493,21 +493,36 @@ static int minix3_vfs_mkdir(void *fs_private, const char *path, uint32_t mode)
     minix3_fs_info_t *fs = (minix3_fs_info_t *)fs_private;
     if (!fs || !path) return -1;
     
-    /* Parse path */
-    const char *filename = path;
-    if (filename[0] == '/') filename++;
+    /* Resolve the parent directory from the path (supports subdirectories).
+     * The old code stripped one leading '/' and used the whole remainder as
+     * a name in the ROOT directory, so 'mkdir /d1/s' created a root entry
+     * literally named "d1/s" (garbage). */
+    char parent_path[256];
+    char name[MINIX3_NAME_LEN];
+    parse_parent_and_name(path, parent_path, name);
     
-    /* Find parent directory (root for simple paths) */
+    /* Reject invalid names */
+    if (name[0] == '\0' || strcmp(name, ".") == 0 || strcmp(name, "..") == 0 ||
+        strchr(name, '/') != NULL) {
+        printk("[minix3] mkdir: invalid name '%s'\n", name);
+        return -1;
+    }
+    
+    /* Look up the parent directory */
+    uint32_t parent_ino;
     struct minix3_inode parent_inode;
-    uint32_t parent_ino = MINIX3_ROOT_INO;
-    
-    if (minix3_read_inode(fs, parent_ino, &parent_inode) < 0) {
+    if (lookup_directory_by_path(fs, parent_path, &parent_ino, &parent_inode) < 0) {
+        printk("[minix3] mkdir: parent directory not found\n");
+        return -1;
+    }
+    if (!MINIX3_ISDIR(parent_inode.i_mode)) {
+        printk("[minix3] mkdir: parent is not a directory\n");
         return -1;
     }
     
     /* Check if directory already exists */
     uint32_t existing_ino;
-    if (minix3_lookup(fs, &parent_inode, filename, &existing_ino) == 0) {
+    if (minix3_lookup(fs, &parent_inode, name, &existing_ino) == 0) {
         printk("[minix3] Directory already exists\n");
         return -1;
     }
@@ -568,7 +583,7 @@ static int minix3_vfs_mkdir(void *fs_private, const char *path, uint32_t mode)
     }
     
     /* Add entry to parent directory */
-    if (minix3_add_dirent(fs, &parent_inode, filename, new_ino) < 0) {
+    if (minix3_add_dirent(fs, &parent_inode, name, new_ino) < 0) {
         minix3_free_zone(fs, zone);
         minix3_free_inode(fs, new_ino);
         return -1;
@@ -1021,6 +1036,42 @@ static int minix3_vfs_stat(void *fs_private, const char *path, stat_t *st)
     return 0;
 }
 
+/* Fill a stat_t from an inode. Shared by minix3_vfs_stat and fstat. */
+static void minix3_fill_stat(const struct minix3_inode *inode, uint32_t ino,
+                             stat_t *st)
+{
+    st->size  = inode->i_size;
+    st->inode = ino;
+    st->ctime = inode->i_ctime;
+    st->mtime = inode->i_mtime;
+    st->mode  = inode->i_mode;
+
+    if (MINIX3_ISDIR(inode->i_mode)) {
+        st->type = DT_DIR;
+    } else if (MINIX3_ISREG(inode->i_mode)) {
+        st->type = DT_REG;
+    } else if (MINIX3_ISCHR(inode->i_mode)) {
+        st->type = DT_CHRDEV;
+    } else if (MINIX3_ISBLK(inode->i_mode)) {
+        st->type = DT_BLKDEV;
+    } else if (MINIX3_ISLNK(inode->i_mode)) {
+        st->type = DT_SYMLINK;
+    } else {
+        st->type = DT_UNKNOWN;
+    }
+}
+
+/**
+ * fstat - Get file metadata from an already-open file.
+ */
+static int minix3_vfs_fstat(void *file_private, stat_t *st)
+{
+    if (!file_private || !st) return -1;
+    minix3_file_info_t *file = (minix3_file_info_t *)file_private;
+    minix3_fill_stat(&file->inode, file->inode_num, st);
+    return 0;
+}
+
 /* ============================================================================
  * Filesystem Operations Table
  * ============================================================================ */
@@ -1040,6 +1091,7 @@ static fs_ops_t minix3_ops = {
     .unlink   = minix3_vfs_unlink,
     .rename   = minix3_vfs_rename,
     .stat     = minix3_vfs_stat,
+    .fstat    = minix3_vfs_fstat,
 };
 
 /* ============================================================================

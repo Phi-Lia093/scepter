@@ -680,6 +680,33 @@ int fs_stat(const char *path, stat_t *st)
     return fs_drivers[fs_id].ops.stat(mp->fs_private, rel, st);
 }
 
+/**
+ * fs_fstat - Get status of an open file by descriptor.
+ */
+int fs_fstat(int fd, stat_t *st)
+{
+    if (!st) return -1;
+
+    fd_entry_t *fde = find_fd_entry(fd);
+    if (!fde || !fde->file) return -1;
+
+    open_file_t *file = fde->file;
+    if (file->pipe) {
+        /* Pipes have no real inode: synthesize a small stat */
+        st->size   = 0;
+        st->inode  = 0;
+        st->ctime  = 0;
+        st->mtime  = 0;
+        st->mode   = 0x2000;   /* S_IFCHR-ish: not a regular file */
+        st->type   = DT_CHRDEV;
+        return 0;
+    }
+
+    if (!fs_drivers[file->fs_id].ops.fstat)
+        return -1;
+    return fs_drivers[file->fs_id].ops.fstat(file->file_private, st);
+}
+
 /* =========================================================================
  * Working Directory
  * ========================================================================= */

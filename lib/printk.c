@@ -23,6 +23,12 @@
  * Low-level output
  * ========================================================================= */
 
+/* Whether the kernel may still print to the VGA text console.  True from
+ * boot until the first userspace program takes over the screen (init's
+ * tty_clear / IOCTL_TTY_CLEAR).  After that, kernel output goes to serial
+ * only, so kernel and user output never interleave on the VGA. */
+int kernel_vga_enabled = 1;
+
 static void put_char_early(char c)
 {
     /* Direct VGA access for early boot */
@@ -35,9 +41,12 @@ extern void serial_write_char(char c);
 
 static void put_char(char c)
 {
-    /* Output to both VGA and serial port */
+    /* Output to both VGA and serial port (kernel console).  Once userspace
+     * takes over the screen, VGA output stops and only serial remains. */
     extern void vga_putchar(char);
-    vga_putchar(c);
+    extern int kernel_vga_enabled;
+    if (kernel_vga_enabled)
+        vga_putchar(c);
     
     /* Also send to serial for logging */
     serial_write_char(c);

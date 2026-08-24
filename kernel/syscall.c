@@ -22,32 +22,71 @@
  * ============================================================================ */
 
 /**
+ * check_user_range - Verify a user memory range is mapped in the current
+ * task's page tables.
+ *
+ * Walks current->mm.page_tables[] (the same table the running user CR3 is
+ * built from).  Every page in [addr, addr+len) must be present; when
+ * need_write is set, pages must also be writable.  Returns 1 if valid,
+ * 0 otherwise.
+ */
+static int check_user_range(const void *ptr, size_t len, int need_write)
+{
+    uint32_t addr = (uint32_t)ptr;
+    uint32_t end  = addr + len;
+
+    /* Check for wraparound */
+    if (end < addr) {
+        return 0;
+    }
+
+    /* Must be below kernel space */
+    if (addr >= KERNEL_VMA) {
+        return 0;
+    }
+
+    if (end > KERNEL_VMA) {
+        return 0;
+    }
+
+    if (len == 0) {
+        return 1;
+    }
+
+    task_struct_t *task = current;
+    if (!task) {
+        return 0;
+    }
+
+    for (uint32_t a = addr; a < end; a += 0x1000) {
+        uint32_t pdi = a >> 22;
+        if (pdi >= 768) {
+            return 0;   /* above 3GB is kernel space */
+        }
+        uint32_t *pt = task->mm.page_tables[pdi];
+        if (!pt) {
+            return 0;   /* no page table for this 4MB region */
+        }
+        uint32_t pte = pt[(a >> 12) & 0x3FF];
+        if (!(pte & 0x1)) {
+            return 0;   /* not present */
+        }
+        if (need_write && !(pte & 0x2)) {
+            return 0;   /* read-only */
+        }
+    }
+
+    return 1;
+}
+
+/**
  * Validate a user pointer is within user address space
  * User space: 0x00000000 - 0xBFFFFFFF
  * Kernel space: 0xC0000000 - 0xFFFFFFFF
  */
 int valid_user_pointer(const void *ptr, size_t len)
 {
-    uint32_t addr = (uint32_t)ptr;
-    uint32_t end = addr + len;
-    
-    /* Check for wraparound */
-    if (end < addr) {
-        return 0;
-    }
-    
-    /* Must be below kernel space */
-    if (addr >= KERNEL_VMA) {
-        return 0;
-    }
-    
-    if (end > KERNEL_VMA) {
-        return 0;
-    }
-    
-    /* TODO: Also check if actually mapped in user page tables */
-    
-    return 1;
+    return check_user_range(ptr, len, 0);
 }
 
 /**
@@ -70,8 +109,8 @@ int copy_from_user(void *kernel_dst, const void *user_src, size_t n)
  */
 int copy_to_user(void *user_dst, const void *kernel_src, size_t n)
 {
-    /* Validate user pointer */
-    if (!valid_user_pointer(user_dst, n)) {
+    /* Validate user pointer AND writability (page-table walk) */
+    if (!check_user_range(user_dst, n, 1)) {
         return -1;
     }
     
@@ -470,12 +509,17 @@ static int sys_stat(const char *user_path, stat_t *user_stat)
  */
 static int sys_fstat(int fd, stat_t *user_stat)
 {
-    /* TODO: Implement fstat via VFS
-     * For now, return error as VFS doesn't have fstat yet */
-    (void)fd;
-    (void)user_stat;
-    printk("[SYSCALL] fstat: Not yet implemented\n");
-    return -1;
+    if (!user_stat || !valid_user_pointer(user_stat, sizeof(stat_t))) {
+        return -1;
+    }
+
+    stat_t st;
+    if (fs_fstat(fd, &st) < 0)
+        return -1;
+
+    if (copy_to_user(user_stat, &st, sizeof(st)) < 0)
+        return -1;
+    return 0;
 }
 
 /**
@@ -864,6 +908,18 @@ int syscall_handler(registers_t *regs, int num, uint32_t arg1, uint32_t arg2,
         
         case SYS_GETCWD:
             return sys_getcwd((char *)arg1, (size_t)arg2);
+        
+        case SYS_SIGNAL:
+            return sys_signal((int)arg1, (uint32_t)arg2);
+        
+        case SYS_KILL:
+            return sys_kill((int)arg1, (int)arg2);
+        
+        case SYS_SIGRETURN:
+            return sys_sigreturn(regs);
+        
+        case SYS_NICE:
+            return sys_nice((int)arg1);
         
         default:
             printk("[SYSCALL] Unknown syscall number: %d\n", num);

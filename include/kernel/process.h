@@ -61,6 +61,13 @@ int setup_initial_stack(void *stack_pages, uint32_t stack_vaddr,
 void sys_exit(int status) __attribute__((noreturn));
 
 /**
+ * do_exit - Terminate the current process (shared core for sys_exit and
+ * kill-on-fault paths). Never returns.
+ * @param status Exit status code
+ */
+void do_exit(int status) __attribute__((noreturn));
+
+/**
  * sys_fork - Create a copy of the current process
  * @param regs CPU register state from syscall entry
  * @return Child PID to parent, 0 to child, -1 on error

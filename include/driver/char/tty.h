@@ -69,4 +69,14 @@ void tty_get_cursor(uint8_t *col, uint8_t *row);
  */
 void tty_set_cursor(uint8_t col, uint8_t row);
 
+/**
+ * Set the foreground process PID (receives Ctrl-C / terminal signals).
+ */
+void tty_set_foreground(int pid);
+
+/**
+ * Get the current foreground process PID (0 = none).
+ */
+int tty_get_foreground(void);
+
 #endif /* TTY_H */

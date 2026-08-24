@@ -120,12 +120,12 @@ int cwrite(int prim_id, int scnd_id, char c)
     return dev->ops.write(scnd_id, c);
 }
 
-int char_ioctl(int prim_id, int scnd_id, unsigned int command)
+int char_ioctl(int prim_id, int scnd_id, unsigned int command, uint32_t arg)
 {
     char_device_t *dev = find_char_device(prim_id);
     if (!dev || !dev->ops.ioctl)
         return -1;
-    return dev->ops.ioctl(prim_id, scnd_id, command);
+    return dev->ops.ioctl(prim_id, scnd_id, command, arg);
 }
 
 /* =========================================================================

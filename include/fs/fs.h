@@ -106,6 +106,7 @@ typedef struct fs_ops {
     int (*rename)(void *fs_private, const char *old_path,
                   const char *new_path);
     int (*stat)(void *fs_private, const char *path, stat_t *st);
+    int (*fstat)(void *file_private, stat_t *st);
 } fs_ops_t;
 
 /* -------------------------------------------------------------------------
@@ -218,6 +219,9 @@ int fs_rename(const char *old_path, const char *new_path);
 
 /** Get file / directory metadata. */
 int fs_stat(const char *path, stat_t *st);
+
+/** Get metadata of an already-open file descriptor. */
+int fs_fstat(int fd, stat_t *st);
 
 /* -------------------------------------------------------------------------
  * Working Directory (stored in task_struct.cwd)

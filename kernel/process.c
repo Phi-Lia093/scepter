@@ -21,13 +21,14 @@
  * ============================================================================ */
 
 /**
- * sys_exit - Terminate current process
+ * do_exit - Terminate the current process (shared core).
  * @param status Exit status code
- * 
- * This function never returns. The process transitions to ZOMBIE state
- * and waits to be reaped by its parent via wait().
+ *
+ * Never returns. The process transitions to ZOMBIE state and is reaped by
+ * its parent via wait().  Called both from the exit() syscall and from the
+ * kill-on-fault / default-signal paths.
  */
-void sys_exit(int status)
+void do_exit(int status)
 {
     task_struct_t *task = current;
     
@@ -133,6 +134,14 @@ void sys_exit(int status)
     while(1);
 }
 
+/**
+ * sys_exit - exit() syscall entry point.
+ */
+void sys_exit(int status)
+{
+    do_exit(status);
+}
+
 /* ============================================================================
  * Process Duplication (fork)
  * ============================================================================ */
@@ -175,6 +184,16 @@ int sys_fork(registers_t *regs)
     strncpy(child->name, parent->name, sizeof(child->name));
     strncpy(child->cwd, parent->cwd, sizeof(child->cwd));
     child->next_fd = parent->next_fd;
+    
+    /* Signal state: handlers are inherited, but the child starts with no
+     * pending/blocked signals and no handler in flight. */
+    memcpy(child->sig_handlers, parent->sig_handlers, sizeof(child->sig_handlers));
+    child->pending    = 0;
+    child->blocked    = 0;
+    child->sig_active = 0;
+
+    /* Inherit scheduling priority */
+    child->priority = parent->priority;
     
     /* Add child to parent's children list */
     list_add_tail(&child->sibling, &parent->children);
@@ -665,6 +684,19 @@ static int do_exec(const char *user_path, char **user_argv, char **user_envp)
     }
     kernel_path[sizeof(kernel_path) - 1] = '\0';
     
+    /* Update the process name to the executable's basename */
+    {
+        const char *base = kernel_path;
+        const char *p = kernel_path;
+        while (*p) {
+            if (*p == '/')
+                base = p + 1;
+            p++;
+        }
+        strncpy(task->name, base, sizeof(task->name) - 1);
+        task->name[sizeof(task->name) - 1] = '\0';
+    }
+    
     /* Copy argv/envp into kernel scratch BEFORE the old image is freed
      * (the caller's argv/envp arrays live in that old image). */
     if (copy_exec_strings(user_argv, &argv) < 0) {
@@ -746,6 +778,13 @@ static int do_exec(const char *user_path, char **user_argv, char **user_envp)
     task->mm.code_end = USER_TEXT_START;
     task->mm.brk_start = USER_HEAP_START;
     task->mm.brk_end = USER_HEAP_START;
+    
+    /* exec resets signal state (POSIX): handlers back to default, no
+     * pending signals, no handler in flight. */
+    memset(task->sig_handlers, 0, sizeof(task->sig_handlers));
+    task->pending    = 0;
+    task->blocked    = 0;
+    task->sig_active = 0;
     
     /* Load new binary into memory */
     uint32_t num_pages = (file_size + PAGE_SIZE - 1) / PAGE_SIZE;

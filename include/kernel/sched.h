@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include "lib/list.h"
 #include "fs/fs.h"
+#include "kernel/signal.h"
 
 /* =========================================================================
  * Process States
@@ -65,6 +66,7 @@ typedef struct task_struct {
     uint32_t      ppid;
     task_state_t  state;
     char          name[32];
+    int           priority;        /* nice value; lower = higher priority */
     
     /* ---- Scheduler Links ---- */
     list_head_t   task_list;     /* Node in global task list */
@@ -91,6 +93,16 @@ typedef struct task_struct {
     
     /* ---- Exit Status ---- */
     int           exit_code;
+
+    /* ---- Signals ---- */
+    uint32_t      pending;            /* pending signal mask (bit i = signal i) */
+    uint32_t      blocked;            /* blocked signal mask                    */
+    uint32_t      sig_handlers[NSIG]; /* user handler / SIG_DFL / SIG_IGN       */
+    int           sig_active;         /* 1 while a catchable handler is running */
+    int           sig_delivered;      /* the signal being handled               */
+    uint32_t      sig_saved_eip;      /* saved user context (handler entry)     */
+    uint32_t      sig_saved_esp;
+    uint32_t      sig_saved_eflags;
 } task_struct_t;
 
 /* =========================================================================

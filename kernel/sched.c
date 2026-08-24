@@ -262,54 +262,72 @@ task_struct_t *pick_next_task(void)
 {
     task_struct_t *next = NULL;
     list_head_t *pos;
-    
-    /* Find next READY or RUNNING task after current */
-    int found_current = 0;
+
+    /* Find the best (lowest) nice value among runnable READY tasks that
+     * are NOT the current task. */
+    int best_other = 1000;
     list_for_each(pos, &task_list) {
         task_struct_t *task = list_entry(pos, task_struct_t, task_list);
-        
-        /* Skip ZOMBIE and BLOCKED tasks */
-        if (task->state == TASK_ZOMBIE || task->state == TASK_BLOCKED) {
+        if (task->state != TASK_READY || task == current)
             continue;
-        }
-        
-        if (found_current && task->state == TASK_READY) {
-            next = task;
-            break;
-        }
-        
-        if (task == current) {
-            found_current = 1;
-        }
+        if (task->priority < best_other)
+            best_other = task->priority;
     }
-    
-    /* Wrap around */
-    if (!next) {
+
+    /* If the current task is strictly better than every other runnable
+     * task, keep it (priority scheduling: a -20 task is never preempted
+     * by a +19 task).  Otherwise round-robin among the best-priority
+     * READY tasks (so equal priorities still share the CPU). */
+    if (best_other == 1000) {
+        /* Nothing else runnable. */
+        if (current->state == TASK_RUNNING)
+            return current;
+    } else if (current->state == TASK_RUNNING &&
+               current->priority < best_other) {
+        return current;
+    }
+
+    /* Round-robin over READY tasks with the best priority. */
+    {
+        int found_current = 0;
         list_for_each(pos, &task_list) {
             task_struct_t *task = list_entry(pos, task_struct_t, task_list);
-            
-            /* Skip ZOMBIE and BLOCKED tasks */
-            if (task->state == TASK_ZOMBIE || task->state == TASK_BLOCKED) {
+            if (task->state != TASK_READY ||
+                task->priority != best_other)
                 continue;
-            }
-            
-            if (task->state == TASK_READY && task != current) {
+            if (found_current) {
                 next = task;
                 break;
             }
+            if (task == current)
+                found_current = 1;
+        }
+        if (!next) {   /* wrap around */
+            list_for_each(pos, &task_list) {
+                task_struct_t *task = list_entry(pos, task_struct_t, task_list);
+                if (task->state == TASK_READY &&
+                    task->priority == best_other && task != current) {
+                    next = task;
+                    break;
+                }
+            }
         }
     }
-    
+
     /* Keep current if READY and no other task */
     if (!next && current->state == TASK_READY) {
         next = current;
     }
-    
-    /* Fallback to kernel task */
+
+    /* Fallback: the idle (kernel) task.  It is always runnable and runs
+     * the sti;hlt loop in kernel_main when nothing else wants the CPU.
+     * (It is never picked while any user task is READY, so it does not
+     * steal CPU time from runnable processes.) */
     if (!next) {
         next = &kernel_task;
+        next->state = TASK_RUNNING;
     }
-    
+
     return next;
 }
 
@@ -322,12 +340,12 @@ void schedule(void)
         return;
     }
     
-    /* Update states:
-     * When leaving kernel task for a user task, block kernel so it's not
-     * rescheduled - the idle loop has no useful work once init is running */
+    /* Update states.  The idle (kernel) task yields the CPU permanently
+     * once user tasks exist; pick_next_task's fallback still returns it
+     * when nothing else is runnable, so the kernel idles in sti;hlt. */
     if (prev->state == TASK_RUNNING) {
         if (prev->pid == 0 && next->pid != 0) {
-            prev->state = TASK_BLOCKED;  /* Kernel task: don't reschedule */
+            prev->state = TASK_BLOCKED;
         } else {
             prev->state = TASK_READY;
         }

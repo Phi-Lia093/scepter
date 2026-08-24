@@ -1,7 +1,9 @@
 #include "driver/char/kbd.h"
 #include "driver/char/char.h"
+#include "driver/char/tty.h"
 #include "driver/apic/interrupt.h"
 #include "kernel/cpu.h"
+#include "kernel/signal.h"
 #include "fs/devfs.h"
 #include "kernel/asm.h"
 
@@ -19,6 +21,10 @@
 #define SC_LSHIFT_REL    0xAA
 #define SC_RSHIFT_REL    0xB6
 #define SC_CAPSLOCK      0x3A
+#define SC_LCTRL         0x1D
+#define SC_LCTRL_REL     0x9D
+#define SC_RCTRL         0x1D
+#define SC_RCTRL_REL     0x9D
 
 /* =========================================================================
  * Keyboard State
@@ -31,6 +37,7 @@ static struct {
     int     count;
     uint8_t shift_pressed;
     uint8_t caps_lock;
+    uint8_t ctrl_pressed;
 } kbd_state = {0};
 
 /* =========================================================================
@@ -112,6 +119,16 @@ void kbd_isr(void)
         interrupt_eoi(IRQ1);
         return;
     }
+    if (scancode == SC_LCTRL) {
+        kbd_state.ctrl_pressed = 1;
+        interrupt_eoi(IRQ1);
+        return;
+    }
+    if (scancode == SC_LCTRL_REL) {
+        kbd_state.ctrl_pressed = 0;
+        interrupt_eoi(IRQ1);
+        return;
+    }
     if (scancode & 0x80) {   /* break code – ignore */
         interrupt_eoi(IRQ1);
         return;
@@ -127,10 +144,24 @@ void kbd_isr(void)
             ascii = ascii - 'a' + 'A';
         else if (kbd_state.caps_lock && ascii >= 'A' && ascii <= 'Z')
             ascii = ascii - 'A' + 'a';
+
+        /* Ctrl + letter => control character (Ctrl-C = 0x03, ...) */
+        if (kbd_state.ctrl_pressed && ascii >= 'a' && ascii <= 'z')
+            ascii = ascii - 'a' + 1;
+        else if (kbd_state.ctrl_pressed && ascii >= 'A' && ascii <= 'Z')
+            ascii = ascii - 'A' + 1;
     }
 
     if (ascii != 0) {
-        kbd_buffer_push(ascii);
+        /* Ctrl-C (0x03) goes to the foreground process as SIGINT rather
+         * than into the input buffer.  This lets the user interrupt a
+         * running foreground command. */
+        if (ascii == 3 && tty_get_foreground() > 0) {
+            extern int send_signal(uint32_t pid, int signum);
+            send_signal((uint32_t)tty_get_foreground(), SIGINT);
+        } else {
+            kbd_buffer_push(ascii);
+        }
         /* Wake any process blocked in read() on the keyboard/tty */
         char_wakeup(3);
     }
@@ -153,9 +184,9 @@ static int kbd_write(int scnd_id, char c)
     return -1;
 }
 
-static int kbd_ioctl(int prim_id, int scnd_id, unsigned int command)
+static int kbd_ioctl(int prim_id, int scnd_id, unsigned int command, uint32_t arg)
 {
-    (void)prim_id; (void)scnd_id; (void)command;
+    (void)prim_id; (void)scnd_id; (void)command; (void)arg;
     return -1;
 }
 

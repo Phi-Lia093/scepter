@@ -9,7 +9,7 @@
  * ========================================================================= */
 #ifndef IOCTL_FN_T
 #define IOCTL_FN_T
-typedef int (*ioctl_fn)(int prim_id, int scnd_id, unsigned int command);
+typedef int (*ioctl_fn)(int prim_id, int scnd_id, unsigned int command, uint32_t arg);
 #endif
 
 /* =========================================================================
@@ -49,7 +49,7 @@ int bwrite(int prim_id, int scnd_id, const void *buf,
            uint32_t offset, size_t count);
 
 /** Send an ioctl command to a block device. Returns device value or -1. */
-int block_ioctl(int prim_id, int scnd_id, unsigned int command);
+int block_ioctl(int prim_id, int scnd_id, unsigned int command, uint32_t arg);
 
 /**
  * Initialise all block devices: IDE disks, MBR partition table.

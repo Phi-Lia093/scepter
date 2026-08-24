@@ -290,8 +290,7 @@ static int devfs_ioctl(void *file_private, uint32_t cmd, uint32_t arg)
 
     /* Only character devices support ioctl */
     if (node->type == DT_CHRDEV) {
-        (void)arg;  /* arg is passed via cmd for now */
-        return cioctl(node->dev_id, node->minor, cmd);
+        return cioctl(node->dev_id, node->minor, cmd, arg);
     }
 
     return -1;  /* Block devices don't support ioctl yet */
@@ -377,6 +376,23 @@ static int devfs_stat(void *fs_private, const char *path, stat_t *st)
     return 0;
 }
 
+/* ---- fstat ---- */
+
+static int devfs_fstat(void *file_private, stat_t *st)
+{
+    devfs_file_t *f = (devfs_file_t *)file_private;
+    if (!f || !f->node || !st) return -1;
+
+    devfs_node_t *node = f->node;
+    st->type  = node->type;
+    st->size  = 0;
+    st->inode = (uint32_t)(node - devfs_nodes) + 1;
+    st->ctime = 0;
+    st->mtime = 0;
+    st->mode  = (node->type == DT_CHRDEV) ? 0600 : 0660;
+    return 0;
+}
+
 /* =========================================================================
  * devfs Operations Table
  * ========================================================================= */
@@ -397,6 +413,7 @@ static fs_ops_t devfs_ops = {
     .unlink   = devfs_unlink,
     .rename   = devfs_rename,
     .stat     = devfs_stat,
+    .fstat    = devfs_fstat,
 };
 
 /* =========================================================================

@@ -8,6 +8,8 @@
 #include "mm/buddy.h"
 #include "mm/mm.h"
 #include "kernel/sched.h"
+#include "kernel/process.h"
+#include "kernel/signal.h"
 #include "kernel/panic.h"
 #include "lib/printk.h"
 #include "lib/string.h"
@@ -95,6 +97,20 @@ static int allocate_page(task_struct_t *task, uint32_t fault_addr, vma_t *vma)
  * Page Fault Handler
  * ============================================================================ */
 
+/**
+ * kill_current - Terminate the current task because of a user-space fault.
+ * Never returns.  This is how a userland bug (bad pointer, stack overflow,
+ * write to read-only, ...) is contained: the process dies with a SIGSEGV
+ * rather than panicking the whole kernel.
+ */
+static void kill_current(uint32_t fault_addr, uint32_t error_code)
+{
+    task_struct_t *task = current;
+    printk("[SIG] pid %d (%s): SIGSEGV at 0x%08x (error=0x%x)\n",
+           task ? task->pid : 0, task ? task->name : "?", fault_addr, error_code);
+    do_exit(128 + SIGSEGV);
+}
+
 void page_fault_handler(uint32_t error_code, uint32_t fault_addr)
 {
     task_struct_t *task = current;
@@ -112,15 +128,11 @@ void page_fault_handler(uint32_t error_code, uint32_t fault_addr)
     
     if (!vma) {
         printk("[PAGEFAULT] No VMA found for address 0x%08x\n", fault_addr);
-        printk("[PAGEFAULT] Dumping VMAs:\n");
         vma_dump(task);
-        printk("[PAGEFAULT] SEGMENTATION FAULT - killing process\n");
-        /* TODO: Send SIGSEGV signal, for now just panic */
-        panic("Segmentation fault");
+        kill_current(fault_addr, error_code);
         return;
     }
     
-    /* Check if this is a stack growth fault */
     /* Check if this is a stack growth fault */
     if ((vma->vm_flags & VM_GROWSDOWN) && fault_addr < vma->vm_start) {
         /* Expand stack VMA downward to include fault address */
@@ -129,7 +141,7 @@ void page_fault_handler(uint32_t error_code, uint32_t fault_addr)
         /* Check stack growth limit (8MB) */
         if (vma->vm_end - new_start > 8 * 1024 * 1024) {
             printk("[PAGEFAULT] Stack overflow - exceeds 8MB limit\n");
-            panic("Stack overflow");
+            kill_current(fault_addr, error_code);
             return;
         }
         
@@ -140,20 +152,21 @@ void page_fault_handler(uint32_t error_code, uint32_t fault_addr)
     if (!check_access(vma, error_code)) {
         printk("[PAGEFAULT] Invalid access: VMA flags=0x%x, error=0x%x\n",
                vma->vm_flags, error_code);
-        panic("Permission denied");
+        kill_current(fault_addr, error_code);
         return;
     }
     
     /* If page is not present, allocate it */
     if (!(error_code & PF_PRESENT)) {
         if (allocate_page(task, fault_addr, vma) < 0) {
-            panic("Out of memory");
+            printk("[PAGEFAULT] Out of memory\n");
+            kill_current(fault_addr, error_code);
             return;
         }
     } else {
         /* Protection violation */
         printk("[PAGEFAULT] Protection violation\n");
-        panic("Protection violation");
+        kill_current(fault_addr, error_code);
         return;
     }
 }

@@ -58,6 +58,10 @@ typedef struct registers {
 #define SYS_RMDIR  40   /* Remove an empty directory */
 #define SYS_RENAME 38   /* Rename / move a file or directory */
 #define SYS_GETTIMEOFDAY 78 /* Get wall-clock time */
+#define SYS_SIGNAL  48  /* Install a signal handler */
+#define SYS_KILL    37  /* Send a signal to a process */
+#define SYS_SIGRETURN 119 /* Return from a signal handler */
+#define SYS_NICE    34  /* Adjust the calling process's priority */
 
 /* =========================================================================
  * Time Structures

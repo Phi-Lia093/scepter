@@ -8,7 +8,7 @@
  * ========================================================================= */
 #ifndef IOCTL_FN_T
 #define IOCTL_FN_T
-typedef int (*ioctl_fn)(int prim_id, int scnd_id, unsigned int command);
+typedef int (*ioctl_fn)(int prim_id, int scnd_id, unsigned int command, uint32_t arg);
 #endif
 
 /* =========================================================================
@@ -57,7 +57,7 @@ void char_set_blocking(int prim_id, int enable);
 int  cwrite(int prim_id, int scnd_id, char c);
 
 /** Send an ioctl command to a char device. Returns device value or -1. */
-int  char_ioctl(int prim_id, int scnd_id, unsigned int command);
+int  char_ioctl(int prim_id, int scnd_id, unsigned int command, uint32_t arg);
 
 /** Short alias for char_ioctl */
 #define cioctl char_ioctl
