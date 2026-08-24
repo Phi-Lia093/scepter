@@ -141,6 +141,13 @@ void free_task(task_struct_t *task);
  */
 void init_task_mm(task_struct_t *task);
 
+/**
+ * Find a task in the global task list by PID
+ * @param pid PID to search for
+ * @return Pointer to task, or NULL if not found
+ */
+task_struct_t *find_task_by_pid(uint32_t pid);
+
 /* =========================================================================
  * Context Switching (implemented in context.s)
  * ========================================================================= */

@@ -135,9 +135,10 @@ void free_task(task_struct_t *task)
     
     printk("[SCHED] Freeing task PID %u\n", task->pid);
     
-    /* Free kernel stack */
+    /* Free kernel stack (8KB = 2 pages, page_free frees one page per call) */
     if (task->kernel_stack) {
         page_free((void *)task->kernel_stack);
+        page_free((void *)(task->kernel_stack + PAGE_SIZE));
     }
     
     /* Free user page tables */
@@ -149,8 +150,16 @@ void free_task(task_struct_t *task)
     
     /* TODO: Free user pages (walk page tables and free physical pages) */
     
-    /* Free task structure */
-    kfree(task);
+    /* Free task structure itself.
+     * task_struct is kalloc'd directly from the buddy allocator (its size
+     * is > 2048 so kalloc skips the slab) and spans multiple pages;
+     * page_free/kfree would only release the first one. */
+    {
+        uint32_t pages = (sizeof(task_struct_t) + PAGE_SIZE - 1) >> PAGE_SHIFT;
+        for (uint32_t i = 0; i < pages; i++) {
+            page_free((void *)((uint32_t)task + i * PAGE_SIZE));
+        }
+    }
 }
 
 /* ============================================================================
@@ -162,6 +171,18 @@ void add_task(task_struct_t *task)
     if (!task) return;
     
     list_add_tail(&task->task_list, &task_list);
+}
+
+task_struct_t *find_task_by_pid(uint32_t pid)
+{
+    list_head_t *pos;
+    list_for_each(pos, &task_list) {
+        task_struct_t *task = list_entry(pos, task_struct_t, task_list);
+        if (task->pid == pid) {
+            return task;
+        }
+    }
+    return NULL;
 }
 
 void remove_task(task_struct_t *task)

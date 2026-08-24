@@ -100,10 +100,20 @@ void sys_exit(int status)
                 remove_task(child);
                 free_task(child);
             } else {
-                /* Reparent to init (if we have one) */
+                /* Reparent to init (PID 1): actually link the child into
+                 * init's children list so it can be reaped later */
+                task_struct_t *init_task = find_task_by_pid(1);
                 list_del(&child->sibling);
-                child->ppid = 1;  /* Reparent to init */
-                /* Note: In full implementation, add to init's children list */
+                if (init_task && init_task != task) {
+                    child->ppid = init_task->pid;
+                    list_add_tail(&child->sibling, &init_task->children);
+                    printk("[PROCESS] Reparented PID %u to init (PID %u)\n",
+                           child->pid, init_task->pid);
+                } else {
+                    /* No init yet (or init itself is exiting): orphan it */
+                    child->ppid = 1;
+                    printk("[PROCESS] PID %u orphaned (no init)\n", child->pid);
+                }
             }
         }
     }
@@ -111,8 +121,15 @@ void sys_exit(int status)
     /* Transition to ZOMBIE state */
     task->state = TASK_ZOMBIE;
     
-    /* Wake up parent if it's waiting */
-    /* Note: Will implement wait queue later */
+    /* Wake up parent if it's blocked in wait() */
+    {
+        task_struct_t *parent = find_task_by_pid(task->ppid);
+        if (parent && parent->state == TASK_BLOCKED) {
+            parent->state = TASK_READY;
+            printk("[PROCESS] Woke parent PID %u (child PID %u exited)\n",
+                   parent->pid, task->pid);
+        }
+    }
     
     /* Schedule next task (this never returns) */
     schedule();
@@ -124,6 +141,38 @@ void sys_exit(int status)
 /* ============================================================================
  * Process Duplication (fork)
  * ============================================================================ */
+
+/**
+ * fork_cleanup_failed - Clean up a partially-built fork child on error
+ * Unlinks the child from the parent's children list, frees any user pages
+ * that were already copied into the child's page tables, then frees the task.
+ */
+static void fork_cleanup_failed(task_struct_t *child)
+{
+    if (!child) return;
+    
+    /* Unlink from parent's children list (if still linked) */
+    if (child->sibling.next != NULL) {
+        list_del(&child->sibling);
+    }
+    
+    /* Free user pages that were copied into the child's page tables */
+    for (int i = 0; i < 768; i++) {
+        if (child->mm.page_tables[i]) {
+            uint32_t *pt = child->mm.page_tables[i];
+            for (int j = 0; j < 1024; j++) {
+                uint32_t pte = pt[j];
+                if (pte & 0x1) {  /* Present */
+                    uint32_t phys = pte & ~0xFFF;
+                    page_free((void *)PHYS_TO_VIRT(phys));
+                }
+            }
+        }
+    }
+    
+    /* free_task frees page tables + kernel stack + task struct */
+    free_task(child);
+}
 
 /**
  * sys_fork - Create a copy of the current process
@@ -158,7 +207,7 @@ int sys_fork(registers_t *regs)
         fd_entry_t *cfd = (fd_entry_t *)kalloc(sizeof(fd_entry_t));
         if (!cfd) {
             printk("[PROCESS] Fork failed: could not duplicate fd_entry\n");
-            free_task(child);
+            fork_cleanup_failed(child);
             return -1;
         }
         
@@ -186,7 +235,7 @@ int sys_fork(registers_t *regs)
                                  pvma->vm_flags, pvma->vm_type);
         if (!cvma) {
             printk("[PROCESS] Fork failed: could not create child VMA\n");
-            free_task(child);
+            fork_cleanup_failed(child);
             return -1;
         }
         
@@ -215,7 +264,7 @@ int sys_fork(registers_t *regs)
                 uint32_t *pt = (uint32_t *)page_alloc(PAGE_SIZE);
                 if (!pt) {
                     printk("[PROCESS] Fork failed: could not allocate page table\n");
-                    free_task(child);
+                    fork_cleanup_failed(child);
                     return -1;
                 }
                 memset(pt, 0, PAGE_SIZE);
@@ -229,7 +278,7 @@ int sys_fork(registers_t *regs)
             void *child_page = page_alloc(PAGE_SIZE);
             if (!child_page) {
                 printk("[PROCESS] Fork failed: could not allocate page\n");
-                free_task(child);
+                fork_cleanup_failed(child);
                 return -1;
             }
             
@@ -315,15 +364,18 @@ int sys_fork(registers_t *regs)
     /* EFLAGS for switch_to's popfl (IF=0, will be enabled by iret) */
     kstack--; *kstack = 0x002;
     
-    /* POPA frame for switch_to (pushed in reverse: EDI first, EAX last) */
-    kstack--; *kstack = regs->edi;         /* EDI */
-    kstack--; *kstack = regs->esi;         /* ESI */
-    kstack--; *kstack = regs->ebp;         /* EBP */
-    kstack--; *kstack = regs->esp_dummy;   /* dummy ESP (ignored by popa) */
-    kstack--; *kstack = regs->ebx;         /* EBX */
-    kstack--; *kstack = regs->edx;         /* EDX */
-    kstack--; *kstack = regs->ecx;         /* ECX */
+    /* POPA frame for switch_to.
+     * popa() loads: EDI, ESI, EBP, (skip ESP), EBX, EDX, ECX, EAX.
+     * So we must push in REVERSE: EAX first (highest address),
+     * EDI last (lowest address = new ESP), exactly like spawn.c does. */
     kstack--; *kstack = 0;                 /* EAX = 0 (child's return value) */
+    kstack--; *kstack = regs->ecx;         /* ECX */
+    kstack--; *kstack = regs->edx;         /* EDX */
+    kstack--; *kstack = regs->ebx;         /* EBX */
+    kstack--; *kstack = regs->esp_dummy;   /* dummy ESP (ignored by popa) */
+    kstack--; *kstack = regs->ebp;         /* EBP */
+    kstack--; *kstack = regs->esi;         /* ESI */
+    kstack--; *kstack = regs->edi;         /* EDI (popa reads this first) */
     
     /* Update child's ESP to point to start of POPA frame */
     child->kernel_esp = (uint32_t)kstack;
@@ -331,6 +383,9 @@ int sys_fork(registers_t *regs)
     /* Add child to scheduler */
     child->state = TASK_READY;
     add_task(child);
+    
+    /* Return child PID to parent */
+    return (int)child->pid;
     
     /* Return child PID to parent */
     return (int)child->pid;
@@ -371,8 +426,10 @@ int sys_wait(int *status_ptr)
                 
                 /* Return status to user if requested */
                 if (status_ptr) {
-                    /* TODO: Use copy_to_user for safety */
-                    *status_ptr = status;
+                    if (copy_to_user(status_ptr, &status, sizeof(status)) < 0) {
+                        printk("[PROCESS] Wait: bad status pointer 0x%08x\n",
+                               (uint32_t)status_ptr);
+                    }
                 }
                 
                 /* Remove from children list */
@@ -615,13 +672,13 @@ int sys_exec(const char *user_path)
      * 
      * We'll modify the return path by directly manipulating the stack. */
     
-    extern void enter_userspace(uint32_t cr3, uint32_t entry);
+    extern void enter_userspace(uint32_t cr3, uint32_t entry, uint32_t user_esp);
     
     /* Switch to the task's page directory */
     uint32_t cr3 = VIRT_TO_PHYS((uint32_t)&task->mm.pgdir[0]);
     
     /* This will never return - it directly jumps to userspace */
-    enter_userspace(cr3, USER_TEXT_START);
+    enter_userspace(cr3, USER_TEXT_START, USER_STACK_TOP - 4);
     
     /* Should never reach here */
     return -1;

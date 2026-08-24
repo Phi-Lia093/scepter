@@ -14,7 +14,7 @@
 #include "lib/string.h"
 
 /* External: enter_userspace function from context.s */
-extern void enter_userspace(uint32_t cr3, uint32_t entry);
+extern void enter_userspace(uint32_t cr3, uint32_t entry, uint32_t user_esp);
 
 /* ============================================================================
  * Simple Binary Loader
@@ -162,7 +162,7 @@ int exec_flat(const char *path)
     printk("[EXEC] *** Entering userspace ***\n\n");
     
     /* Jump to offset 0 (USER_BASE) */
-    enter_userspace((uint32_t)pgdir_phys, USER_BASE);
+    enter_userspace((uint32_t)pgdir_phys, USER_BASE, 0xBFFFFFFCU);
     
     /* Should never reach here */
     printk("[EXEC] ERROR: Returned from userspace!\n");

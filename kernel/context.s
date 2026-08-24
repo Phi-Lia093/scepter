@@ -7,7 +7,7 @@
 .global first_entry_trampoline
 
 /* ============================================================================
- * enter_userspace(uint32_t cr3, uint32_t entry)
+ * enter_userspace(uint32_t cr3, uint32_t entry, uint32_t user_esp)
  *
  * Switch from kernel mode to user mode by:
  * 1. Loading user CR3 (kernel remains mapped as supervisor-only)
@@ -24,6 +24,7 @@ enter_userspace:
     /* Get parameters */
     movl 4(%esp), %eax           /* cr3 (user page directory physical address) */
     movl 8(%esp), %ecx           /* entry point */
+    movl 12(%esp), %edx          /* initial user ESP */
     
     /* Load user CR3 - kernel is still mapped (supervisor-only) */
     movl %eax, %cr3
@@ -43,7 +44,7 @@ enter_userspace:
     pushl $0x23                  /* User data segment (RPL=3) */
     
     /* Push initial user stack pointer (ESP) */
-    pushl %ecx                   /* Use entry point (no real stack yet) */
+    pushl %edx                   /* user_esp (top of user stack) */
     
     /* Push EFLAGS with interrupts enabled */
     pushfl

@@ -88,114 +88,115 @@ IRQ_STUB 1, kbd_isr
 
 /* -------------------------------------------------------------------------
  * Syscall stub (int 0x80)
+ *
+ * IMPORTANT: the register frame (registers_t) is built ON THE CURRENT
+ * PROCESS'S KERNEL STACK, NOT in a global buffer. This is essential for
+ * blocking syscalls (e.g. wait()): a process can be descheduled while it
+ * is inside the syscall handler and resume much later. A per-process
+ * kernel stack frame survives that, whereas a single global buffer would
+ * be overwritten by every other process's syscalls in the meantime,
+ * corrupting the blocked process's return state.
  * ------------------------------------------------------------------------- */
-
-.section .data
-.align 16
-syscall_regs:
-    .skip 80    /* sizeof(registers_t) = 20 * 4 = 80 bytes */
 
 .global isr128
 isr128:
     cli
-    
-    /* Save all registers directly to static buffer
-     * This avoids complex stack calculations
-     * Layout matches registers_t: EDI, ESI, EBP, ESP, EBX, EDX, ECX, EAX,
-     *                              GS, FS, ES, DS, CR3, EIP, CS, EFLAGS, ESP, SS */
-    
-    /* Save general-purpose registers (offsets match pusha order) */
-    movl %edi, syscall_regs + 0       /* EDI offset 0 */
-    movl %esi, syscall_regs + 4       /* ESI offset 4 */
-    movl %ebp, syscall_regs + 8       /* EBP offset 8 */
-    movl %esp, syscall_regs + 12      /* ESP offset 12 */
-    movl %ebx, syscall_regs + 16      /* EBX offset 16 */
-    movl %edx, syscall_regs + 20      /* EDX offset 20 */
-    movl %ecx, syscall_regs + 24      /* ECX offset 24 */
-    movl %eax, syscall_regs + 28      /* EAX offset 28 */
-    
-    /* Save segment registers */
-    movw %gs, %ax
-    movl %eax, syscall_regs + 32      /* GS offset 32 */
-    movw %fs, %ax
-    movl %eax, syscall_regs + 36      /* FS offset 36 */
-    movw %es, %ax
-    movl %eax, syscall_regs + 40      /* ES offset 40 */
-    movw %ds, %ax
-    movl %eax, syscall_regs + 44      /* DS offset 44 */
-    
-    /* Save CR3 */
+
+    /* At entry the CPU has pushed the IRET frame from ring 3:
+     *   [ESP+0]=EIP [ESP+4]=CS [ESP+8]=EFLAGS
+     *   [ESP+12]=user_esp [ESP+16]=SS
+     *
+     * We build registers_t (see kernel/syscall.h) on the kernel stack
+     * in EXACT struct order:
+     *   [ESP+0..28]  edi esi ebp esp_dummy ebx edx ecx eax
+     *   [ESP+32..44] gs fs es ds
+     *   [ESP+48]     cr3
+     *   [ESP+52..68] eip cs eflags user_esp ss  (the CPU IRET frame)
+     *
+     * This must live on THIS process's kernel stack (not a global buffer):
+     * a blocking syscall (wait) can deschedule the process mid-handler and
+     * resume much later; only the per-process stack survives that.
+     */
+
+    /* Save EAX (syscall number) by pushing it BELOW the CPU frame
+     * (safe: inside the kernel stack). Then read CR3 into EAX and swap:
+     * the CR3 value goes into the stack slot (which becomes the frame's
+     * CR3 field, right below the CPU frame) and EAX gets the syscall
+     * number back.  NO writes above the CPU frame: the byte at the very
+     * top of the kernel stack belongs to whatever page the allocator
+     * placed after it (e.g. a page table), and must never be touched. */
+    pushl %eax                     /* [ESP-4] temp = syscall number */
     movl %cr3, %eax
-    movl %eax, syscall_regs + 48      /* CR3 offset 48 */
-    
-    /* Save IRET frame from stack (CPU pushed: EIP, CS, EFLAGS, ESP, SS) */
-    movl 0(%esp), %eax                /* EIP */
-    movl %eax, syscall_regs + 52
-    movl 4(%esp), %eax                /* CS */
-    movl %eax, syscall_regs + 56
-    movl 8(%esp), %eax                /* EFLAGS */
-    movl %eax, syscall_regs + 60
-    movl 12(%esp), %eax               /* User ESP */
-    movl %eax, syscall_regs + 64
-    movl 16(%esp), %eax               /* SS */
-    movl %eax, syscall_regs + 68
-    
-    /* Switch to kernel segments */
+    xchgl %eax, (%esp)             /* [ESP-4] = cr3, EAX = syscall number */
+
+    pushl %ds                      /* ds    -> [base+44] */
+    pushl %es                      /* es    -> [base+40] */
+    pushl %fs                      /* fs    -> [base+36] */
+    pushl %gs                      /* gs    -> [base+32] */
+
+    /* Push the GPR frame (EAX already holds the syscall number) */
+    pushl %eax                     /* eax   -> [base+28] */
+    pushl %ecx                     /* ecx   -> [base+24] */
+    pushl %edx                     /* edx   -> [base+20] */
+    pushl %ebx                     /* ebx   -> [base+16] */
+    pushl %esp                     /* dummy -> [base+12] */
+    pushl %ebp                     /* ebp   -> [base+8]  */
+    pushl %esi                     /* esi   -> [base+4]  */
+    pushl %edi                     /* edi   -> [base+0]  */
+
+    /* ESP now points at the complete registers_t frame. */
+
+    /* Switch to kernel data segments */
     movw $0x10, %ax
     movw %ax, %ds
     movw %ax, %es
     movw %ax, %fs
     movw %ax, %gs
-    
-    /* Get syscall arguments from saved registers */
-    movl syscall_regs + 28, %eax      /* num (from EAX) */
-    movl syscall_regs + 16, %ebx      /* arg1 (from EBX) */
-    movl syscall_regs + 24, %ecx      /* arg2 (from ECX) */
-    movl syscall_regs + 20, %edx      /* arg3 (from EDX) */
-    movl syscall_regs + 4, %esi       /* arg4 (from ESI) */
-    movl syscall_regs + 0, %edi       /* arg5 (from EDI) */
-    
-    /* Push arguments for syscall_handler(regs, num, arg1, arg2, arg3, arg4, arg5) */
-    pushl %edi                        /* arg5 */
-    pushl %esi                        /* arg4 */
-    pushl %edx                        /* arg3 */
-    pushl %ecx                        /* arg2 */
-    pushl %ebx                        /* arg1 */
-    pushl %eax                        /* num */
-    pushl $syscall_regs               /* regs - simple static address! */
-    
+
+    /* Load syscall arguments from the frame */
+    movl 28(%esp), %eax            /* num   (EAX) */
+    movl 16(%esp), %ebx            /* arg1  (EBX) */
+    movl 24(%esp), %ecx            /* arg2  (ECX) */
+    movl 20(%esp), %edx            /* arg3  (EDX) */
+    movl 4(%esp), %esi             /* arg4  (ESI) */
+    movl 0(%esp), %edi             /* arg5  (EDI) */
+
+    /* syscall_handler(regs, num, arg1, arg2, arg3, arg4, arg5) */
+    pushl %edi                     /* arg5 */
+    pushl %esi                     /* arg4 */
+    pushl %edx                     /* arg3 */
+    pushl %ecx                     /* arg2 */
+    pushl %ebx                     /* arg1 */
+    pushl %eax                     /* num */
+    lea 24(%esp), %eax             /* regs = base (ESP+24 after 6 pushes) */
+    pushl %eax                     /* regs */
+
     call syscall_handler
-    
-    addl $28, %esp                    /* Clean 7 args */
-    
-    /* Return value is in EAX - save it */
-    movl %eax, %edx
-    
+
+    addl $28, %esp                 /* clean 7 args; ESP = base again */
+
+    /* Store return value into the EAX slot of the frame */
+    movl %eax, 28(%esp)
+
     /* Restore CR3 */
-    movl syscall_regs + 48, %eax
+    movl 48(%esp), %eax
     movl %eax, %cr3
-    
+
     /* Restore segment registers */
-    movl syscall_regs + 32, %eax
+    movl 32(%esp), %eax
     movw %ax, %gs
-    movl syscall_regs + 36, %eax
+    movl 36(%esp), %eax
     movw %ax, %fs
-    movl syscall_regs + 40, %eax
+    movl 40(%esp), %eax
     movw %ax, %es
-    movl syscall_regs + 44, %eax
+    movl 44(%esp), %eax
     movw %ax, %ds
-    
-    /* Restore general-purpose registers, but put return value in EAX */
-    movl syscall_regs + 0, %edi
-    movl syscall_regs + 4, %esi
-    movl syscall_regs + 8, %ebp
-    /* Skip ESP at offset 12 */
-    movl syscall_regs + 16, %ebx
-    /* Skip EDX - we need it for return value */
-    movl syscall_regs + 24, %ecx
-    movl %edx, %eax                   /* Return value in EAX */
-    movl syscall_regs + 20, %edx      /* Now restore EDX */
-    
+
+    /* Restore general-purpose registers (EAX gets the return value).
+     * After popa, ESP points at GS; skip GS FS ES DS CR3 (20 bytes),
+     * then iret pops EIP CS EFLAGS user_esp SS. */
+    popa
+    addl $20, %esp
     iret
 
 /* -------------------------------------------------------------------------
