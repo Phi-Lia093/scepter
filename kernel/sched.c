@@ -108,8 +108,8 @@ task_struct_t *alloc_task(void)
     task->state = TASK_READY;
     task->next_fd = 0;
     
-    /* Allocate kernel stack (8KB, from direct-mapped region) */
-    task->kernel_stack = (uint32_t)page_alloc(8192);
+    /* Allocate kernel stack (16KB = 4 pages, from direct-mapped region) */
+    task->kernel_stack = (uint32_t)page_alloc(KERNEL_STACK_SIZE);
     if (!task->kernel_stack) {
         printk("[SCHED] Failed to allocate kernel stack\n");
         kfree(task);
@@ -117,7 +117,7 @@ task_struct_t *alloc_task(void)
     }
     
     /* Initialize kernel_esp to top of stack */
-    task->kernel_esp = task->kernel_stack + 8192;
+    task->kernel_esp = task->kernel_stack + KERNEL_STACK_SIZE;
     
     /* Initialize memory management */
     init_task_mm(task);
@@ -136,10 +136,10 @@ void free_task(task_struct_t *task)
     
     printk("[SCHED] Freeing task PID %u\n", task->pid);
     
-    /* Free kernel stack (8KB = 2 pages, page_free frees one page per call) */
+    /* Free kernel stack (16KB = 4 pages, page_free frees one page per call) */
     if (task->kernel_stack) {
-        page_free((void *)task->kernel_stack);
-        page_free((void *)(task->kernel_stack + PAGE_SIZE));
+        for (int i = 0; i < KERNEL_STACK_PAGES; i++)
+            page_free((void *)(task->kernel_stack + i * PAGE_SIZE));
     }
     
     /* Free user data pages mapped in each user page table.
@@ -349,7 +349,7 @@ void schedule(void)
      * in ring 3, the CPU uses TSS.esp0 as the ring-0 stack pointer.
      * If esp0 points to the wrong stack, the interrupt frame goes to garbage. */
     if (next->pid != 0) {
-        tss.esp0 = next->kernel_stack + 8192;
+        tss.esp0 = next->kernel_stack + KERNEL_STACK_SIZE;
     }
     
     /* Get CR3 (physical address of page directory)

@@ -3,6 +3,50 @@
 
 #include <stdint.h>
 #include "kernel/syscall.h"
+#include "fs/fs.h"
+
+/* =========================================================================
+ * Executable argument/environment copying
+ *
+ * The kernel copies argv/envp from the caller's (old) user space into a
+ * fixed kernel scratch area BEFORE freeing the old process image. The
+ * strings are then packed into the fresh user stack page of the new image
+ * by setup_initial_stack().
+ * ========================================================================= */
+
+#define EXEC_MAX_ARGS 32    /* max argc/envc entries               */
+#define EXEC_MAX_STR  128   /* max bytes per individual string     */
+#define EXEC_MAX_DATA 1024  /* max total string bytes per table    */
+
+typedef struct {
+    char     *ptrs[EXEC_MAX_ARGS];  /* NULL-terminated string pointers */
+    char      data[EXEC_MAX_DATA];  /* packed string storage           */
+    uint32_t  count;                /* number of strings               */
+    uint32_t  data_len;             /* bytes used in data[]            */
+} exec_strings_t;
+
+/**
+ * Copy a NULL-terminated array of user pointers to strings into kernel
+ * scratch (an exec_strings_t). Empty (NULL) array yields count == 0.
+ * @param user_ptrs User pointer to the pointer array (may be NULL)
+ * @param out       Kernel scratch to fill
+ * @return 0 on success, -1 on invalid pointer / overflow
+ */
+int copy_exec_strings(char **user_ptrs, exec_strings_t *out);
+
+/**
+ * Build the initial user stack (argc/argv[]/envp[]/strings) for a new
+ * process image.
+ * @param stack_pages  Direct-mapped base of the (2-page) stack allocation
+ * @param stack_vaddr  User virtual address of stack_pages (0xBFFFE000)
+ * @param argv         Kernel argv table (count >= 1)
+ * @param envp         Kernel envp table (may be empty)
+ * @param esp          Out: initial user ESP pointing at argc
+ * @return 0 on success, -1 if the block does not fit
+ */
+int setup_initial_stack(void *stack_pages, uint32_t stack_vaddr,
+                        exec_strings_t *argv, exec_strings_t *envp,
+                        uint32_t *esp);
 
 /* =========================================================================
  * Process Management System Calls
@@ -31,11 +75,44 @@ int sys_fork(struct registers *regs);
 int sys_wait(int *status_ptr);
 
 /**
- * sys_exec - Replace current process with new program
+ * sys_exec - Replace current process with new program (no argv/envp)
  * @param path Path to executable file
  * @return -1 on error (does not return on success)
  */
 int sys_exec(const char *path);
+
+/**
+ * sys_execv - Replace current process with new program + argv
+ * @param path Path to executable file
+ * @param argv User pointer to NULL-terminated argv array
+ * @return -1 on error (does not return on success)
+ */
+int sys_execv(const char *path, char **argv);
+
+/**
+ * sys_execve - Replace current process with new program + argv + envp
+ * @param path Path to executable file
+ * @param argv User pointer to NULL-terminated argv array
+ * @param envp User pointer to NULL-terminated envp array
+ * @return -1 on error (does not return on success)
+ */
+int sys_execve(const char *path, char **argv, char **envp);
+
+/**
+ * sys_chdir - Change the current working directory
+ * @param path User pointer to directory path
+ * @return 0 on success, -1 on error
+ */
+int sys_chdir(const char *path);
+
+/**
+ * sys_getdents - Read directory entries
+ * @param fd   Directory file descriptor
+ * @param buf  User buffer for dirent_t array
+ * @param count Maximum number of entries to read
+ * @return Number of entries filled, 0 at end, -1 on error
+ */
+int sys_getdents(int fd, dirent_t *buf, unsigned int count);
 
 /**
  * sys_nanosleep - Sleep for a specified duration

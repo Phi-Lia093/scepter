@@ -113,8 +113,8 @@ int exec_flat(const char *path)
     printk("[EXEC] Loaded %u bytes successfully\n", bytes_loaded);
     printk("[EXEC] Entry point: 0x%08x (offset 0)\n", USER_BASE);
     
-    /* Allocate kernel stack for this process (8KB) */
-    void *kernel_stack = page_alloc(8192);
+    /* Allocate kernel stack for this process (16KB) */
+    void *kernel_stack = page_alloc(KERNEL_STACK_SIZE);
     if (!kernel_stack) {
         printk("[EXEC] Failed to allocate kernel stack\n");
         return -1;
@@ -123,10 +123,10 @@ int exec_flat(const char *path)
     /* Set TSS.esp0 to top of kernel stack
      * This is where CPU will switch when interrupt occurs in Ring 3 */
     extern tss_entry_t tss;
-    tss.esp0 = (uint32_t)kernel_stack + 8192;  /* Top of stack (grows down) */
+    tss.esp0 = (uint32_t)kernel_stack + KERNEL_STACK_SIZE;  /* Top of stack (grows down) */
     
     printk("[EXEC] Kernel stack: 0x%08x-0x%08x (TSS.esp0 = 0x%08x)\n",
-           (uint32_t)kernel_stack, (uint32_t)kernel_stack + 8192, tss.esp0);
+           (uint32_t)kernel_stack, (uint32_t)kernel_stack + KERNEL_STACK_SIZE, tss.esp0);
     
     /* Create VMAs for the loaded process */
     task_struct_t *task = current;

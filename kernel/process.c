@@ -498,22 +498,150 @@ int sys_nanosleep(timespec_t *user_req, timespec_t *user_rem)
 }
 
 /* ============================================================================
+ * Executable argument / environment string handling
+ * ============================================================================ */
+
+/**
+ * copy_exec_strings - Copy a NULL-terminated user string array into kernel
+ * scratch (an exec_strings_t).
+ *
+ * The caller's argv/envp live in the OLD process image, which exec frees.
+ * So they are copied into fixed kernel scratch BEFORE the old image is
+ * torn down; setup_initial_stack() packs them into the NEW image's stack.
+ */
+int copy_exec_strings(char **user_ptrs, exec_strings_t *out)
+{
+    if (!out) return -1;
+    out->count = 0;
+    out->data_len = 0;
+
+    if (!user_ptrs)
+        return 0;   /* empty array */
+
+    /* Leave room for the terminating NULL in ptrs[] */
+    for (uint32_t i = 0; i < EXEC_MAX_ARGS - 1; i++) {
+        char *uptr;
+        if (copy_from_user(&uptr, &user_ptrs[i], sizeof(uptr)) < 0)
+            return -1;
+        if (!uptr)
+            break;   /* NULL terminator */
+
+        /* Copy the string byte-by-byte (bounded) */
+        char tmp[EXEC_MAX_STR];
+        uint32_t n = 0;
+        while (n < sizeof(tmp) - 1) {
+            char c;
+            if (copy_from_user(&c, &uptr[n], 1) < 0)
+                return -1;
+            tmp[n] = c;
+            if (c == '\0')
+                break;
+            n++;
+        }
+        if (n >= sizeof(tmp) - 1)
+            tmp[sizeof(tmp) - 1] = '\0';   /* truncate over-long strings */
+
+        uint32_t len = strlen(tmp) + 1;
+        if (out->data_len + len > EXEC_MAX_DATA) {
+            printk("[EXEC] arg/env table overflow\n");
+            return -1;
+        }
+        strcpy(&out->data[out->data_len], tmp);
+        out->ptrs[out->count] = &out->data[out->data_len];
+        out->data_len += len;
+        out->count++;
+    }
+    out->ptrs[out->count] = NULL;
+    return 0;
+}
+
+/**
+ * setup_initial_stack - Build the argc/argv[]/envp[]/strings block for a
+ * new process image on its fresh user stack.
+ *
+ * Layout (low → high addresses):
+ *   [esp]        argc
+ *   [esp+4]      argv[0..argc-1]
+ *   ...          NULL
+ *   ...          envp[0..envc-1]
+ *   ...          NULL
+ *   [top-str]    argv strings + envp strings (packed at the very top)
+ *
+ * @param stack_pages Direct-mapped base of the 2-page stack allocation
+ * @param stack_vaddr User virtual address of stack_pages (0xBFFFE000)
+ * @param argv        Kernel argv table (count >= 1)
+ * @param envp        Kernel envp table (may be empty)
+ * @param esp         Out: initial user ESP pointing at argc
+ * @return 0 on success, -1 if the block does not fit
+ */
+int setup_initial_stack(void *stack_pages, uint32_t stack_vaddr,
+                        exec_strings_t *argv, exec_strings_t *envp,
+                        uint32_t *esp)
+{
+    uint32_t argc = argv ? argv->count : 0;
+    uint32_t envc = envp ? envp->count : 0;
+    uint32_t argv_len = argv ? argv->data_len : 0;
+    uint32_t envp_len = envp ? envp->data_len : 0;
+
+    uint32_t str_bytes = argv_len + envp_len;
+    uint32_t ptr_bytes = 4 * (argc + 1 + envc + 1);
+
+    /* Must fit inside the 8KB (2-page) stack mapping */
+    if (str_bytes + ptr_bytes + 16 > 8192)
+        return -1;
+
+    uint32_t top = USER_STACK_TOP;              /* 0xC0000000, exclusive */
+    uint32_t str_va = top - str_bytes;          /* strings at the top    */
+    uint32_t esp0  = (str_va - ptr_bytes) & ~15U; /* pointer block below  */
+
+    char *direct = (char *)stack_pages;
+
+    /* Pack the strings (via the direct map) */
+    if (argv_len)
+        memcpy(direct + (str_va - stack_vaddr), argv->data, argv_len);
+    if (envp_len)
+        memcpy(direct + (str_va - stack_vaddr) + argv_len,
+               envp->data, envp_len);
+
+    /* Build the pointer block */
+    uint32_t *q = (uint32_t *)(direct + (esp0 - stack_vaddr));
+    uint32_t idx = 0;
+    q[idx++] = argc;
+    for (uint32_t i = 0; i < argc; i++)
+        q[idx++] = str_va + (uint32_t)(argv->ptrs[i] - argv->data);
+    q[idx++] = 0;                    /* argv NULL terminator */
+    for (uint32_t i = 0; i < envc; i++)
+        q[idx++] = str_va + argv_len +
+                   (uint32_t)(envp->ptrs[i] - envp->data);
+    q[idx++] = 0;                    /* envp NULL terminator */
+
+    if (esp)
+        *esp = esp0;
+    return 0;
+}
+
+/* ============================================================================
  * Process Replacement (exec)
  * ============================================================================ */
 
 /**
- * sys_exec - Replace current process with new program
+ * do_exec - Replace current process with new program (common core)
  * @param user_path User pointer to executable path
+ * @param user_argv User pointer to NULL-terminated argv array (may be NULL)
+ * @param user_envp User pointer to NULL-terminated envp array (may be NULL)
  * @return -1 on error (does not return on success)
  * 
  * This syscall replaces the current process's memory image with a new executable.
  * It preserves the PID, open file descriptors, and parent relationship.
- * On success, execution continues at the entry point of the new program.
+ * On success, execution continues at the entry point of the new program with
+ * argc/argv/envp delivered on the user stack (parsed by crt0.s).
  */
-int sys_exec(const char *user_path)
+static int do_exec(const char *user_path, char **user_argv, char **user_envp)
 {
     task_struct_t *task = current;
     char kernel_path[256];
+    exec_strings_t argv = { 0 };
+    exec_strings_t envp = { 0 };
     
     /* Validate and copy path from userspace */
     if (!valid_user_pointer(user_path, 1)) {
@@ -532,6 +660,28 @@ int sys_exec(const char *user_path)
         len++;
     }
     kernel_path[sizeof(kernel_path) - 1] = '\0';
+    
+    /* Copy argv/envp into kernel scratch BEFORE the old image is freed
+     * (the caller's argv/envp arrays live in that old image). */
+    if (copy_exec_strings(user_argv, &argv) < 0) {
+        printk("[EXEC] Bad argv pointer\n");
+        return -1;
+    }
+    if (copy_exec_strings(user_envp, &envp) < 0) {
+        printk("[EXEC] Bad envp pointer\n");
+        return -1;
+    }
+    
+    /* Default argv: {path} when none was supplied */
+    if (argv.count == 0) {
+        uint32_t plen = strlen(kernel_path) + 1;
+        if (plen > EXEC_MAX_DATA)
+            return -1;
+        strcpy(argv.data, kernel_path);
+        argv.ptrs[0] = argv.data;
+        argv.count = 1;
+        argv.data_len = plen;
+    }
     
     /* Open the executable file */
     int fd = fs_open(kernel_path, O_RDONLY);
@@ -665,19 +815,19 @@ int sys_exec(const char *user_path)
         vma_insert(task, code_vma);
     }
     
-    /* Allocate new user stack (1 page) */
-    void *stack_page = page_alloc(PAGE_SIZE);
-    if (!stack_page) {
-        printk("[EXEC] Failed to allocate stack page\n");
+    /* Allocate new user stack (2 pages: [0xBFFFE000, 0xC0000000)).
+     * The top page holds the argc/argv/envp block; the lower page gives
+     * the new program immediate stack room before demand-paging grows. */
+    void *stack_pages = page_alloc(2 * PAGE_SIZE);
+    if (!stack_pages) {
+        printk("[EXEC] Failed to allocate stack pages\n");
         return -1;
     }
     
-    /* Map stack at top of user space */
-    uint32_t stack_vaddr = USER_STACK_TOP - PAGE_SIZE;
-    uint32_t stack_phys = VIRT_TO_PHYS((uint32_t)stack_page);
+    uint32_t stack_vaddr = USER_STACK_TOP - 2 * PAGE_SIZE;
+    uint32_t stack_phys = VIRT_TO_PHYS((uint32_t)stack_pages);
     
     uint32_t pdi = stack_vaddr >> 22;
-    uint32_t pti = (stack_vaddr >> 12) & 0x3FF;
     
     if (!task->mm.page_tables[pdi]) {
         uint32_t *pt = (uint32_t *)page_alloc(PAGE_SIZE);
@@ -693,7 +843,8 @@ int sys_exec(const char *user_path)
     }
     
     uint32_t *pt = task->mm.page_tables[pdi];
-    pt[pti] = stack_phys | 0x7;
+    pt[(stack_vaddr >> 12) & 0x3FF] = stack_phys | 0x7;
+    pt[((stack_vaddr + PAGE_SIZE) >> 12) & 0x3FF] = (stack_phys + PAGE_SIZE) | 0x7;
     
     /* Create stack VMA */
     vma_t *stack_vma = vma_create(task->mm.stack_start, task->mm.stack_end,
@@ -702,18 +853,16 @@ int sys_exec(const char *user_path)
         vma_insert(task, stack_vma);
     }
     
-    /* Set up registers for returning to userspace at new entry point
-     * We need to modify the saved register state on the kernel stack
-     * so that when we return from this syscall, we jump to the new program */
+    /* Build the argc/argv/envp block on the new stack and jump to userspace */
+    uint32_t user_esp;
+    if (setup_initial_stack(stack_pages, stack_vaddr, &argv, &envp,
+                            &user_esp) < 0) {
+        printk("[EXEC] Initial stack too small for argv/envp\n");
+        return -1;
+    }
     
-    /* The syscall was invoked via int 0x80, which pushed an IRET frame.
-     * We need to find and modify the EIP and ESP in that frame. */
-    
-    /* Current kernel stack has the syscall frame. We can't easily access it,
-     * so we'll use a different approach: set up a new IRET frame and
-     * use it to jump to the new program.
-     * 
-     * We'll modify the return path by directly manipulating the stack. */
+    printk("[EXEC] pid %u -> %s (argc=%u, envc=%u, user_esp=0x%08x)\n",
+           task->pid, kernel_path, argv.count, envp.count, user_esp);
     
     extern void enter_userspace(uint32_t cr3, uint32_t entry, uint32_t user_esp);
     
@@ -721,8 +870,81 @@ int sys_exec(const char *user_path)
     uint32_t cr3 = VIRT_TO_PHYS((uint32_t)&task->mm.pgdir[0]);
     
     /* This will never return - it directly jumps to userspace */
-    enter_userspace(cr3, USER_TEXT_START, USER_STACK_TOP - 4);
+    enter_userspace(cr3, USER_TEXT_START, user_esp);
     
     /* Should never reach here */
     return -1;
+}
+
+/* ============================================================================
+ * Exec family wrappers
+ * ============================================================================ */
+
+int sys_exec(const char *user_path)
+{
+    return do_exec(user_path, NULL, NULL);
+}
+
+int sys_execv(const char *user_path, char **user_argv)
+{
+    return do_exec(user_path, user_argv, NULL);
+}
+
+int sys_execve(const char *user_path, char **user_argv, char **user_envp)
+{
+    return do_exec(user_path, user_argv, user_envp);
+}
+
+/* ============================================================================
+ * Working directory
+ * ============================================================================ */
+
+int sys_chdir(const char *user_path)
+{
+    char kernel_path[256];
+    
+    if (!user_path || !valid_user_pointer(user_path, 1)) {
+        printk("[CHDIR] Invalid path pointer\n");
+        return -1;
+    }
+    
+    size_t len = 0;
+    while (len < sizeof(kernel_path) - 1) {
+        if (copy_from_user(&kernel_path[len], &user_path[len], 1) < 0)
+            return -1;
+        if (kernel_path[len] == '\0')
+            break;
+        len++;
+    }
+    kernel_path[sizeof(kernel_path) - 1] = '\0';
+    
+    return fs_chdir(kernel_path);
+}
+
+/* ============================================================================
+ * Directory reading (getdents)
+ * ============================================================================ */
+
+int sys_getdents(int fd, dirent_t *user_buf, unsigned int count)
+{
+    if (!user_buf || count == 0)
+        return 0;
+    
+    /* Range-check the whole destination buffer */
+    if (!valid_user_pointer(user_buf, sizeof(dirent_t) * count))
+        return -1;
+    
+    unsigned int n = 0;
+    for (unsigned int i = 0; i < count; i++) {
+        dirent_t de;
+        int r = fs_readdir(fd, &de);
+        if (r == 0)
+            break;               /* end of directory */
+        if (r < 0)
+            return (n > 0) ? (int)n : -1;
+        if (copy_to_user(&user_buf[i], &de, sizeof(dirent_t)) < 0)
+            return -1;
+        n++;
+    }
+    return (int)n;
 }

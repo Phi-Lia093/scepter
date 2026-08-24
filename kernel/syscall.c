@@ -716,8 +716,20 @@ int syscall_handler(registers_t *regs, int num, uint32_t arg1, uint32_t arg2,
         case SYS_WAIT4:
             return sys_wait((int *)arg1);
         
-        case SYS_EXECVE:
+        case SYS_EXEC:
             return sys_exec((const char *)arg1);
+        
+        case SYS_EXECV:
+            return sys_execv((const char *)arg1, (char **)arg2);
+        
+        case SYS_EXECVE:
+            return sys_execve((const char *)arg1, (char **)arg2, (char **)arg3);
+        
+        case SYS_CHDIR:
+            return sys_chdir((const char *)arg1);
+        
+        case SYS_GETDENTS:
+            return sys_getdents((int)arg1, (dirent_t *)arg2, (unsigned int)arg3);
         
         case SYS_MMAP:
             return sys_mmap(arg1, (size_t)arg2, (int)arg3, 

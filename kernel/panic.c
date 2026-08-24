@@ -1,5 +1,6 @@
 #include "kernel/panic.h"
 #include "mm/pagefault.h"
+#include "kernel/sched.h"
 #include "lib/printk.h"
 #include "kernel/asm.h"
 #include <stdint.h>
@@ -84,19 +85,25 @@ void panic_isr(regs_t *r)
     /* Special handling for page faults (exception 14) */
     if (r->int_no == 14) {
         uint32_t fault_addr = read_cr2();
-        printk("\n[PAGEFAULT] INT14 cr2=0x%08x err=0x%x EIP=0x%08x CS=0x%x\n",
-               fault_addr, r->err_code, r->eip, r->cs);
-        printk("[PAGEFAULT] EAX=%08x EBX=%08x ECX=%08x EDX=%08x\n",
-               r->eax, r->ebx, r->ecx, r->edx);
-        printk("[PAGEFAULT] ESI=%08x EDI=%08x EBP=%08x\n",
-               r->esi, r->edi, r->ebp);
-        printk("[PAGEFAULT] esp_dummy=%08x\n", r->esp_dummy);
-        {
-            uint32_t *sp = (uint32_t *)r->esp_dummy;
-            for (int i = 0; i < 40; i++) {
-                if ((uint32_t)sp < 0xC0000000U) break;  /* sanity */
-                printk("[PAGEFAULT]   [%08x] %08x\n",
-                       (uint32_t)(sp + i), sp[i]);
+        /* Verbose register/stack dump only for KERNEL faults (which panic).
+         * User-space faults are normal demand-paging; the handler prints
+         * its own diagnostics only on error. */
+        if (!(r->err_code & 0x4)) {
+            extern task_struct_t *current;
+            printk("\n[PAGEFAULT] INT14 cr2=0x%08x err=0x%x EIP=0x%08x CS=0x%x pid=%u\n",
+                   fault_addr, r->err_code, r->eip, r->cs, current ? current->pid : 0xffffffffu);
+            printk("[PAGEFAULT] EAX=%08x EBX=%08x ECX=%08x EDX=%08x\n",
+                   r->eax, r->ebx, r->ecx, r->edx);
+            printk("[PAGEFAULT] ESI=%08x EDI=%08x EBP=%08x\n",
+                   r->esi, r->edi, r->ebp);
+            printk("[PAGEFAULT] esp_dummy=%08x\n", r->esp_dummy);
+            {
+                uint32_t *sp = (uint32_t *)r->esp_dummy;
+                for (int i = 0; i < 40; i++) {
+                    if ((uint32_t)sp < 0xC0000000U) break;  /* sanity */
+                    printk("[PAGEFAULT]   [%08x] %08x\n",
+                           (uint32_t)(sp + i), sp[i]);
+                }
             }
         }
         page_fault_handler(r->err_code, fault_addr);

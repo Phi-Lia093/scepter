@@ -5,6 +5,7 @@
 #include "kernel/exec.h"
 #include "kernel/sched.h"
 #include "kernel/cpu.h"
+#include "kernel/process.h"
 #include "mm/pgtable.h"
 #include "mm/buddy.h"
 #include "mm/mm.h"
@@ -153,20 +154,48 @@ int spawn_init(const char *path)
     task->mm.brk_start = (task->mm.code_end + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
     task->mm.brk_end = task->mm.brk_start;
     
-    /* Allocate user stack (1 page for now) */
-    void *stack_page = page_alloc(PAGE_SIZE);
-    if (!stack_page) {
-        printk("[SPAWN] Failed to allocate stack page\n");
+    /* Allocate user stack (2 pages: [0xBFFFE000, 0xC0000000)) */
+    void *stack_pages = page_alloc(2 * PAGE_SIZE);
+    if (!stack_pages) {
+        printk("[SPAWN] Failed to allocate stack pages\n");
         free_task(task);
         return -1;
     }
     
     /* Map stack at top of user space (just below kernel at 0xC0000000) */
-    uint32_t stack_vaddr = USER_STACK_TOP - PAGE_SIZE;
-    uint32_t stack_phys = VIRT_TO_PHYS((uint32_t)stack_page);
+    uint32_t stack_vaddr = USER_STACK_TOP - 2 * PAGE_SIZE;
+    uint32_t stack_phys = VIRT_TO_PHYS((uint32_t)stack_pages);
     
-    if (map_user_page(task, stack_vaddr, stack_phys, 0x7) < 0) {
-        printk("[SPAWN] Failed to map stack page\n");
+    if (map_user_page(task, stack_vaddr, stack_phys, 0x7) < 0 ||
+        map_user_page(task, stack_vaddr + PAGE_SIZE,
+                      stack_phys + PAGE_SIZE, 0x7) < 0) {
+        printk("[SPAWN] Failed to map stack pages\n");
+        free_task(task);
+        return -1;
+    }
+    
+    /* Build the argc/argv/envp block for init: argv={"init"},
+     * envp={"PATH=/bin","HOME=/",NULL}. */
+    exec_strings_t argv = { 0 };
+    exec_strings_t envp = { 0 };
+    strcpy(argv.data, "init");
+    argv.ptrs[0] = argv.data;
+    argv.count = 1;
+    argv.data_len = 5;
+    
+    strcpy(envp.data, "PATH=/bin");
+    envp.ptrs[0] = envp.data;
+    envp.count = 1;
+    envp.data_len = 10;
+    strcpy(envp.data + envp.data_len, "HOME=/");
+    envp.ptrs[1] = envp.data + envp.data_len;
+    envp.count = 2;
+    envp.data_len += 7;
+    
+    uint32_t user_esp = USER_STACK_TOP - 4;
+    if (setup_initial_stack(stack_pages, stack_vaddr, &argv, &envp,
+                            &user_esp) < 0) {
+        printk("[SPAWN] Failed to build initial stack\n");
         free_task(task);
         return -1;
     }
@@ -213,7 +242,7 @@ int spawn_init(const char *path)
     
     /* IRET frame (highest address = pushed first) */
     kstack--; *kstack = 0x23;            /* SS            ESP+56 */
-    kstack--; *kstack = USER_STACK_TOP - 4;  /* user ESP      ESP+52 (0xBFFFFFFC, within mapped page) */
+    kstack--; *kstack = user_esp;        /* user ESP      ESP+52 */
     kstack--; *kstack = 0x202;           /* EFLAGS (iret) ESP+48 */
     kstack--; *kstack = 0x1B;            /* CS            ESP+44 */
     kstack--; *kstack = USER_TEXT_START; /* EIP           ESP+40 */
@@ -241,7 +270,7 @@ int spawn_init(const char *path)
     
     /* Set TSS.esp0 to top of kernel stack (for ring3→ring0 transitions) */
     extern tss_entry_t tss;
-    tss.esp0 = task->kernel_stack + 8192;
+    tss.esp0 = task->kernel_stack + KERNEL_STACK_SIZE;
     
     /* Add to scheduler */
     task->state = TASK_READY;
