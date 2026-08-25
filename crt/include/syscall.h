@@ -1,120 +1,62 @@
 /* ============================================================================
- * System Call Interface Header
+ * System Call Interface - ABI numbers + user-facing surface
+ *
+ * The syscall NUMBERS must stay in sync with kernel/include/kernel/syscall.h.
+ * The user-facing declarations live in unistd.h / fcntl.h / etc.; including
+ * this header pulls them in for backward compatibility.
  * ============================================================================ */
 
-#ifndef SYSCALL_H
-#define SYSCALL_H
+#ifndef _CRT_SYSCALL_H
+#define _CRT_SYSCALL_H
 
-/* Standard file descriptors */
+/* Syscall numbers (Linux-compatible subset) */
+#define SYS_EXIT   1
+#define SYS_FORK   2
+#define SYS_READ   3
+#define SYS_WRITE  4
+#define SYS_OPEN   5
+#define SYS_CLOSE  6
+#define SYS_WAIT4  7
+#define SYS_EXEC   10   /* exec(path) - no args               */
+#define SYS_EXECVE 11   /* execve(path, argv, envp)           */
+#define SYS_CHDIR  12   /* Change working directory           */
+#define SYS_EXECV  13   /* execv(path, argv) - no envp        */
+#define SYS_LSEEK  19
+#define SYS_GETPID 20
+#define SYS_NICE   34
+#define SYS_NANOSLEEP 35
+#define SYS_KILL   37
+#define SYS_RENAME 38
+#define SYS_MKDIR  39
+#define SYS_RMDIR  40
+#define SYS_DUP    41
+#define SYS_PIPE   42
+#define SYS_BRK    45
+#define SYS_SIGNAL 48
+#define SYS_IOCTL  54
+#define SYS_DUP2   63
+#define SYS_GETPPID 64
+#define SYS_GETTIMEOFDAY 78
+#define SYS_MMAP   90
+#define SYS_MUNMAP 91
+#define SYS_TRUNCATE 92
+#define SYS_STAT   106
+#define SYS_FSTAT  108
+#define SYS_SIGRETURN 119
+#define SYS_UNAME  122
+#define SYS_UNLINK 137
+#define SYS_GETDENTS 141
+#define SYS_GETCWD 183
+#define SYS_ACCESS 33
+
+/* Standard file descriptors (compat) */
+#ifndef STDIN_FILENO
 #define STDIN_FILENO  0
 #define STDOUT_FILENO 1
 #define STDERR_FILENO 2
+#endif
 
-/* Open flags */
-#define O_RDONLY 0
-#define O_WRONLY 1
-#define O_RDWR   2
+#include "unistd.h"
+#include "fcntl.h"
 
-/* ============================================================================
- * System call function declarations
- * ============================================================================ */
-
-/**
- * exit - Terminate the calling process
- * @status: Exit status code
- * 
- * This function never returns.
- */
-void exit(int status) __attribute__((noreturn));
-
-/**
- * fork - Create a child process
- * 
- * Returns: Child PID in parent, 0 in child, -1 on error
- */
-int fork(void);
-
-/**
- * wait - Wait for child process to exit
- * @status: Pointer to store child exit status (can be NULL)
- * 
- * Returns: Child PID on success, -1 on error
- */
-int wait(int *status);
-
-/**
- * open - Open a file
- * @path: Path to file
- * @flags: Open flags (O_RDONLY, O_WRONLY, O_RDWR)
- * 
- * Returns: File descriptor on success, -1 on error
- */
-int open(const char *path, int flags);
-
-/**
- * read - Read from file descriptor
- * @fd: File descriptor
- * @buf: Buffer to read into
- * @count: Number of bytes to read
- * 
- * Returns: Bytes read on success, -1 on error
- */
-int read(int fd, void *buf, unsigned int count);
-
-/**
- * write - Write to file descriptor
- * @fd: File descriptor
- * @buf: Buffer to write from
- * @count: Number of bytes to write
- * 
- * Returns: Bytes written on success, -1 on error
- */
-int write(int fd, const void *buf, unsigned int count);
-
-/**
- * close - Close file descriptor
- * @fd: File descriptor
- * 
- * Returns: 0 on success, -1 on error
- */
-int close(int fd);
-
-/**
- * exec - Replace current process with new program
- * @path: Path to executable file
- * 
- * Returns: -1 on error (does not return on success)
- */
-int exec(const char *path);
-
-/**
- * ioctl - Device-specific I/O control operations
- * @fd: File descriptor
- * @cmd: Control command
- * @arg: Command argument (device-specific)
- * 
- * Returns: 0 on success, device-specific value, or -1 on error
- */
-int ioctl(int fd, unsigned int cmd, unsigned int arg);
-
-/**
- * dup - Duplicate a file descriptor
- * @oldfd: File descriptor to duplicate
- * 
- * Returns: New file descriptor on success, -1 on error
- */
-int dup(int oldfd);
-
-/**
- * dup2 - Duplicate file descriptor to specific number
- * @oldfd: File descriptor to duplicate
- * @newfd: Desired file descriptor number
- * 
- * Returns: newfd on success, -1 on error
- */
-int dup2(int oldfd, int newfd);
-
-/* ioctl commands for /dev/tty */
-#define IOCTL_TTY_CLEAR  1    /* Clear screen and reset cursor */
-
-#endif /* SYSCALL_H */
+#endif /* _CRT_SYSCALL_H */

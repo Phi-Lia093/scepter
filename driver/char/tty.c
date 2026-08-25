@@ -286,7 +286,7 @@ int tty_get_foreground(void)
     return tty_foreground_pid;
 }
 
-static char tty_read(int scnd_id)
+static int tty_read(int scnd_id)
 {
     (void)scnd_id;
     /* Forward to the keyboard (char dev 3). The keyboard is a blocking

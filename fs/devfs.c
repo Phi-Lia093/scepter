@@ -4,6 +4,7 @@
 #include "mm/slab.h"
 #include "lib/string.h"
 #include "lib/printk.h"
+#include "errno.h"
 #include <stdint.h>
 #include <stddef.h>
 
@@ -178,10 +179,14 @@ static int devfs_read(void *file_private, void *buf, size_t count)
     if (node->type == DT_CHRDEV) {
         /* Read count characters one at a time.
          * char_read_block blocks on devices that enabled blocking reads
-         * (the keyboard), so an interactive process can wait for input. */
+         * (the keyboard), so an interactive process can wait for input.
+         * It returns -EINTR when a signal interrupts the blocked read. */
         char *cbuf = (char *)buf;
         for (size_t i = 0; i < count; i++) {
-            cbuf[i] = char_read_block(node->dev_id, node->minor);
+            int c = char_read_block(node->dev_id, node->minor);
+            if (c < 0)
+                return (int)i > 0 ? (int)i : c;   /* -EINTR */
+            cbuf[i] = (char)c;
         }
         return (int)count;
     }

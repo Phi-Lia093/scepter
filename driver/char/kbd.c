@@ -159,6 +159,9 @@ void kbd_isr(void)
         if (ascii == 3 && tty_get_foreground() > 0) {
             extern int send_signal(uint32_t pid, int signum);
             send_signal((uint32_t)tty_get_foreground(), SIGINT);
+            /* Wake any process blocked in read() so it can notice the
+             * pending SIGINT (char_read_block returns -EINTR). */
+            char_wakeup(3);
         } else {
             kbd_buffer_push(ascii);
         }
@@ -172,7 +175,7 @@ void kbd_isr(void)
  * Driver callbacks
  * ========================================================================= */
 
-static char kbd_read(int scnd_id)
+static int kbd_read(int scnd_id)
 {
     if (scnd_id != 0) return 0;
     return kbd_buffer_pop();

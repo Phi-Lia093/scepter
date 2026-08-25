@@ -150,7 +150,7 @@ uint32_t rtc_get_boot_unix_time(void)
  * Driver Callbacks (stub implementations)
  * ========================================================================= */
 
-static char rtc_read(int scnd_id)
+static int rtc_read(int scnd_id)
 {
     (void)scnd_id;
     rtc_time_t time;

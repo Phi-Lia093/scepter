@@ -170,6 +170,10 @@ static int minix3_vfs_open(void *fs_private, const char *path, int flags,
         file->dirty = 1;  /* Mark inode as dirty */
     }
     
+    /* Handle O_APPEND - start every write at the end of the file */
+    if (flags & O_APPEND)
+        file->offset = file->inode.i_size;
+    
     *file_private = file;
     return 0;
 }

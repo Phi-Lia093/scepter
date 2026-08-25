@@ -4,6 +4,7 @@
 #include "driver/char/pit.h"
 #include "driver/char/kbd.h"
 #include "kernel/sched.h"
+#include "errno.h"
 #include <stdint.h>
 #include <stddef.h>
 
@@ -68,7 +69,7 @@ int register_char_device(int prim_id, char_ops_t *ops)
  * Public API – I/O
  * ========================================================================= */
 
-char cread(int prim_id, int scnd_id)
+int cread(int prim_id, int scnd_id)
 {
     char_device_t *dev = find_char_device(prim_id);
     if (!dev || !dev->ops.read)
@@ -76,7 +77,7 @@ char cread(int prim_id, int scnd_id)
     return dev->ops.read(scnd_id);
 }
 
-char char_read_block(int prim_id, int scnd_id)
+int char_read_block(int prim_id, int scnd_id)
 {
     char_device_t *dev = find_char_device(prim_id);
     if (!dev || !dev->ops.read)
@@ -85,13 +86,16 @@ char char_read_block(int prim_id, int scnd_id)
     /* Loop until a character is available. For blocking devices this
      * sleeps on the device's wait queue; the driver wakes us (e.g. the
      * keyboard IRQ) when data arrives. Must run with IF=0 (syscall
-     * context) so the empty-check → sleep sequence has no missed wakeup. */
+     * context) so the empty-check → sleep sequence has no missed wakeup.
+     * A pending signal (e.g. Ctrl-C) aborts the read with -EINTR. */
     while (1) {
-        char c = dev->ops.read(scnd_id);
+        int c = dev->ops.read(scnd_id);
         if (c)
             return c;
         if (!dev->block_read)
             return 0;   /* non-blocking device: report empty */
+        if (current->pending)
+            return -EINTR;
         sleep_on(&dev->read_wq);
     }
 }

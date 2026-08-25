@@ -45,7 +45,7 @@ void pit_isr(void)
  * Driver callbacks
  * ========================================================================= */
 
-static char pit_read(int scnd_id)
+static int pit_read(int scnd_id)
 {
     (void)scnd_id;
     return (char)(pit_ticks & 0xFF);

@@ -62,6 +62,15 @@ typedef struct registers {
 #define SYS_KILL    37  /* Send a signal to a process */
 #define SYS_SIGRETURN 119 /* Return from a signal handler */
 #define SYS_NICE    34  /* Adjust the calling process's priority */
+#define SYS_ACCESS 33   /* Check file accessibility (stat-based) */
+#define SYS_UNAME  122  /* Get system name information */
+
+/* =========================================================================
+ * waitpid() options
+ * ========================================================================= */
+
+#define WNOHANG   1
+#define WUNTRACED 2
 
 /* =========================================================================
  * Time Structures

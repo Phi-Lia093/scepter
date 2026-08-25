@@ -125,7 +125,7 @@ void vga_putchar(char c)
  * Driver callbacks
  * ========================================================================= */
 
-static char vga_read(int scnd_id)
+static int vga_read(int scnd_id)
 {
     (void)scnd_id;
     return 0;

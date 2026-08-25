@@ -14,7 +14,7 @@ typedef int (*ioctl_fn)(int prim_id, int scnd_id, unsigned int command, uint32_t
 /* =========================================================================
  * Character device callback types
  * ========================================================================= */
-typedef char (*char_read_fn)(int scnd_id);
+typedef int  (*char_read_fn)(int scnd_id);
 typedef int  (*char_write_fn)(int scnd_id, char c);
 
 typedef struct {
@@ -31,15 +31,16 @@ typedef struct {
 int  register_char_device(int prim_id, char_ops_t *ops);
 
 /** Read one character from char device prim_id. Returns 0 on error. */
-char cread(int prim_id, int scnd_id);
+int cread(int prim_id, int scnd_id);
 
 /**
  * Read one character from char device prim_id, blocking until data arrives.
  * Only blocks for devices that enabled blocking via char_set_blocking();
  * for all other devices this behaves exactly like cread().
- * Returns 0 if the device is absent / has no read callback.
+ * Returns 0 if the device is absent / has no read callback,
+ * and -EINTR if a signal is pending (the caller should retry or abort).
  */
-char char_read_block(int prim_id, int scnd_id);
+int char_read_block(int prim_id, int scnd_id);
 
 /**
  * Wake all processes blocked in char_read_block() on the given device.

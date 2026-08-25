@@ -14,6 +14,7 @@
 #include "fs/fs.h"
 #include "driver/char/pit.h"
 #include "lib/printk.h"
+#include "errno.h"
 #include "lib/string.h"
 
 /* ============================================================================
@@ -32,8 +33,14 @@ void do_exit(int status)
 {
     task_struct_t *task = current;
     
-    /* Store exit code */
-    task->exit_code = status;
+    /* Encode the wait status (POSIX layout):
+     *   - normal exit(code)          -> (code & 0xff) << 8
+     *   - signal death (128+sig in)  -> sig in the low 7 bits
+     * Signal numbers are all < 32, so 128+sig is in [129,159]. */
+    if (status >= 128)
+        task->exit_code = (status - 128) & 0x7f;
+    else
+        task->exit_code = (status & 0xff) << 8;
     
     /* Declare loop variables once for all uses */
     list_head_t *pos, *tmp;
@@ -176,7 +183,7 @@ int sys_fork(registers_t *regs)
     /* Allocate new task structure */
     task_struct_t *child = alloc_task();
     if (!child) {
-        return -1;
+        return -ENOMEM;
     }
     
     /* Copy basic fields */
@@ -406,61 +413,54 @@ int sys_fork(registers_t *regs)
  */
 int sys_wait4(int pid, int *status_ptr, int options, void *rusage)
 {
-    (void)options;
-    (void)rusage;
     task_struct_t *parent = current;
 
-    while (1) {
-        /* Look for a matching zombie child */
-        list_head_t *pos, *tmp;
-        int found_live_child = 0;
+    /* Scan children once: reap a matching zombie, or note a live child. */
+    int found_live_child = 0;
 
-        list_for_each_safe(pos, tmp, &parent->children) {
-            task_struct_t *child = list_entry(pos, task_struct_t, sibling);
+    list_head_t *pos, *tmp;
+    list_for_each_safe(pos, tmp, &parent->children) {
+        task_struct_t *child = list_entry(pos, task_struct_t, sibling);
 
-            if (pid > 0 && child->pid != (uint32_t)pid)
-                continue;   /* not the requested child */
+        if (pid > 0 && child->pid != (uint32_t)pid)
+            continue;   /* not the requested child */
 
-            if (child->state == TASK_ZOMBIE) {
-                /* Found a matching zombie! */
-                int cpid = child->pid;
-                int status = child->exit_code;
+        if (child->state == TASK_ZOMBIE) {
+            /* Found a matching zombie! */
+            int cpid = (int)child->pid;
+            int status = child->exit_code;
 
-                /* Return status to user if requested */
-                if (status_ptr) {
-                    if (copy_to_user(status_ptr, &status, sizeof(status)) < 0) {
-                        printk("[PROCESS] Wait: bad status pointer 0x%08x\n",
-                               (uint32_t)status_ptr);
-                    }
-                }
-
-                /* Remove from children list */
-                list_del(&child->sibling);
-
-                /* Remove from scheduler and free task */
-                remove_task(child);
-                free_task(child);
-
-                return cpid;
+            /* Return status to user if requested */
+            if (status_ptr) {
+                if (copy_to_user(status_ptr, &status, sizeof(status)) < 0)
+                    return -EFAULT;
             }
 
-            found_live_child = 1;
+            /* Remove from children list */
+            list_del(&child->sibling);
+
+            /* Remove from scheduler and free task */
+            remove_task(child);
+            free_task(child);
+
+            return cpid;
         }
 
-        /* No matching zombie. If there is no matching child at all,
-         * fail with ECHILD (no such child). */
-        if (!found_live_child && pid > 0) {
-            return -1;
-        }
-        if (!found_live_child && list_empty(&parent->children)) {
-            return -1;
-        }
-
-        /* Matching children exist but none are zombies yet - block. */
-        sleep_on(&parent->wait);  /* Sleep until a child exits */
-
-        /* When we wake up, loop again to check for zombies */
+        found_live_child = 1;
     }
+
+    /* No matching child at all: ECHILD. */
+    if (!found_live_child)
+        return -ECHILD;
+
+    /* WNOHANG: report "no state change" without blocking. */
+    if (options & WNOHANG)
+        return 0;
+
+    /* Matching children exist but none are zombies yet - block until a
+     * child exits (sys_exit wakes us).  Then re-scan. */
+    sleep_on(&parent->wait);
+    return sys_wait4(pid, status_ptr, options, rusage);
 }
 
 /* Backwards-compatible wait(): wait for any child. */
@@ -489,14 +489,14 @@ int sys_nanosleep(timespec_t *user_req, timespec_t *user_rem)
     /* Validate and copy the request from userspace */
     if (!user_req || !valid_user_pointer(user_req, sizeof(timespec_t))) {
         printk("[TIME] nanosleep: bad req pointer 0x%08x\n", (uint32_t)user_req);
-        return -1;
+        return -EFAULT;
     }
     if (copy_from_user(&req, user_req, sizeof(req)) < 0) {
-        return -1;
+        return -EFAULT;
     }
     if (req.tv_sec < 0 || req.tv_nsec < 0 || req.tv_nsec >= 1000000000L) {
         printk("[TIME] nanosleep: invalid time (%d, %d)\n", req.tv_sec, req.tv_nsec);
-        return -1;
+        return -EINVAL;
     }
     
     /* Convert to PIT ticks (100 Hz): 1 tick = 10 ms */
@@ -506,9 +506,12 @@ int sys_nanosleep(timespec_t *user_req, timespec_t *user_rem)
     uint32_t target = pit_get_ticks() + total_ticks;
     
     /* Sleep until the target tick. The timer IRQ (pit_isr) wakes us each
-     * tick; we re-check and go back to sleep until the deadline. */
+     * tick; we re-check and go back to sleep until the deadline.  A
+     * pending signal aborts the sleep with EINTR. */
     while (pit_get_ticks() < target) {
         sleep_on(&timer_wq);
+        if (current->pending)
+            return -EINTR;
     }
     
     /* Remaining time is zero (we slept the full requested duration) */
@@ -607,7 +610,9 @@ int setup_initial_stack(void *stack_pages, uint32_t stack_vaddr,
     uint32_t envp_len = envp ? envp->data_len : 0;
 
     uint32_t str_bytes = argv_len + envp_len;
-    uint32_t ptr_bytes = 4 * (argc + 1 + envc + 1);
+    /* Slots: argc + argv[0..argc-1] + argv-NULL + envp[0..envc-1] + envp-NULL
+     *       = 1 + argc + 1 + envc + 1 = argc + envc + 3 slots. */
+    uint32_t ptr_bytes = 4 * (argc + envc + 3);
 
     /* Must fit inside the 8KB (2-page) stack mapping */
     if (str_bytes + ptr_bytes + 16 > 8192)
@@ -669,13 +674,13 @@ static int do_exec(const char *user_path, char **user_argv, char **user_envp)
     /* Validate and copy path from userspace */
     if (!valid_user_pointer(user_path, 1)) {
         printk("[EXEC] Invalid path pointer\n");
-        return -1;
+        return -EFAULT;
     }
     
     size_t len = 0;
     while (len < sizeof(kernel_path) - 1) {
         if (copy_from_user(&kernel_path[len], &user_path[len], 1) < 0) {
-            return -1;
+            return -EFAULT;
         }
         if (kernel_path[len] == '\0') {
             break;
@@ -701,18 +706,18 @@ static int do_exec(const char *user_path, char **user_argv, char **user_envp)
      * (the caller's argv/envp arrays live in that old image). */
     if (copy_exec_strings(user_argv, &argv) < 0) {
         printk("[EXEC] Bad argv pointer\n");
-        return -1;
+        return -EFAULT;
     }
     if (copy_exec_strings(user_envp, &envp) < 0) {
         printk("[EXEC] Bad envp pointer\n");
-        return -1;
+        return -EFAULT;
     }
     
     /* Default argv: {path} when none was supplied */
     if (argv.count == 0) {
         uint32_t plen = strlen(kernel_path) + 1;
         if (plen > EXEC_MAX_DATA)
-            return -1;
+            return -E2BIG;
         strcpy(argv.data, kernel_path);
         argv.ptrs[0] = argv.data;
         argv.count = 1;
@@ -723,7 +728,7 @@ static int do_exec(const char *user_path, char **user_argv, char **user_envp)
     int fd = fs_open(kernel_path, O_RDONLY);
     if (fd < 0) {
         printk("[EXEC] Failed to open file\n");
-        return -1;
+        return -ENOENT;
     }
     
     /* Get file size */
@@ -731,7 +736,7 @@ static int do_exec(const char *user_path, char **user_argv, char **user_envp)
     if (file_size_tmp <= 0) {
         printk("[EXEC] Invalid file size: %d\n", file_size_tmp);
         fs_close(fd);
-        return -1;
+        return -ENOEXEC;
     }
     fs_seek(fd, 0, SEEK_SET);
     uint32_t file_size = (uint32_t)file_size_tmp;
@@ -796,7 +801,7 @@ static int do_exec(const char *user_path, char **user_argv, char **user_envp)
         if (!page_virt) {
             printk("[EXEC] Failed to allocate page\n");
             fs_close(fd);
-            return -1;
+            return -ENOMEM;
         }
         
         /* Read binary data into page */
@@ -832,7 +837,7 @@ static int do_exec(const char *user_path, char **user_argv, char **user_envp)
             if (!pt) {
                 printk("[EXEC] Failed to allocate page table\n");
                 fs_close(fd);
-                return -1;
+                return -ENOMEM;
             }
             memset(pt, 0, PAGE_SIZE);
             task->mm.page_tables[pdi] = pt;
@@ -864,7 +869,7 @@ static int do_exec(const char *user_path, char **user_argv, char **user_envp)
     void *stack_pages = page_alloc(2 * PAGE_SIZE);
     if (!stack_pages) {
         printk("[EXEC] Failed to allocate stack pages\n");
-        return -1;
+        return -ENOMEM;
     }
     
     uint32_t stack_vaddr = USER_STACK_TOP - 2 * PAGE_SIZE;
@@ -876,7 +881,7 @@ static int do_exec(const char *user_path, char **user_argv, char **user_envp)
         uint32_t *pt = (uint32_t *)page_alloc(PAGE_SIZE);
         if (!pt) {
             printk("[EXEC] Failed to allocate stack page table\n");
-            return -1;
+            return -ENOMEM;
         }
         memset(pt, 0, PAGE_SIZE);
         task->mm.page_tables[pdi] = pt;
@@ -901,7 +906,7 @@ static int do_exec(const char *user_path, char **user_argv, char **user_envp)
     if (setup_initial_stack(stack_pages, stack_vaddr, &argv, &envp,
                             &user_esp) < 0) {
         printk("[EXEC] Initial stack too small for argv/envp\n");
-        return -1;
+        return -E2BIG;
     }
     
     extern void enter_userspace(uint32_t cr3, uint32_t entry, uint32_t user_esp);
@@ -972,7 +977,7 @@ int sys_getdents(int fd, dirent_t *user_buf, unsigned int count)
     
     /* Range-check the whole destination buffer */
     if (!valid_user_pointer(user_buf, sizeof(dirent_t) * count))
-        return -1;
+        return -EFAULT;
     
     unsigned int n = 0;
     for (unsigned int i = 0; i < count; i++) {
@@ -981,9 +986,9 @@ int sys_getdents(int fd, dirent_t *user_buf, unsigned int count)
         if (r == 0)
             break;               /* end of directory */
         if (r < 0)
-            return (n > 0) ? (int)n : -1;
+            return (n > 0) ? (int)n : -EBADF;
         if (copy_to_user(&user_buf[i], &de, sizeof(dirent_t)) < 0)
-            return -1;
+            return -EFAULT;
         n++;
     }
     return (int)n;

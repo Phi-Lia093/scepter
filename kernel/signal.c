@@ -20,6 +20,7 @@
 #include "kernel/sched.h"
 #include "kernel/process.h"
 #include "lib/printk.h"
+#include "errno.h"
 #include "lib/string.h"
 
 /* Signals whose default action is to terminate the task. */
@@ -52,10 +53,10 @@ static int sig_default_terminates(int sig)
 int sys_signal(int signum, uint32_t handler)
 {
     if (signum < 1 || signum >= NSIG)
-        return -1;
+        return -EINVAL;
     /* SIGKILL and SIGSTOP can never be caught or ignored */
     if (signum == SIGKILL || signum == SIGSTOP)
-        return -1;
+        return -EINVAL;
 
     task_struct_t *task = current;
     uint32_t old = task->sig_handlers[signum];
@@ -93,8 +94,10 @@ int send_signal(uint32_t pid, int signum)
 int sys_kill(int pid, int signum)
 {
     if (signum < 1 || signum >= NSIG)
-        return -1;
-    return send_signal((uint32_t)pid, signum);
+        return -EINVAL;
+    if (send_signal((uint32_t)pid, signum) < 0)
+        return -ESRCH;
+    return 0;
 }
 
 /**

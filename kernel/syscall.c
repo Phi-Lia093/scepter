@@ -12,6 +12,7 @@
 #include "driver/char/pit.h"
 #include "driver/char/rtc.h"
 #include "lib/printk.h"
+#include "errno.h"
 #include "lib/string.h"
 
 /* Kernel virtual memory starts at 3GB */
@@ -135,14 +136,14 @@ static int sys_open(const char *user_path, int flags)
     
     /* Validate path pointer (at least 1 byte) */
     if (!valid_user_pointer(user_path, 1)) {
-        return -1;
+        return -EFAULT;
     }
     
     /* Copy path string from userspace (with limit) */
     size_t len = 0;
     while (len < sizeof(kernel_path) - 1) {
         if (copy_from_user(&kernel_path[len], &user_path[len], 1) < 0) {
-            return -1;
+            return -EFAULT;
         }
         if (kernel_path[len] == '\0') {
             break;
@@ -152,7 +153,10 @@ static int sys_open(const char *user_path, int flags)
     kernel_path[sizeof(kernel_path) - 1] = '\0';
     
     /* Call kernel VFS */
-    return fs_open(kernel_path, flags);
+    int fd = fs_open(kernel_path, flags);
+    if (fd < 0)
+        return -ENOENT;
+    return fd;
 }
 
 /**
@@ -168,7 +172,7 @@ static int sys_write(int fd, const char *user_buf, size_t count)
     
     /* Validate buffer */
     if (!valid_user_pointer(user_buf, count)) {
-        return -1;
+        return -EFAULT;
     }
     
     
@@ -182,13 +186,13 @@ static int sys_write(int fd, const char *user_buf, size_t count)
         
         /* Copy chunk from userspace */
         if (copy_from_user(kernel_buf, user_buf + total_written, chunk) < 0) {
-            return total_written > 0 ? (int)total_written : -1;
+            return total_written > 0 ? (int)total_written : -EFAULT;
         }
         
         /* Write to VFS */
         int n = fs_write(fd, kernel_buf, chunk);
         if (n < 0) {
-            return total_written > 0 ? (int)total_written : -1;
+            return total_written > 0 ? (int)total_written : -EIO;
         }
         
         total_written += n;
@@ -215,7 +219,7 @@ static int sys_read(int fd, char *user_buf, size_t count)
     
     /* Validate buffer */
     if (!valid_user_pointer(user_buf, count)) {
-        return -1;
+        return -EFAULT;
     }
     
     /* Read in chunks */
@@ -229,7 +233,7 @@ static int sys_read(int fd, char *user_buf, size_t count)
         /* Read from VFS */
         int n = fs_read(fd, kernel_buf, chunk);
         if (n < 0) {
-            return total_read > 0 ? (int)total_read : -1;
+            return total_read > 0 ? (int)total_read : n;
         }
         if (n == 0) {
             break;  /* EOF */
@@ -237,7 +241,7 @@ static int sys_read(int fd, char *user_buf, size_t count)
         
         /* Copy to userspace */
         if (copy_to_user(user_buf + total_read, kernel_buf, n) < 0) {
-            return total_read > 0 ? (int)total_read : -1;
+            return total_read > 0 ? (int)total_read : -EFAULT;
         }
         
         total_read += n;
@@ -258,7 +262,9 @@ static int sys_read(int fd, char *user_buf, size_t count)
  */
 static int sys_close(int fd)
 {
-    return fs_close(fd);
+    if (fs_close(fd) < 0)
+        return -EBADF;
+    return 0;
 }
 
 /**
@@ -270,7 +276,10 @@ static int sys_close(int fd)
  */
 static int sys_ioctl(int fd, uint32_t cmd, uint32_t arg)
 {
-    return fs_ioctl(fd, cmd, arg);
+    int r = fs_ioctl(fd, cmd, arg);
+    if (r < 0)
+        return -ENOTTY;
+    return r;
 }
 
 /**
@@ -297,13 +306,13 @@ static int sys_dup(int oldfd)
     }
     
     if (!old_fde || !old_fde->file) {
-        return -1;
+        return -EBADF;
     }
     
     /* Allocate new fd_entry */
     fd_entry_t *new_fde = (fd_entry_t *)kalloc(sizeof(fd_entry_t));
     if (!new_fde) {
-        return -1;
+        return -ENOMEM;
     }
     
     /* New fd shares the same open_file */
@@ -332,7 +341,7 @@ static int sys_dup2(int oldfd, int newfd)
     
     /* Validate newfd range */
     if (newfd < 0 || newfd >= 1024) {
-        return -1;
+        return -EBADF;
     }
     
     /* If oldfd == newfd, just validate and return */
@@ -345,7 +354,7 @@ static int sys_dup2(int oldfd, int newfd)
                 return newfd;  /* Valid, return as-is */
             }
         }
-        return -1;
+        return -EBADF;
     }
     
     /* Find the old fd_entry */
@@ -360,7 +369,7 @@ static int sys_dup2(int oldfd, int newfd)
     }
     
     if (!old_fde || !old_fde->file) {
-        return -1;
+        return -EBADF;
     }
     
     /* Close newfd if it's already open */
@@ -383,7 +392,7 @@ static int sys_dup2(int oldfd, int newfd)
     /* Create new fd_entry for newfd */
     new_fde = (fd_entry_t *)kalloc(sizeof(fd_entry_t));
     if (!new_fde) {
-        return -1;
+        return -ENOMEM;
     }
     
     /* New fd shares the same open_file */
@@ -429,7 +438,10 @@ static int sys_getppid(void)
  */
 static int sys_lseek(int fd, int32_t offset, int whence)
 {
-    return fs_seek(fd, offset, whence);
+    int r = fs_seek(fd, offset, whence);
+    if (r < 0)
+        return -EINVAL;
+    return r;
 }
 
 /**
@@ -442,17 +454,17 @@ static int sys_getcwd(char *user_buf, size_t size)
 {
     /* Validate user buffer */
     if (!valid_user_pointer(user_buf, size)) {
-        return -1;
+        return -EFAULT;
     }
     
     /* Get current working directory from kernel */
     char *cwd = fs_getcwd(user_buf, size);
     if (!cwd) {
-        return -1;
+        return -ERANGE;
     }
     
-    /* fs_getcwd already wrote to user_buf, so we just return it */
-    return (int)user_buf;
+    /* fs_getcwd already wrote to user_buf; 0 signals success */
+    return 0;
 }
 
 /**
@@ -468,18 +480,18 @@ static int sys_stat(const char *user_path, stat_t *user_stat)
     
     /* Validate pointers */
     if (!valid_user_pointer(user_path, 1)) {
-        return -1;
+        return -EFAULT;
     }
     
     if (!valid_user_pointer(user_stat, sizeof(stat_t))) {
-        return -1;
+        return -EFAULT;
     }
     
     /* Copy path string from userspace */
     size_t len = 0;
     while (len < sizeof(kernel_path) - 1) {
         if (copy_from_user(&kernel_path[len], &user_path[len], 1) < 0) {
-            return -1;
+            return -EFAULT;
         }
         if (kernel_path[len] == '\0') {
             break;
@@ -490,12 +502,12 @@ static int sys_stat(const char *user_path, stat_t *user_stat)
     
     /* Call VFS stat */
     if (fs_stat(kernel_path, &kernel_stat) < 0) {
-        return -1;
+        return -ENOENT;
     }
     
     /* Copy result to userspace */
     if (copy_to_user(user_stat, &kernel_stat, sizeof(stat_t)) < 0) {
-        return -1;
+        return -EFAULT;
     }
     
     return 0;
@@ -510,15 +522,15 @@ static int sys_stat(const char *user_path, stat_t *user_stat)
 static int sys_fstat(int fd, stat_t *user_stat)
 {
     if (!user_stat || !valid_user_pointer(user_stat, sizeof(stat_t))) {
-        return -1;
+        return -EFAULT;
     }
 
     stat_t st;
     if (fs_fstat(fd, &st) < 0)
-        return -1;
+        return -EBADF;
 
     if (copy_to_user(user_stat, &st, sizeof(st)) < 0)
-        return -1;
+        return -EFAULT;
     return 0;
 }
 
@@ -538,12 +550,12 @@ static int sys_brk(uint32_t addr)
     
     /* Validate address is in heap region */
     if (addr < task->mm.brk_start) {
-        return -1;
+        return -ENOMEM;
     }
     
     /* Don't allow heap to grow into mmap region */
     if (addr >= task->mm.mmap_base) {
-        return -1;
+        return -ENOMEM;
     }
     
     /* Find or create heap VMA */
@@ -562,13 +574,13 @@ static int sys_brk(uint32_t addr)
         heap_vma = vma_create(task->mm.brk_start, addr, 
                               VM_READ | VM_WRITE, VMA_HEAP);
         if (!heap_vma) {
-            return -1;
+            return -ENOMEM;
         }
         vma_insert(task, heap_vma);
     } else {
         /* Expand existing heap VMA */
         if (vma_expand(heap_vma, addr) < 0) {
-            return -1;
+            return -ENOMEM;
         }
     }
     
@@ -597,22 +609,22 @@ static int sys_mmap(uint32_t addr, size_t length, int prot, int flags,
     
     /* Only support anonymous mapping for now */
     if (fd != -1 || offset != 0) {
-        return -1;
+        return -EINVAL;
     }
     
     if (!(flags & 0x20)) {  /* MAP_ANONYMOUS */
-        return -1;
+        return -EINVAL;
     }
     
     /* Validate length */
     if (length == 0) {
-        return -1;
+        return -EINVAL;
     }
     
     /* Find free region */
     uint32_t map_addr = vma_find_free_region(task, length, addr);
     if (map_addr == 0) {
-        return -1;
+        return -ENOMEM;
     }
     
     /* Convert prot flags to VMA flags */
@@ -624,7 +636,7 @@ static int sys_mmap(uint32_t addr, size_t length, int prot, int flags,
     /* Create VMA for mmap region */
     vma_t *vma = vma_create(map_addr, map_addr + length, vm_flags, VMA_MMAP);
     if (!vma) {
-        return -1;
+        return -ENOMEM;
     }
     
     vma_insert(task, vma);
@@ -664,7 +676,7 @@ static int sys_munmap(uint32_t addr, size_t length)
                 vma_remove(task, vma);
                 vma_destroy(vma);
             } else {
-                return -1;
+                return -EINVAL;
             }
         }
     }
@@ -689,7 +701,7 @@ static int sys_gettimeofday(struct timeval *user_tv, void *user_tz)
     (void)user_tz;
 
     if (!valid_user_pointer(user_tv, sizeof(struct timeval)))
-        return -1;
+        return -EFAULT;
 
     struct timeval tv;
     uint32_t ticks = pit_get_ticks();
@@ -698,7 +710,7 @@ static int sys_gettimeofday(struct timeval *user_tv, void *user_tz)
     tv.tv_usec = (int32_t)((ticks % 100) * 10000);   /* 10 ms per tick */
 
     if (copy_to_user(user_tv, &tv, sizeof(struct timeval)) < 0)
-        return -1;
+        return -EFAULT;
 
     return 0;
 }
@@ -711,15 +723,15 @@ static int sys_gettimeofday(struct timeval *user_tv, void *user_tz)
 static int sys_pipe(int *user_fds)
 {
     if (!valid_user_pointer(user_fds, 2 * sizeof(int))) {
-        return -1;
+        return -EFAULT;
     }
 
     int fds[2];
     if (fs_pipe(fds) < 0)
-        return -1;
+        return -ENFILE;
 
     if (copy_to_user(user_fds, fds, 2 * sizeof(int)) < 0)
-        return -1;
+        return -EFAULT;
 
     return 0;
 }
@@ -751,34 +763,43 @@ static int sys_mkdir(const char *user_path, uint32_t mode)
 {
     char kernel_path[MAX_PATH_LEN];
     if (copy_path_from_user(user_path, kernel_path, sizeof(kernel_path)) < 0)
-        return -1;
-    return fs_mkdir(kernel_path, mode);
+        return -EFAULT;
+    if (fs_mkdir(kernel_path, mode) < 0)
+        return -EEXIST;
+    return 0;
 }
 
 static int sys_rmdir(const char *user_path)
 {
     char kernel_path[MAX_PATH_LEN];
     if (copy_path_from_user(user_path, kernel_path, sizeof(kernel_path)) < 0)
-        return -1;
-    return fs_rmdir(kernel_path);
+        return -EFAULT;
+    if (fs_rmdir(kernel_path) < 0)
+        return -ENOENT;
+    return 0;
 }
 
 static int sys_unlink(const char *user_path)
 {
     char kernel_path[MAX_PATH_LEN];
     if (copy_path_from_user(user_path, kernel_path, sizeof(kernel_path)) < 0)
-        return -1;
-    return fs_unlink(kernel_path);
+        return -EFAULT;
+    int r = fs_unlink(kernel_path);
+    if (r < 0)
+        return -ENOENT;
+    return 0;
 }
 
 static int sys_rename(const char *user_old, const char *user_new)
 {
     char kernel_old[MAX_PATH_LEN], kernel_new[MAX_PATH_LEN];
     if (copy_path_from_user(user_old, kernel_old, sizeof(kernel_old)) < 0)
-        return -1;
+        return -EFAULT;
     if (copy_path_from_user(user_new, kernel_new, sizeof(kernel_new)) < 0)
-        return -1;
-    return fs_rename(kernel_old, kernel_new);
+        return -EFAULT;
+    if (fs_rename(kernel_old, kernel_new) < 0)
+        return -ENOENT;
+    return 0;
 }
 
 static int sys_truncate(const char *user_path, uint32_t length)
@@ -786,14 +807,72 @@ static int sys_truncate(const char *user_path, uint32_t length)
     /* fs_truncate() works on an open fd, so open + truncate + close. */
     char kernel_path[MAX_PATH_LEN];
     if (copy_path_from_user(user_path, kernel_path, sizeof(kernel_path)) < 0)
-        return -1;
+        return -EFAULT;
 
     int fd = fs_open(kernel_path, O_WRONLY);
     if (fd < 0)
-        return -1;
+        return -ENOENT;
     int ret = fs_truncate(fd, length);
     fs_close(fd);
-    return ret;
+    if (ret < 0)
+        return -EINVAL;
+    return 0;
+}
+
+/* ============================================================================
+ * Access / uname
+ * ============================================================================ */
+
+/**
+ * sys_access - Check whether the calling process can access a file.
+ * @param user_path User pointer to path
+ * @param mode      0 = existence (F_OK); X_OK/W_OK/R_OK are accepted but the
+ *                  kernel has no permission model yet, so they behave like F_OK
+ * @return 0 on success (file exists), -errno otherwise
+ */
+static int sys_access(const char *user_path, int mode)
+{
+    (void)mode;
+    char kernel_path[MAX_PATH_LEN];
+    stat_t st;
+
+    if (copy_path_from_user(user_path, kernel_path, sizeof(kernel_path)) < 0)
+        return -EFAULT;
+
+    if (fs_stat(kernel_path, &st) < 0)
+        return -ENOENT;
+    return 0;
+}
+
+/* Kernel utsname (must match the user struct in crt/include/sys/utsname.h) */
+struct utsname {
+    char sysname[65];
+    char nodename[65];
+    char release[65];
+    char version[65];
+    char machine[65];
+};
+
+/**
+ * sys_uname - Fill in system identification information.
+ * @param user_buf User pointer to a struct utsname
+ * @return 0 on success, -errno otherwise
+ */
+static int sys_uname(struct utsname *user_buf)
+{
+    if (!valid_user_pointer(user_buf, sizeof(struct utsname)))
+        return -EFAULT;
+
+    struct utsname u;
+    strcpy(u.sysname,  "Scepter");
+    strcpy(u.nodename, "scepter");
+    strcpy(u.release,  "0.1");
+    strcpy(u.version,  "Scepter OS 0.1");
+    strcpy(u.machine,  "i386");
+
+    if (copy_to_user(user_buf, &u, sizeof(u)) < 0)
+        return -EFAULT;
+    return 0;
 }
 
 /* ============================================================================
@@ -920,6 +999,12 @@ int syscall_handler(registers_t *regs, int num, uint32_t arg1, uint32_t arg2,
         
         case SYS_NICE:
             return sys_nice((int)arg1);
+
+        case SYS_ACCESS:
+            return sys_access((const char *)arg1, (int)arg2);
+
+        case SYS_UNAME:
+            return sys_uname((struct utsname *)arg1);
         
         default:
             printk("[SYSCALL] Unknown syscall number: %d\n", num);

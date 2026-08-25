@@ -1,6 +1,9 @@
 #include "fs/pipe.h"
+#include "errno.h"
+#include "kernel/sched.h"
 #include "mm/slab.h"
 #include "lib/printk.h"
+#include "errno.h"
 
 /* =========================================================================
  * Pipe - anonymous kernel pipe (ring buffer with blocking I/O)
@@ -53,6 +56,8 @@ int pipe_read(pipe_t *p, char *buf, size_t count)
             return (int)total;       /* EOF (0 if nothing read yet) */
         } else {
             sleep_on(&p->read_wq);   /* empty: block until data arrives */
+            if (current->pending)
+                return (total > 0) ? (int)total : -EINTR;
         }
     }
     return (int)total;
@@ -69,7 +74,7 @@ int pipe_write(pipe_t *p, const char *buf, size_t count)
 
     while (total < count) {
         if (p->readers == 0)
-            return -1;               /* EPIPE: nobody will read this */
+            return (total > 0) ? (int)total : -EPIPE;   /* no readers */
 
         if (p->count < PIPE_SIZE) {
             size_t space = PIPE_SIZE - p->count;

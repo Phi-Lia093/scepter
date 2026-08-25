@@ -1,5 +1,5 @@
-#ifndef STDLIB_H
-#define STDLIB_H
+#ifndef _STDLIB_H
+#define _STDLIB_H
 
 #include <stddef.h>
 
@@ -11,12 +11,19 @@ void free(void *ptr);
 
 /* String conversion */
 int atoi(const char *s);
+long strtol(const char *nptr, char **endptr, int base);
 
 /* Absolute value */
 int abs(int n);
 long labs(long n);
 
-/* Process control - from syscall.h */
+/* Process control */
 void exit(int status) __attribute__((noreturn));
 
-#endif /* STDLIB_H */
+/* Environment */
+extern char **environ;
+char *getenv(const char *name);
+int setenv(const char *name, const char *value, int overwrite);
+int unsetenv(const char *name);
+
+#endif /* _STDLIB_H */

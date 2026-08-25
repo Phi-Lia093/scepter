@@ -217,7 +217,7 @@ static void serial_init_port(serial_port_t *port, int port_id)
 /**
  * Read from serial port
  */
-static char serial_read(int scnd_id)
+static int serial_read(int scnd_id)
 {
     if (scnd_id < 0 || scnd_id >= serial_port_count) return 0;
     
