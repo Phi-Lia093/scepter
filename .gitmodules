@@ -1,3 +1,0 @@
-[submodule "crt"]
-	path = crt
-	url = ../scepter-crt.git
