@@ -184,6 +184,13 @@ void add_task(task_struct_t *task)
     list_add_tail(&task->task_list, &task_list);
 }
 
+/* Accessor so other kernel subsystems (e.g. signal.c) can iterate the
+ * global task list without reaching into this file's static state. */
+list_head_t *task_list_head(void)
+{
+    return &task_list;
+}
+
 task_struct_t *find_task_by_pid(uint32_t pid)
 {
     list_head_t *pos;

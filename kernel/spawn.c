@@ -79,6 +79,12 @@ int spawn_init(const char *path)
     task->cwd[0] = '/';
     task->cwd[1] = '\0';
     
+    /* Init is root and the leader of its own session + process group. */
+    task->uid  = task->euid = 0;
+    task->gid  = task->egid = 0;
+    task->pgid = task->pid;
+    task->sid  = task->pid;
+    
     /* Open binary file */
     int fd = fs_open(path, O_RDONLY);
     if (fd < 0) {

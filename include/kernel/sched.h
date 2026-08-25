@@ -15,6 +15,7 @@ typedef enum {
     TASK_READY,        /* runnable, waiting for CPU */
     TASK_BLOCKED,      /* waiting for an event */
     TASK_ZOMBIE,       /* exited, waiting to be reaped */
+    TASK_STOPPED,      /* stopped by SIGSTOP/SIGTSTP/etc. (SIGCONT resumes) */
 } task_state_t;
 
 /* =========================================================================
@@ -64,6 +65,12 @@ typedef struct task_struct {
     /* ---- Process Identity ---- */
     uint32_t      pid;
     uint32_t      ppid;
+    uint32_t      pgid;          /* process group id (0 = none yet)  */
+    uint32_t      sid;           /* session id (0 = none yet)        */
+    uint32_t      uid;           /* real user id                     */
+    uint32_t      euid;          /* effective user id                */
+    uint32_t      gid;           /* real group id                    */
+    uint32_t      egid;          /* effective group id               */
     task_state_t  state;
     char          name[32];
     int           priority;        /* nice value; lower = higher priority */
@@ -98,11 +105,19 @@ typedef struct task_struct {
     uint32_t      pending;            /* pending signal mask (bit i = signal i) */
     uint32_t      blocked;            /* blocked signal mask                    */
     uint32_t      sig_handlers[NSIG]; /* user handler / SIG_DFL / SIG_IGN       */
+    uint32_t      sig_hmask[NSIG];    /* extra signals blocked during handler   */
+    uint32_t      sig_hflags[NSIG];   /* SA_* flags for each signal             */
     int           sig_active;         /* 1 while a catchable handler is running */
     int           sig_delivered;      /* the signal being handled               */
     uint32_t      sig_saved_eip;      /* saved user context (handler entry)     */
     uint32_t      sig_saved_esp;
     uint32_t      sig_saved_eflags;
+    uint32_t      sig_saved_blocked;  /* blocked mask before handler entry      */
+
+    /* ---- Stop / Continue (job control) ---- */
+    uint32_t      stop_sig;        /* signal that stopped us (0 = running)    */
+    int           stop_reported;   /* wait4(WUNTRACED) already reported stop  */
+    int           continued;       /* SIGCONT delivered while stopped         */
 } task_struct_t;
 
 /* =========================================================================
@@ -161,6 +176,11 @@ void add_task(task_struct_t *task);
  * Remove task from scheduler
  */
 void remove_task(task_struct_t *task);
+
+/**
+ * Accessor for the global task list head (used by signal.c to iterate).
+ */
+list_head_t *task_list_head(void);
 
 /**
  * Allocate a new task structure

@@ -152,6 +152,14 @@ static int sys_open(const char *user_path, int flags)
     }
     kernel_path[sizeof(kernel_path) - 1] = '\0';
     
+    /* Permission check: existing files require R_OK / W_OK per the open
+     * mode.  If the file does not exist yet (O_CREAT), fs_access_perm
+     * returns -ENOENT which we allow so the create can proceed. */
+    int need = (flags & (O_WRONLY | O_RDWR)) ? 2 : 4;   /* W_OK / R_OK */
+    int r = fs_access_perm(kernel_path, need);
+    if (r < 0 && r != -ENOENT)
+        return r;
+    
     /* Call kernel VFS */
     int fd = fs_open(kernel_path, flags);
     if (fd < 0)
@@ -764,6 +772,8 @@ static int sys_mkdir(const char *user_path, uint32_t mode)
     char kernel_path[MAX_PATH_LEN];
     if (copy_path_from_user(user_path, kernel_path, sizeof(kernel_path)) < 0)
         return -EFAULT;
+    if (mode == 0)
+        mode = 0777;   /* default permissions when the caller passes 0 */
     if (fs_mkdir(kernel_path, mode) < 0)
         return -EEXIST;
     return 0;
@@ -774,6 +784,9 @@ static int sys_rmdir(const char *user_path)
     char kernel_path[MAX_PATH_LEN];
     if (copy_path_from_user(user_path, kernel_path, sizeof(kernel_path)) < 0)
         return -EFAULT;
+    int r = fs_access_perm(kernel_path, 2);   /* W_OK on the directory */
+    if (r < 0)
+        return r;
     if (fs_rmdir(kernel_path) < 0)
         return -ENOENT;
     return 0;
@@ -784,7 +797,10 @@ static int sys_unlink(const char *user_path)
     char kernel_path[MAX_PATH_LEN];
     if (copy_path_from_user(user_path, kernel_path, sizeof(kernel_path)) < 0)
         return -EFAULT;
-    int r = fs_unlink(kernel_path);
+    int r = fs_access_perm(kernel_path, 2);   /* W_OK on the target */
+    if (r < 0)
+        return r;
+    r = fs_unlink(kernel_path);
     if (r < 0)
         return -ENOENT;
     return 0;
@@ -797,6 +813,12 @@ static int sys_rename(const char *user_old, const char *user_new)
         return -EFAULT;
     if (copy_path_from_user(user_new, kernel_new, sizeof(kernel_new)) < 0)
         return -EFAULT;
+    int r = fs_access_perm(kernel_old, 2);   /* W_OK on the source */
+    if (r < 0)
+        return r;
+    r = fs_access_perm(kernel_new, 2);       /* W_OK on the destination */
+    if (r < 0 && r != -ENOENT)
+        return r;
     if (fs_rename(kernel_old, kernel_new) < 0)
         return -ENOENT;
     return 0;
@@ -808,6 +830,10 @@ static int sys_truncate(const char *user_path, uint32_t length)
     char kernel_path[MAX_PATH_LEN];
     if (copy_path_from_user(user_path, kernel_path, sizeof(kernel_path)) < 0)
         return -EFAULT;
+
+    int r = fs_access_perm(kernel_path, 2);   /* W_OK */
+    if (r < 0)
+        return r;
 
     int fd = fs_open(kernel_path, O_WRONLY);
     if (fd < 0)
@@ -832,16 +858,13 @@ static int sys_truncate(const char *user_path, uint32_t length)
  */
 static int sys_access(const char *user_path, int mode)
 {
-    (void)mode;
     char kernel_path[MAX_PATH_LEN];
-    stat_t st;
 
     if (copy_path_from_user(user_path, kernel_path, sizeof(kernel_path)) < 0)
         return -EFAULT;
 
-    if (fs_stat(kernel_path, &st) < 0)
-        return -ENOENT;
-    return 0;
+    /* F_OK (0) checks existence; R_OK/W_OK/X_OK check permissions. */
+    return fs_access_perm(kernel_path, mode & 7);
 }
 
 /* Kernel utsname (must match the user struct in crt/include/sys/utsname.h) */
@@ -1006,6 +1029,53 @@ int syscall_handler(registers_t *regs, int num, uint32_t arg1, uint32_t arg2,
         case SYS_UNAME:
             return sys_uname((struct utsname *)arg1);
         
+        case SYS_SETUID:
+            return sys_setuid(arg1);
+
+        case SYS_GETUID:
+            return sys_getuid();
+
+        case SYS_SETGID:
+            return sys_setgid(arg1);
+
+        case SYS_GETGID:
+            return sys_getgid();
+
+        case SYS_GETEUID:
+            return sys_geteuid();
+
+        case SYS_GETEGID:
+            return sys_getegid();
+
+        case SYS_SETPGID:
+            return sys_setpgid((int)arg1, (int)arg2);
+
+        case SYS_GETPGRP:
+            return sys_getpgrp();
+
+        case SYS_SETSID:
+            return sys_setsid();
+
+        case SYS_GETPGID:
+            return sys_getpgid((int)arg1);
+
+        case SYS_GETSID:
+            return sys_getsid((int)arg1);
+
+        case SYS_SIGACTION:
+            return sys_sigaction((int)arg1, (sigaction_t *)arg2,
+                                 (sigaction_t *)arg3);
+
+        case SYS_SIGPROCMASK:
+            return sys_sigprocmask((int)arg1, (sigset_t *)arg2,
+                                   (sigset_t *)arg3);
+
+        case SYS_SIGPENDING:
+            return sys_sigpending((sigset_t *)arg1);
+
+        case SYS_SIGSUSPEND:
+            return sys_sigsuspend((sigset_t *)arg1);
+
         default:
             printk("[SYSCALL] Unknown syscall number: %d\n", num);
             return -1;

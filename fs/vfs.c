@@ -4,6 +4,7 @@
 #include "mm/slab.h"
 #include "lib/printk.h"
 #include "lib/string.h"
+#include "errno.h"
 #include <stdint.h>
 #include <stddef.h>
 
@@ -705,6 +706,45 @@ int fs_fstat(int fd, stat_t *st)
     if (!fs_drivers[file->fs_id].ops.fstat)
         return -1;
     return fs_drivers[file->fs_id].ops.fstat(file->file_private, st);
+}
+
+/* =========================================================================
+ * Permission checking
+ * ========================================================================= */
+
+/**
+ * fs_access_perm - Check the calling process's access to a path.
+ */
+int fs_access_perm(const char *path, int mask)
+{
+    stat_t st;
+    if (fs_stat(path, &st) < 0)
+        return -ENOENT;
+
+    /* Root can access anything. */
+    if (current->euid == 0)
+        return 0;
+
+    /* F_OK: existence was already confirmed by fs_stat above. */
+    if (mask == 0)
+        return 0;
+
+    /* Files/devices with no known permission bits (mode == 0, e.g. devfs
+     * nodes or legacy files) are accessible to everyone. */
+    if ((st.mode & 0777) == 0)
+        return 0;
+
+    int shift = 0;
+    if (current->euid == st.uid)
+        shift = 6;             /* owner */
+    else if (current->egid == st.gid)
+        shift = 3;             /* group */
+    else
+        shift = 0;             /* other */
+
+    if ((st.mode & 0777) & (mask << shift))
+        return 0;
+    return -EACCES;
 }
 
 /* =========================================================================

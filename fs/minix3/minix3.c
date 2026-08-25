@@ -1020,6 +1020,8 @@ static int minix3_vfs_stat(void *fs_private, const char *path, stat_t *st)
     st->ctime = file->inode.i_ctime;
     st->mtime = file->inode.i_mtime;
     st->mode = file->inode.i_mode;
+    st->uid = file->inode.i_uid;
+    st->gid = file->inode.i_gid;
     
     /* Determine type */
     if (MINIX3_ISDIR(file->inode.i_mode)) {

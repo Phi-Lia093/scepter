@@ -65,6 +65,8 @@ typedef struct stat {
     uint32_t ctime;   /* creation time  (seconds since epoch, 0 if unknown) */
     uint32_t mtime;   /* modification time                      */
     uint32_t mode;    /* permission bits (0 if not supported)   */
+    uint32_t uid;     /* owner user id (0 if unsupported)       */
+    uint32_t gid;     /* owner group id (0 if unsupported)      */
 } stat_t;
 
 /* -------------------------------------------------------------------------
@@ -222,6 +224,17 @@ int fs_stat(const char *path, stat_t *st);
 
 /** Get metadata of an already-open file descriptor. */
 int fs_fstat(int fd, stat_t *st);
+
+/**
+ * Check whether the calling process may access a path.
+ * @param path Path to check
+ * @param mask POSIX access bits: 4 = R_OK, 2 = W_OK, 1 = X_OK, 0 = F_OK
+ * @return 0 on success (or the file does not exist: -ENOENT), -EACCES if
+ *         the current euid/egid lacks the requested permissions, 0 for
+ *         files with no known permission bits (mode==0), and always 0 for
+ *         uid 0 (root bypasses permission checks).
+ */
+int fs_access_perm(const char *path, int mask);
 
 /* -------------------------------------------------------------------------
  * Working Directory (stored in task_struct.cwd)

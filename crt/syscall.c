@@ -109,6 +109,12 @@ void exit(int status)
     for (;;) {}
 }
 
+void _exit(int status) __attribute__((noreturn));
+void _exit(int status)
+{
+    exit(status);
+}
+
 pid_t fork(void)
 {
     long ret = syscall0(SYS_FORK);
@@ -164,6 +170,91 @@ int nice(int inc)
     long ret = syscall1(SYS_NICE, inc);
     if (ret < 0) { errno = -ret; return -1; }
     return (int)ret;
+}
+
+/* ============================================================================
+ * User / group ids
+ * ============================================================================ */
+
+uid_t getuid(void)
+{
+    long ret = syscall0(SYS_GETUID);
+    if (ret < 0) { errno = -ret; return (uid_t)-1; }
+    return (uid_t)ret;
+}
+
+uid_t geteuid(void)
+{
+    long ret = syscall0(SYS_GETEUID);
+    if (ret < 0) { errno = -ret; return (uid_t)-1; }
+    return (uid_t)ret;
+}
+
+gid_t getgid(void)
+{
+    long ret = syscall0(SYS_GETGID);
+    if (ret < 0) { errno = -ret; return (gid_t)-1; }
+    return (gid_t)ret;
+}
+
+gid_t getegid(void)
+{
+    long ret = syscall0(SYS_GETEGID);
+    if (ret < 0) { errno = -ret; return (gid_t)-1; }
+    return (gid_t)ret;
+}
+
+int setuid(uid_t uid)
+{
+    long ret = syscall1(SYS_SETUID, (int)uid);
+    if (ret < 0) { errno = -ret; return -1; }
+    return 0;
+}
+
+int setgid(gid_t gid)
+{
+    long ret = syscall1(SYS_SETGID, (int)gid);
+    if (ret < 0) { errno = -ret; return -1; }
+    return 0;
+}
+
+/* ============================================================================
+ * Process groups / sessions
+ * ============================================================================ */
+
+int setpgid(pid_t pid, pid_t pgid)
+{
+    long ret = syscall2(SYS_SETPGID, (int)pid, (int)pgid);
+    if (ret < 0) { errno = -ret; return -1; }
+    return 0;
+}
+
+pid_t getpgid(pid_t pid)
+{
+    long ret = syscall1(SYS_GETPGID, (int)pid);
+    if (ret < 0) { errno = -ret; return -1; }
+    return (pid_t)ret;
+}
+
+pid_t getpgrp(void)
+{
+    long ret = syscall0(SYS_GETPGRP);
+    if (ret < 0) { errno = -ret; return -1; }
+    return (pid_t)ret;
+}
+
+pid_t setsid(void)
+{
+    long ret = syscall0(SYS_SETSID);
+    if (ret < 0) { errno = -ret; return -1; }
+    return (pid_t)ret;
+}
+
+pid_t getsid(pid_t pid)
+{
+    long ret = syscall1(SYS_GETSID, (int)pid);
+    if (ret < 0) { errno = -ret; return -1; }
+    return (pid_t)ret;
 }
 
 /* ============================================================================
@@ -407,6 +498,48 @@ int kill(pid_t pid, int sig)
 int raise(int sig)
 {
     return kill(getpid(), sig);
+}
+
+int killpg(int pgrp, int sig)
+{
+    return kill(-pgrp, sig);
+}
+
+int sigaction(int signum, const struct sigaction *act,
+              struct sigaction *oldact)
+{
+    long ret = syscall3(SYS_SIGACTION, signum, (int)act, (int)oldact);
+    if (ret < 0) { errno = -ret; return -1; }
+    return 0;
+}
+
+int sigprocmask(int how, const sigset_t *set, sigset_t *oldset)
+{
+    long ret = syscall3(SYS_SIGPROCMASK, how, (int)set, (int)oldset);
+    if (ret < 0) { errno = -ret; return -1; }
+    return 0;
+}
+
+int sigpending(sigset_t *set)
+{
+    long ret = syscall1(SYS_SIGPENDING, (int)set);
+    if (ret < 0) { errno = -ret; return -1; }
+    return 0;
+}
+
+int sigsuspend(const sigset_t *mask)
+{
+    long ret = syscall1(SYS_SIGSUSPEND, (int)mask);
+    if (ret < 0) { errno = -ret; return -1; }
+    return 0;
+}
+
+/* Suspend until a signal is caught; implemented via sigsuspend(). */
+int pause(void)
+{
+    sigset_t empty;
+    sigemptyset(&empty);
+    return sigsuspend(&empty);
 }
 
 /* Called by the kernel signal trampoline; restores the interrupted context. */

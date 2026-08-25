@@ -18,6 +18,21 @@
 pid_t getpid(void);
 pid_t getppid(void);
 
+/* User / group identification */
+uid_t getuid(void);
+uid_t geteuid(void);
+gid_t getgid(void);
+gid_t getegid(void);
+int setuid(uid_t uid);
+int setgid(gid_t gid);
+
+/* Process groups / sessions */
+int setpgid(pid_t pid, pid_t pgid);
+pid_t getpgid(pid_t pid);
+pid_t getpgrp(void);
+pid_t setsid(void);
+pid_t getsid(pid_t pid);
+
 /* File operations */
 int open(const char *path, int flags);
 ssize_t read(int fd, void *buf, size_t count);
@@ -43,6 +58,7 @@ int exec(const char *path);
 int execv(const char *path, char *const argv[]);
 int execve(const char *path, char *const argv[], char *const envp[]);
 void exit(int status) __attribute__((noreturn));
+void _exit(int status) __attribute__((noreturn));
 
 /* File status */
 int access(const char *path, int mode);
@@ -50,5 +66,6 @@ int isatty(int fd);
 
 /* Sleep */
 unsigned int sleep(unsigned int seconds);
+int pause(void);
 
 #endif /* _UNISTD_H */

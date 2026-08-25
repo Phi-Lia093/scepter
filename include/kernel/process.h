@@ -139,4 +139,25 @@ int sys_getdents(int fd, dirent_t *buf, unsigned int count);
  */
 int sys_nanosleep(timespec_t *req, timespec_t *rem);
 
+/* =========================================================================
+ * Process groups & sessions
+ * ========================================================================= */
+
+int sys_setpgid(int pid, int pgid);
+int sys_getpgid(int pid);
+int sys_getpgrp(void);
+int sys_setsid(void);
+int sys_getsid(int pid);
+
+/* =========================================================================
+ * User / group ids
+ * ========================================================================= */
+
+int sys_getuid(void);
+int sys_geteuid(void);
+int sys_getgid(void);
+int sys_getegid(void);
+int sys_setuid(uint32_t uid);
+int sys_setgid(uint32_t gid);
+
 #endif /* PROCESS_H */

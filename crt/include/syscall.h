@@ -23,6 +23,8 @@
 #define SYS_EXECV  13   /* execv(path, argv) - no envp        */
 #define SYS_LSEEK  19
 #define SYS_GETPID 20
+#define SYS_SETUID 23
+#define SYS_GETUID 24
 #define SYS_NICE   34
 #define SYS_NANOSLEEP 35
 #define SYS_KILL   37
@@ -32,10 +34,20 @@
 #define SYS_DUP    41
 #define SYS_PIPE   42
 #define SYS_BRK    45
+#define SYS_SETGID 46
+#define SYS_GETGID 47
 #define SYS_SIGNAL 48
+#define SYS_GETEUID 49
+#define SYS_GETEGID 50
 #define SYS_IOCTL  54
+#define SYS_SETPGID 57
 #define SYS_DUP2   63
 #define SYS_GETPPID 64
+#define SYS_GETPGRP 65
+#define SYS_SETSID 66
+#define SYS_SIGACTION 67
+#define SYS_SIGSUSPEND 72
+#define SYS_SIGPENDING 73
 #define SYS_GETTIMEOFDAY 78
 #define SYS_MMAP   90
 #define SYS_MUNMAP 91
@@ -44,8 +56,11 @@
 #define SYS_FSTAT  108
 #define SYS_SIGRETURN 119
 #define SYS_UNAME  122
+#define SYS_SIGPROCMASK 126
+#define SYS_GETPGID 132
 #define SYS_UNLINK 137
 #define SYS_GETDENTS 141
+#define SYS_GETSID 147
 #define SYS_GETCWD 183
 #define SYS_ACCESS 33
 

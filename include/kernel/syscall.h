@@ -40,6 +40,20 @@ typedef struct registers {
 #define SYS_LSEEK  19   /* Reposition file offset */
 #define SYS_GETPID 20   /* Get process ID */
 #define SYS_NANOSLEEP 35  /* Sleep for specified time (PIT tick based) */
+#define SYS_SETUID  23   /* Set real + effective user id */
+#define SYS_GETUID  24   /* Get real user id */
+#define SYS_SETGID  46   /* Set real + effective group id */
+#define SYS_GETGID  47   /* Get real group id */
+#define SYS_GETEUID 49   /* Get effective user id */
+#define SYS_GETEGID 50   /* Get effective group id */
+#define SYS_SETPGID 57   /* Set process group */
+#define SYS_GETPGRP 65   /* Get process group of calling process */
+#define SYS_SETSID  66   /* Create a new session */
+#define SYS_SIGACTION 67 /* Install a signal handler (POSIX) */
+#define SYS_SIGSUSPEND 72 /* Wait for a signal */
+#define SYS_SIGPENDING 73 /* Examine pending signals */
+#define SYS_SIGPROCMASK 126 /* Examine/change blocked signals */
+#define SYS_GETSID  147  /* Get session id */
 #define SYS_DUP    41   /* Duplicate file descriptor */
 #define SYS_BRK    45
 #define SYS_IOCTL  54   /* I/O control */
@@ -58,6 +72,7 @@ typedef struct registers {
 #define SYS_RMDIR  40   /* Remove an empty directory */
 #define SYS_RENAME 38   /* Rename / move a file or directory */
 #define SYS_GETTIMEOFDAY 78 /* Get wall-clock time */
+#define SYS_GETPGID 132 /* Get process group id */
 #define SYS_SIGNAL  48  /* Install a signal handler */
 #define SYS_KILL    37  /* Send a signal to a process */
 #define SYS_SIGRETURN 119 /* Return from a signal handler */
@@ -71,6 +86,7 @@ typedef struct registers {
 
 #define WNOHANG   1
 #define WUNTRACED 2
+#define WCONTINUED 8
 
 /* =========================================================================
  * Time Structures

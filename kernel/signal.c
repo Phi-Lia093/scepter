@@ -2,14 +2,18 @@
  * Signal Implementation
  *
  * A small, self-contained signal subsystem:
- *   - task_struct carries pending/blocked masks and a handler table
- *   - sys_signal() installs handlers (SIG_DFL/SIG_IGN or a user function)
- *   - sys_kill()/send_signal() set the pending bit on a task
+ *   - task_struct carries pending/blocked masks and a per-signal action table
+ *   - sys_signal()/sys_sigaction() install dispositions (SIG_DFL/SIG_IGN or a
+ *     user function), including the POSIX sa_mask / SA_* flags
+ *   - sys_kill()/send_signal() set the pending bit on a task (or a whole
+ *     process group); SIGCONT resumes a stopped task
  *   - do_signal() is called at syscall-return and interrupt-return to user
  *     mode; it delivers the lowest pending (unblocked) signal:
- *       * default action  -> terminate the task (unless ignored, e.g. SIGCHLD)
+ *       * default action  -> terminate the task, STOP it (SIGSTOP/TSTP/...),
+ *                            or ignore it (SIGCHLD, SIGCONT, ...)
  *       * user handler    -> run it on the user stack with a tiny trampoline
  *                            that returns via the sigreturn() syscall
+ *   - wait4() reports stops (WUNTRACED) and continues (WCONTINUED)
  *
  * Signal delivery touches only the current task's kernel-stack register
  * frame (the same per-process-stack principle as the wait-queue fix): no
@@ -23,10 +27,15 @@
 #include "errno.h"
 #include "lib/string.h"
 
+/* ============================================================================
+ * Default action tables
+ * ============================================================================ */
+
 /* Signals whose default action is to terminate the task. */
 static int sig_default_terminates(int sig)
 {
     switch (sig) {
+        case SIGHUP:
         case SIGINT:
         case SIGQUIT:
         case SIGILL:
@@ -41,14 +50,32 @@ static int sig_default_terminates(int sig)
         case SIGPIPE:
         case SIGALRM:
         case SIGTERM:
+        case SIGXCPU:
+        case SIGXFSZ:
+        case SIGVTALRM:
+        case SIGPROF:
+        case SIGIO:
+        case SIGPWR:
+        case SIGSYS:
             return 1;
         default:
-            return 0;   /* others default to ignore (SIGCHLD, SIGCONT, ...) */
+            return 0;   /* others default to ignore/stop/continue */
     }
 }
 
+/* Signals whose default action is to stop the task (until SIGCONT). */
+static int sig_default_stops(int sig)
+{
+    return sig == SIGSTOP || sig == SIGTSTP ||
+           sig == SIGTTIN || sig == SIGTTOU;
+}
+
+/* ============================================================================
+ * Action installation
+ * ============================================================================ */
+
 /**
- * sys_signal - Install a signal handler.
+ * sys_signal - Install a handler for a signal (or SIG_DFL/SIG_IGN).
  */
 int sys_signal(int signum, uint32_t handler)
 {
@@ -61,11 +88,136 @@ int sys_signal(int signum, uint32_t handler)
     task_struct_t *task = current;
     uint32_t old = task->sig_handlers[signum];
     task->sig_handlers[signum] = handler;
+    task->sig_hmask[signum]    = 0;
+    task->sig_hflags[signum]   = 0;
     return (int)old;
 }
 
 /**
- * send_signal - Mark a signal pending on a task.
+ * sys_sigaction - Install a signal handler with POSIX semantics.
+ */
+int sys_sigaction(int signum, sigaction_t *user_new, sigaction_t *user_old)
+{
+    if (signum < 1 || signum >= NSIG)
+        return -EINVAL;
+    if (signum == SIGKILL || signum == SIGSTOP)
+        return -EINVAL;
+
+    task_struct_t *task = current;
+
+    /* Write the old action first (Linux semantics: old is filled even if
+     * the new action turns out to be invalid). */
+    if (user_old) {
+        if (!valid_user_pointer(user_old, sizeof(sigaction_t)))
+            return -EFAULT;
+        sigaction_t old;
+        old.sa_handler  = task->sig_handlers[signum];
+        old.sa_mask     = task->sig_hmask[signum];
+        old.sa_flags    = task->sig_hflags[signum];
+        old.sa_restorer = 0;
+        if (copy_to_user(user_old, &old, sizeof(old)) < 0)
+            return -EFAULT;
+    }
+
+    if (user_new) {
+        if (!valid_user_pointer(user_new, sizeof(sigaction_t)))
+            return -EFAULT;
+        sigaction_t n;
+        if (copy_from_user(&n, user_new, sizeof(n)) < 0)
+            return -EFAULT;
+
+        /* SIG_DFL/SIG_IGN or a valid user-space handler address. */
+        task->sig_handlers[signum] = n.sa_handler;
+        task->sig_hmask[signum]    = n.sa_mask;
+        task->sig_hflags[signum]   = n.sa_flags;
+    }
+    return 0;
+}
+
+/**
+ * sys_sigprocmask - Examine / change the blocked signal mask.
+ */
+int sys_sigprocmask(int how, sigset_t *user_new, sigset_t *user_old)
+{
+    task_struct_t *task = current;
+
+    if (user_old) {
+        if (!valid_user_pointer(user_old, sizeof(sigset_t)))
+            return -EFAULT;
+        if (copy_to_user(user_old, &task->blocked, sizeof(sigset_t)) < 0)
+            return -EFAULT;
+    }
+
+    if (!user_new)
+        return 0;   /* query only */
+
+    if (!valid_user_pointer(user_new, sizeof(sigset_t)))
+        return -EFAULT;
+
+    sigset_t new;
+    if (copy_from_user(&new, user_new, sizeof(new)) < 0)
+        return -EFAULT;
+
+    /* SIGKILL and SIGSTOP can never be blocked. */
+    new &= ~((1u << SIGKILL) | (1u << SIGSTOP));
+
+    switch (how) {
+        case SIG_BLOCK:
+            task->blocked |= new;
+            break;
+        case SIG_UNBLOCK:
+            task->blocked &= ~new;
+            break;
+        case SIG_SETMASK:
+            task->blocked = new;
+            break;
+        default:
+            return -EINVAL;
+    }
+    return 0;
+}
+
+/**
+ * sys_sigpending - Examine pending (not-yet-delivered) signals.
+ * POSIX: returns the set of signals that are pending AND blocked from
+ * delivery (i.e. waiting for the block to be lifted).
+ */
+int sys_sigpending(sigset_t *user_set)
+{
+    if (!user_set || !valid_user_pointer(user_set, sizeof(sigset_t)))
+        return -EFAULT;
+
+    sigset_t set = current->pending & current->blocked;
+    if (copy_to_user(user_set, &set, sizeof(set)) < 0)
+        return -EFAULT;
+    return 0;
+}
+
+/**
+ * sys_sigsuspend - Temporarily replace the signal mask and wait.
+ * Returns -EINTR once a signal wakes us (the signal is delivered by
+ * do_signal at the syscall return).
+ */
+int sys_sigsuspend(sigset_t *user_mask)
+{
+    if (!user_mask || !valid_user_pointer(user_mask, sizeof(sigset_t)))
+        return -EFAULT;
+
+    sigset_t mask;
+    if (copy_from_user(&mask, user_mask, sizeof(mask)) < 0)
+        return -EFAULT;
+
+    task_struct_t *task = current;
+    uint32_t old = task->blocked;
+    task->blocked = mask & ~((1u << SIGKILL) | (1u << SIGSTOP));
+
+    sleep_on(&task->wait);
+    task->blocked = old;
+    return -EINTR;
+}
+
+/**
+ * send_signal - Set the pending bit on a task (no delivery here).
  * Safe from interrupt context: only touches task fields + wake_up().
  */
 int send_signal(uint32_t pid, int signum)
@@ -79,9 +231,31 @@ int send_signal(uint32_t pid, int signum)
 
     task->pending |= (1u << signum);
 
-    /* If the target is blocked in wait(), wake it so it can deliver the
-     * signal promptly.  (Tasks blocked in read()/nanosleep() are not woken;
-     * they see the signal when their wait completes.) */
+    /* SIGCONT: resume a stopped task and wake a blocked one. */
+    if (signum == SIGCONT) {
+        if (task->state == TASK_STOPPED) {
+            task->state = TASK_READY;
+            task->stop_sig = 0;
+            task->stop_reported = 0;
+            task->continued = 1;
+            task_struct_t *parent = find_task_by_pid(task->ppid);
+            if (parent && parent != task)
+                wake_up(&parent->wait);
+        } else if (task->state == TASK_BLOCKED) {
+            wake_up(&task->wait);
+        }
+        return 0;
+    }
+
+    /* A stopped task must be woken so it can handle a terminating signal. */
+    if (task->state == TASK_STOPPED && sig_default_terminates(signum)) {
+        task->state = TASK_READY;
+        task->stop_sig = 0;
+        task->stop_reported = 0;
+    }
+
+    /* Wake a blocked task so it can notice the pending signal
+     * (read()/nanosleep() return -EINTR; wait() re-scans). */
     if (task->state == TASK_BLOCKED)
         wake_up(&task->wait);
 
@@ -89,15 +263,62 @@ int send_signal(uint32_t pid, int signum)
 }
 
 /**
- * sys_kill - kill() syscall: send a signal to a process.
+ * send_signal_group - Send a signal to every member of a process group.
+ */
+int send_signal_group(int pgid, int signum)
+{
+    int matched = 0;
+    list_head_t *pos;
+    list_head_t *tl = task_list_head();
+    list_for_each(pos, tl) {
+        task_struct_t *t = list_entry(pos, task_struct_t, task_list);
+        if (t->pid == 0)
+            continue;
+        if ((int)t->pgid != pgid)
+            continue;
+        send_signal(t->pid, signum);
+        matched = 1;
+    }
+    return matched;
+}
+
+/**
+ * send_signal_all - Send a signal to every user process except PID 0.
+ */
+int send_signal_all(int signum)
+{
+    int matched = 0;
+    list_head_t *pos;
+    list_head_t *tl = task_list_head();
+    list_for_each(pos, tl) {
+        task_struct_t *t = list_entry(pos, task_struct_t, task_list);
+        if (t->pid == 0)
+            continue;
+        send_signal(t->pid, signum);
+        matched = 1;
+    }
+    return matched;
+}
+
+/**
+ * sys_kill - kill() syscall: send a signal to a process or process group.
  */
 int sys_kill(int pid, int signum)
 {
     if (signum < 1 || signum >= NSIG)
         return -EINVAL;
-    if (send_signal((uint32_t)pid, signum) < 0)
-        return -ESRCH;
-    return 0;
+
+    if (pid > 0)
+        return send_signal((uint32_t)pid, signum) < 0 ? -ESRCH : 0;
+
+    if (pid == 0)
+        return send_signal_group((int)current->pgid, signum) ? 0 : -ESRCH;
+
+    if (pid == -1)
+        return send_signal_all(signum) ? 0 : -ESRCH;
+
+    /* pid < -1: process group -pid */
+    return send_signal_group(-pid, signum) ? 0 : -ESRCH;
 }
 
 /**
@@ -110,10 +331,11 @@ int sys_sigreturn(registers_t *regs)
         return -1;
 
     task->sig_active = 0;
-    regs->eip     = task->sig_saved_eip;
-    regs->user_esp = task->sig_saved_esp;
-    regs->eflags  = task->sig_saved_eflags;
-    regs->eax     = 0;
+    task->blocked    = task->sig_saved_blocked;
+    regs->eip        = task->sig_saved_eip;
+    regs->user_esp   = task->sig_saved_esp;
+    regs->eflags     = task->sig_saved_eflags;
+    regs->eax        = 0;
     return 0;
 }
 
@@ -141,6 +363,10 @@ int sys_nice(int inc)
  * Called from isr128 (syscall return) and from the IRQ stubs (return to
  * user mode).  regs points at a frame whose eip/cs/eflags/user_esp fields
  * live at offsets 52..68 -- the same layout as registers_t's IRET frame.
+ *
+ * A stop signal (default action) switches the task to TASK_STOPPED and
+ * calls schedule(); the task resumes here (via SIGCONT) and re-scans the
+ * pending mask, so a fatal signal delivered while stopped is then handled.
  */
 void do_signal(registers_t *regs)
 {
@@ -168,11 +394,27 @@ void do_signal(registers_t *regs)
 
         /* Default action? */
         if (handler == SIG_DFL) {
-            if (!sig_default_terminates(sig))
-                continue;               /* e.g. SIGCHLD: ignore */
-            printk("[SIG] pid %d (%s): killed by signal %d\n",
-                   task->pid, task->name, sig);
-            do_exit(128 + sig);         /* never returns */
+            if (sig_default_terminates(sig)) {
+                printk("[SIG] pid %d (%s): killed by signal %d\n",
+                       task->pid, task->name, sig);
+                do_exit(128 + sig);         /* never returns */
+            }
+            if (sig_default_stops(sig)) {
+                /* Stop the task.  It resumes (here) when SIGCONT arrives. */
+                task->state = TASK_STOPPED;
+                task->stop_sig = sig;
+                task->stop_reported = 0;
+                task->continued = 0;
+
+                /* Wake a parent waiting in waitpid(WUNTRACED). */
+                task_struct_t *parent = find_task_by_pid(task->ppid);
+                if (parent && parent != task)
+                    wake_up(&parent->wait);
+
+                schedule();                 /* blocked until SIGCONT */
+                continue;                   /* re-scan pending (e.g. SIGKILL) */
+            }
+            continue;                       /* default ignore: SIGCHLD, ... */
         }
 
         /* Catchable handler.  If another handler is already running,
@@ -181,6 +423,10 @@ void do_signal(registers_t *regs)
             task->pending |= mask;
             continue;
         }
+
+        /* SA_RESETHAND: reset to default before running the handler. */
+        if (task->sig_hflags[sig] & SA_RESETHAND)
+            task->sig_handlers[sig] = SIG_DFL;
 
         extern int copy_to_user(void *user_dst, const void *kernel_src, size_t n);
 
@@ -197,12 +443,21 @@ void do_signal(registers_t *regs)
         if (copy_to_user((void *)SIGNAL_TRAMPOLINE_VA, tramp, sizeof(tramp)) < 0)
             continue;                   /* can't deliver right now */
 
-        /* Save the interrupted user context in the task struct. */
-        task->sig_saved_eip    = regs->eip;
-        task->sig_saved_esp    = regs->user_esp;
-        task->sig_saved_eflags = regs->eflags;
-        task->sig_active       = 1;
-        task->sig_delivered    = sig;
+        /* Save the interrupted user context in the task struct.  Block the
+         * signal itself (unless SA_NODEFER) plus the action's sa_mask while
+         * the handler runs; sys_sigreturn restores the old mask. */
+        uint32_t old_blocked = task->blocked;
+        uint32_t add = task->sig_hmask[sig];
+        if (!(task->sig_hflags[sig] & SA_NODEFER))
+            add |= mask;
+        task->blocked |= add;
+
+        task->sig_saved_eip     = regs->eip;
+        task->sig_saved_esp     = regs->user_esp;
+        task->sig_saved_eflags  = regs->eflags;
+        task->sig_saved_blocked = old_blocked;
+        task->sig_active        = 1;
+        task->sig_delivered     = sig;
 
         /* Build the handler call frame on the user stack:
          *   [esp]   return address = trampoline
@@ -213,6 +468,7 @@ void do_signal(registers_t *regs)
         uint32_t frame[2] = { SIGNAL_TRAMPOLINE_VA, (uint32_t)sig };
         if (copy_to_user((void *)new_esp, frame, sizeof(frame)) < 0) {
             task->sig_active = 0;
+            task->blocked = old_blocked;
             continue;
         }
 

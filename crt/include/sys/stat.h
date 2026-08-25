@@ -15,6 +15,8 @@ struct stat {
     uint32_t st_ctime;   /* creation time                          */
     uint32_t st_mtime;   /* modification time                      */
     uint32_t st_mode;    /* permission bits (0 if unsupported)     */
+    uint32_t st_uid;     /* owner user id (0 if unsupported)       */
+    uint32_t st_gid;     /* owner group id (0 if unsupported)      */
 };
 
 /* Directory entry type constants (must match kernel fs/fs.h) */

@@ -126,10 +126,11 @@ void do_exit(int status)
     /* Transition to ZOMBIE state */
     task->state = TASK_ZOMBIE;
     
-    /* Wake up parent if it's waiting in wait() */
+    /* Wake up parent if it's waiting in wait() and notify it (SIGCHLD). */
     {
         task_struct_t *parent = find_task_by_pid(task->ppid);
         if (parent && parent != task) {
+            send_signal(parent->pid, SIGCHLD);
             wake_up(&parent->wait);
         }
     }
@@ -192,12 +193,26 @@ int sys_fork(registers_t *regs)
     strncpy(child->cwd, parent->cwd, sizeof(child->cwd));
     child->next_fd = parent->next_fd;
     
+    /* Process identity: children inherit the parent's process group,
+     * session, and credentials (POSIX fork semantics). */
+    child->pgid = parent->pgid;
+    child->sid  = parent->sid;
+    child->uid  = parent->uid;
+    child->euid = parent->euid;
+    child->gid  = parent->gid;
+    child->egid = parent->egid;
+    
     /* Signal state: handlers are inherited, but the child starts with no
-     * pending/blocked signals and no handler in flight. */
+     * pending/blocked signals, no handler in flight, and is not stopped. */
     memcpy(child->sig_handlers, parent->sig_handlers, sizeof(child->sig_handlers));
+    memcpy(child->sig_hmask,    parent->sig_hmask,    sizeof(child->sig_hmask));
+    memcpy(child->sig_hflags,   parent->sig_hflags,   sizeof(child->sig_hflags));
     child->pending    = 0;
     child->blocked    = 0;
     child->sig_active = 0;
+    child->stop_sig   = 0;
+    child->stop_reported = 0;
+    child->continued  = 0;
 
     /* Inherit scheduling priority */
     child->priority = parent->priority;
@@ -424,6 +439,8 @@ int sys_wait4(int pid, int *status_ptr, int options, void *rusage)
 
         if (pid > 0 && child->pid != (uint32_t)pid)
             continue;   /* not the requested child */
+        if (pid == 0 && child->pgid != parent->pgid)
+            continue;   /* not in the caller's process group */
 
         if (child->state == TASK_ZOMBIE) {
             /* Found a matching zombie! */
@@ -446,6 +463,32 @@ int sys_wait4(int pid, int *status_ptr, int options, void *rusage)
             return cpid;
         }
 
+        /* Stopped child: report once when WUNTRACED is requested. */
+        if (child->state == TASK_STOPPED && !child->stop_reported) {
+            if (options & WUNTRACED) {
+                int status = (child->stop_sig << 8) | 0x7f;
+                if (status_ptr) {
+                    if (copy_to_user(status_ptr, &status, sizeof(status)) < 0)
+                        return -EFAULT;
+                }
+                child->stop_reported = 1;
+                return (int)child->pid;
+            }
+            found_live_child = 1;
+            continue;
+        }
+
+        /* Continued after a stop: report once when WCONTINUED is requested. */
+        if (child->continued && (options & WCONTINUED)) {
+            int status = 0xffff;
+            if (status_ptr) {
+                if (copy_to_user(status_ptr, &status, sizeof(status)) < 0)
+                    return -EFAULT;
+            }
+            child->continued = 0;
+            return (int)child->pid;
+        }
+
         found_live_child = 1;
     }
 
@@ -458,7 +501,8 @@ int sys_wait4(int pid, int *status_ptr, int options, void *rusage)
         return 0;
 
     /* Matching children exist but none are zombies yet - block until a
-     * child exits (sys_exit wakes us).  Then re-scan. */
+     * child exits (sys_exit wakes us) or stops (do_signal wakes us).
+     * Then re-scan. */
     sleep_on(&parent->wait);
     return sys_wait4(pid, status_ptr, options, rusage);
 }
@@ -785,11 +829,17 @@ static int do_exec(const char *user_path, char **user_argv, char **user_envp)
     task->mm.brk_end = USER_HEAP_START;
     
     /* exec resets signal state (POSIX): handlers back to default, no
-     * pending signals, no handler in flight. */
+     * pending signals, no handler in flight.  Credentials, process group
+     * and session are preserved across exec. */
     memset(task->sig_handlers, 0, sizeof(task->sig_handlers));
+    memset(task->sig_hmask,    0, sizeof(task->sig_hmask));
+    memset(task->sig_hflags,   0, sizeof(task->sig_hflags));
     task->pending    = 0;
     task->blocked    = 0;
     task->sig_active = 0;
+    task->stop_sig   = 0;
+    task->stop_reported = 0;
+    task->continued  = 0;
     
     /* Load new binary into memory */
     uint32_t num_pages = (file_size + PAGE_SIZE - 1) / PAGE_SIZE;
@@ -963,6 +1013,11 @@ int sys_chdir(const char *user_path)
     }
     kernel_path[sizeof(kernel_path) - 1] = '\0';
     
+    /* Require search (execute) permission on the directory. */
+    int perm = fs_access_perm(kernel_path, 1);   /* X_OK */
+    if (perm < 0)
+        return perm;
+    
     return fs_chdir(kernel_path);
 }
 
@@ -992,4 +1047,125 @@ int sys_getdents(int fd, dirent_t *user_buf, unsigned int count)
         n++;
     }
     return (int)n;
+}
+
+/* ============================================================================
+ * Process groups & sessions (POSIX job control foundation)
+ * ============================================================================ */
+
+/**
+ * sys_setpgid - Set the process group of a process.
+ * @param pid  Target PID, or 0 for the calling process
+ * @param pgid Desired process group, or 0 to use the target's PID
+ * @return 0 on success, -errno on error
+ *
+ * A process may change its own group or that of an (unexec'd) child.
+ */
+int sys_setpgid(int pid, int pgid)
+{
+    if (pgid < 0)
+        return -EINVAL;
+
+    task_struct_t *task = current;
+    task_struct_t *target = task;
+
+    if (pid != 0 && pid != (int)task->pid) {
+        target = find_task_by_pid((uint32_t)pid);
+        if (!target)
+            return -ESRCH;
+        /* Only a parent may set a child's process group (simplified). */
+        if (target->ppid != task->pid)
+            return -EPERM;
+    }
+
+    target->pgid = (pgid == 0) ? target->pid : (uint32_t)pgid;
+    return 0;
+}
+
+/**
+ * sys_getpgid - Get the process group of a process.
+ */
+int sys_getpgid(int pid)
+{
+    task_struct_t *task = current;
+    if (pid != 0) {
+        task = find_task_by_pid((uint32_t)pid);
+        if (!task)
+            return -ESRCH;
+    }
+    return (int)task->pgid;
+}
+
+/**
+ * sys_getpgrp - Get the process group of the calling process.
+ */
+int sys_getpgrp(void)
+{
+    return (int)current->pgid;
+}
+
+/**
+ * sys_setsid - Create a new session.  The caller becomes the session
+ * leader and the leader of a new process group (its own PID).
+ * @return The new session id, or -errno if already a group leader
+ */
+int sys_setsid(void)
+{
+    task_struct_t *task = current;
+    if (task->pgid == task->pid)
+        return -EPERM;   /* already a process group leader */
+
+    task->sid  = task->pid;
+    task->pgid = task->pid;
+    return (int)task->sid;
+}
+
+/**
+ * sys_getsid - Get the session id of a process.
+ */
+int sys_getsid(int pid)
+{
+    task_struct_t *task = current;
+    if (pid != 0) {
+        task = find_task_by_pid((uint32_t)pid);
+        if (!task)
+            return -ESRCH;
+    }
+    return (int)task->sid;
+}
+
+/* ============================================================================
+ * User / group ids
+ * ============================================================================ */
+
+int sys_getuid(void)  { return (int)current->uid; }
+int sys_geteuid(void) { return (int)current->euid; }
+int sys_getgid(void)  { return (int)current->gid; }
+int sys_getegid(void) { return (int)current->egid; }
+
+/**
+ * sys_setuid - Set real + effective user id.
+ * Root may set any uid; a non-root process may only set its own uid/euid.
+ */
+int sys_setuid(uint32_t uid)
+{
+    task_struct_t *task = current;
+    if (task->euid != 0 && uid != task->uid && uid != task->euid)
+        return -EPERM;
+    task->uid  = uid;
+    task->euid = uid;
+    return 0;
+}
+
+/**
+ * sys_setgid - Set real + effective group id.
+ */
+int sys_setgid(uint32_t gid)
+{
+    task_struct_t *task = current;
+    if (task->egid != 0 && gid != task->gid && gid != task->egid)
+        return -EPERM;
+    task->gid  = gid;
+    task->egid = gid;
+    return 0;
 }
