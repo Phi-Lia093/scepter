@@ -3,6 +3,7 @@
 
 #include <stddef.h>
 #include <stdarg.h>
+#include <sys/types.h>   /* ssize_t */
 
 /* ============================================================================
  * Minimal FILE abstraction: a FILE is just a file descriptor.
@@ -26,6 +27,7 @@ int fputc(int c, FILE stream);
 int puts(const char *s);
 int fputs(const char *s, FILE stream);
 char *fgets(char *s, int size, FILE stream);
+ssize_t getline(char **lineptr, size_t *n, FILE stream);
 
 /* Formatted output */
 int printf(const char *fmt, ...);
@@ -41,5 +43,10 @@ FILE fopen(const char *path, const char *mode);
 int fclose(FILE stream);
 size_t fread(void *ptr, size_t size, size_t nmemb, FILE stream);
 size_t fwrite(const void *ptr, size_t size, size_t nmemb, FILE stream);
+FILE fdopen(int fd, const char *mode);
+int fileno(FILE stream);
+
+/* Error reporting */
+void perror(const char *s);
 
 #endif /* _STDIO_H */

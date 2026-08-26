@@ -33,5 +33,13 @@ typedef struct {
 DIR *opendir(const char *path);
 struct dirent *readdir(DIR *dir);
 int closedir(DIR *dir);
+void rewinddir(DIR *dir);
+void seekdir(DIR *dir, long offset);
+long telldir(DIR *dir);
+
+int alphasort(const struct dirent **a, const struct dirent **b);
+int scandir(const char *path, struct dirent ***namelist,
+            int (*filter)(const struct dirent *),
+            int (*compar)(const struct dirent **, const struct dirent **));
 
 #endif /* _DIRENT_H */

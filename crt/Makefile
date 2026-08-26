@@ -38,6 +38,7 @@ LIBC_C_SOURCES = \
     libc/string/memset.c \
     libc/string/memcpy.c \
     libc/string/string_extra.c \
+    libc/string/string_more.c \
     libc/stdlib/atoi.c \
     libc/stdlib/malloc.c \
     libc/stdlib/stdlib_extra.c \
@@ -46,7 +47,11 @@ LIBC_C_SOURCES = \
     libc/ctype/isalpha.c \
     libc/ctype/isspace.c \
     libc/errno.c \
-    libc/dirent.c
+    libc/dirent.c \
+    libc/time/time.c \
+    libc/process/exec.c \
+    libc/process/getopt.c \
+    libc/misc.c
 
 SYSCALL_SOURCES = syscall.c
 CRT0_SOURCE     = libc/crt0.s
@@ -59,7 +64,7 @@ ALL_LIB_OBJECTS = $(LIBC_OBJECTS) $(SYSCALL_OBJECTS)
 # Core utilities (init goes to /, the rest to /bin)
 # ============================================================================
 
-COREUTILS = sh ls cat echo mkdir rm rmdir mv cp pwd clear uname test sigtest ftest
+COREUTILS = sh ls cat echo mkdir rm rmdir mv cp pwd clear uname test sigtest ftest ptest alarmtest
 INIT_BIN  = $(ROOT_DIR)/init
 CORE_BINS = $(addprefix $(BIN_DIR)/, $(COREUTILS))
 TEST_BIN  = $(BIN_DIR)/test

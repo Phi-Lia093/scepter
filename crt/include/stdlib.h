@@ -8,6 +8,14 @@ void *malloc(size_t size);
 void *calloc(size_t nmemb, size_t size);
 void *realloc(void *ptr, size_t size);
 void free(void *ptr);
+int posix_memalign(void **memptr, size_t alignment, size_t size);
+
+/* Sorting */
+void qsort(void *base, size_t nmemb, size_t size,
+           int (*compar)(const void *, const void *));
+
+/* Path resolution */
+char *realpath(const char *path, char *resolved);
 
 /* String conversion */
 int atoi(const char *s);
@@ -25,5 +33,6 @@ extern char **environ;
 char *getenv(const char *name);
 int setenv(const char *name, const char *value, int overwrite);
 int unsetenv(const char *name);
+int clearenv(void);
 
 #endif /* _STDLIB_H */

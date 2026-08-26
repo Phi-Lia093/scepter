@@ -2,6 +2,8 @@
 #include "driver/block/cache.h"
 #include "driver/block/ide.h"
 #include "driver/block/part_mbr.h"
+#include "lib/string.h"
+#include "lib/printk.h"
 #include <stdint.h>
 #include <stddef.h>
 
@@ -61,26 +63,44 @@ int register_block_device(int prim_id, block_ops_t *ops)
  * Public API – I/O (with LRU cache)
  * ========================================================================= */
 
+/**
+ * Read count blocks starting at offset from block device prim_id.
+ * count is in 512-byte blocks; each block is served from the LRU cache
+ * when possible. Returns bytes read or -1 on error.
+ */
 int bread(int prim_id, int scnd_id, void *buf, uint32_t offset, size_t count)
 {
     block_device_t *dev = find_block_device(prim_id);
     if (!dev || !dev->ops.read)
         return -1;
 
-    /* Try cache first for single-block reads at offset 0 */
-    if (count == 1 && offset == 0) {
-        if (cache_lookup(prim_id, scnd_id, 0, buf))
-            return CACHE_BLOCK_SIZE;
+    uint8_t *out    = (uint8_t *)buf;
+    uint8_t  tmp[CACHE_BLOCK_SIZE];
+
+    for (uint32_t i = 0; i < count; i++) {
+        uint32_t sector = offset + i;
+        uint8_t *dest   = out + i * CACHE_BLOCK_SIZE;
+
+        if (cache_lookup(prim_id, scnd_id, sector, tmp) == 1) {
+            for (int b = 0; b < CACHE_BLOCK_SIZE; b++)
+                dest[b] = tmp[b];
+        } else {
+            int ret = dev->ops.read(prim_id, scnd_id, tmp, sector, 1);
+            if (ret < 0)
+                return (i > 0) ? (int)(i * CACHE_BLOCK_SIZE) : ret;
+            cache_insert(prim_id, scnd_id, sector, tmp);
+            for (int b = 0; b < CACHE_BLOCK_SIZE; b++)
+                dest[b] = tmp[b];
+        }
     }
-
-    int ret = dev->ops.read(prim_id, scnd_id, buf, offset, count);
-
-    if (ret > 0 && count == 1 && offset == 0)
-        cache_insert(prim_id, scnd_id, 0, buf);
-
-    return ret;
+    return (int)(count * CACHE_BLOCK_SIZE);
 }
 
+/**
+ * Write count blocks starting at offset to block device prim_id.
+ * count is in 512-byte blocks. Writes through to the device and keeps
+ * the cache coherent. Returns bytes written or -1 on error.
+ */
 int bwrite(int prim_id, int scnd_id, const void *buf,
            uint32_t offset, size_t count)
 {
@@ -88,13 +108,20 @@ int bwrite(int prim_id, int scnd_id, const void *buf,
     if (!dev || !dev->ops.write)
         return -1;
 
-    int ret = dev->ops.write(prim_id, scnd_id, buf, offset, count);
+    const uint8_t *in = (const uint8_t *)buf;
 
-    /* Write-through: update cache on single-block writes at offset 0 */
-    if (ret > 0 && count == 1 && offset == 0)
-        cache_insert(prim_id, scnd_id, 0, buf);
+    for (uint32_t i = 0; i < count; i++) {
+        uint32_t sector = offset + i;
+        const uint8_t *src = in + i * CACHE_BLOCK_SIZE;
 
-    return ret;
+        int ret = dev->ops.write(prim_id, scnd_id, src, sector, 1);
+        if (ret < 0)
+            return (i > 0) ? (int)(i * CACHE_BLOCK_SIZE) : ret;
+
+        /* Keep the cache coherent (write-through). */
+        cache_insert(prim_id, scnd_id, sector, src);
+    }
+    return (int)(count * CACHE_BLOCK_SIZE);
 }
 
 int block_ioctl(int prim_id, int scnd_id, unsigned int command, uint32_t arg)

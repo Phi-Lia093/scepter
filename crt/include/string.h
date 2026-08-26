@@ -22,6 +22,7 @@ char *strchr(const char *s, int c);
 char *strrchr(const char *s, int c);
 char *strstr(const char *haystack, const char *needle);
 char *strtok(char *str, const char *delim);
+char *strtok_r(char *str, const char *delim, char **saveptr);
 
 /* Spanning */
 size_t strspn(const char *s, const char *accept);
@@ -35,5 +36,18 @@ int memcmp(const void *s1, const void *s2, size_t n);
 
 /* Allocation-based helpers (require stdlib) */
 char *strdup(const char *s);
+char *strndup(const char *s, size_t n);
+char *strsep(char **stringp, const char *delim);
+
+/* Case-insensitive comparison */
+int strcasecmp(const char *s1, const char *s2);
+int strncasecmp(const char *s1, const char *s2, size_t n);
+
+/* Path helpers (may write to a static buffer) */
+char *basename(const char *path);
+char *dirname(const char *path);
+
+/* Error strings */
+const char *strerror(int errnum);
 
 #endif /* _STRING_H */

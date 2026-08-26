@@ -42,9 +42,14 @@ typedef struct registers {
 #define SYS_CHMOD  15   /* Change permission bits             */
 #define SYS_LSEEK  19   /* Reposition file offset */
 #define SYS_GETPID 20   /* Get process ID */
+#define SYS_ALARM  27   /* Schedule SIGALRM after N seconds   */
 #define SYS_NANOSLEEP 35  /* Sleep for specified time (PIT tick based) */
 #define SYS_SETUID  23   /* Set real + effective user id */
 #define SYS_GETUID  24   /* Get real user id */
+#define SYS_TIMES  100   /* Get process and system times      */
+#define SYS_SETITIMER 104 /* Set an interval timer            */
+#define SYS_GETITIMER 105 /* Get an interval timer            */
+#define SYS_UTIME  136   /* Set file access/modification time */
 #define SYS_FCNTL  55    /* File control (fcntl) */
 #define SYS_UMASK  60    /* Set file creation mask */
 #define SYS_SYMLINK 83   /* Create a symbolic link */
@@ -62,6 +67,8 @@ typedef struct registers {
 #define SYS_PWRITE 181   /* Write at explicit offset */
 #define SYS_FTRUNCATE 93 /* Truncate an open file */
 #define SYS_DUP3 330     /* dup2 with O_CLOEXEC support */
+#define SYS_CLOCK_GETTIME 265 /* Get current clock value */
+#define SYS_CLOCK_GETRES 266  /* Get clock resolution */
 #define SYS_SETGID  46   /* Set real + effective group id */
 #define SYS_GETGID  47   /* Get real group id */
 #define SYS_GETEUID 49   /* Get effective user id */
@@ -70,6 +77,7 @@ typedef struct registers {
 #define SYS_GETPGRP 65   /* Get process group of calling process */
 #define SYS_SETSID  66   /* Create a new session */
 #define SYS_SIGACTION 67 /* Install a signal handler (POSIX) */
+#define SYS_MPROTECT 125 /* Change protection on a memory region */
 #define SYS_SIGSUSPEND 72 /* Wait for a signal */
 #define SYS_SIGPENDING 73 /* Examine pending signals */
 #define SYS_SIGPROCMASK 126 /* Examine/change blocked signals */

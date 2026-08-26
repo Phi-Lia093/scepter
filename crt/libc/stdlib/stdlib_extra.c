@@ -1,6 +1,8 @@
 /* ============================================================================
- * Additional stdlib: abs, labs, strtol
+ * Additional stdlib: abs, labs, strtol, qsort
  * ============================================================================ */
+
+#include <stddef.h>
 
 int abs(int n)
 {
@@ -48,4 +50,55 @@ long strtol(const char *nptr, char **endptr, int base)
 
     if (endptr) *endptr = any ? (char *)p : (char *)nptr;
     return neg ? -val : val;
+}
+
+/* ============================================================================
+ * qsort - simple quicksort (Hoare partition).
+ * ============================================================================ */
+
+static void swap_bytes(char *a, char *b, size_t size)
+{
+    for (size_t i = 0; i < size; i++) {
+        char t = a[i];
+        a[i] = b[i];
+        b[i] = t;
+    }
+}
+
+static void qsort_rec(char *base, size_t nmemb, size_t size,
+                      int (*compar)(const void *, const void *))
+{
+    if (nmemb <= 1)
+        return;
+
+    /* Median-of-three pivot. */
+    char *lo = base;
+    char *hi = base + (nmemb - 1) * size;
+    char *mid = base + (nmemb / 2) * size;
+    if (compar(mid, lo) < 0) swap_bytes(mid, lo, size);
+    if (compar(hi, mid) < 0) swap_bytes(hi, mid, size);
+    if (compar(mid, lo) < 0) swap_bytes(mid, lo, size);
+    swap_bytes(mid, lo, size);
+
+    char *pivot = lo;
+    char *i = base + size;
+    char *j = hi;
+    while (i <= j) {
+        while (i <= j && compar(i, pivot) <= 0) i += size;
+        while (compar(j, pivot) > 0) j -= size;
+        if (i < j) swap_bytes(i, j, size);
+    }
+    swap_bytes(pivot, j, size);
+
+    size_t left = (size_t)(j - base) / size;
+    qsort_rec(base, left, size, compar);
+    qsort_rec(j + size, nmemb - left - 1, size, compar);
+}
+
+void qsort(void *base, size_t nmemb, size_t size,
+           int (*compar)(const void *, const void *))
+{
+    if (!base || !compar || size == 0)
+        return;
+    qsort_rec((char *)base, nmemb, size, compar);
 }

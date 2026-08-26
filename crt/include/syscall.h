@@ -26,6 +26,7 @@
 #define SYS_CHMOD  15
 #define SYS_LSEEK  19
 #define SYS_GETPID 20
+#define SYS_ALARM  27
 #define SYS_SETUID 23
 #define SYS_GETUID 24
 #define SYS_ACCESS 33
@@ -52,12 +53,17 @@
 #define SYS_GETPGRP 65
 #define SYS_SETSID 66
 #define SYS_SIGACTION 67
+#define SYS_MPROTECT 125
 #define SYS_SIGSUSPEND 72
 #define SYS_SIGPENDING 73
 #define SYS_GETTIMEOFDAY 78
 #define SYS_SELECT 82
 #define SYS_SYMLINK 83
 #define SYS_READLINK 85
+#define SYS_TIMES  100
+#define SYS_SETITIMER 104
+#define SYS_GETITIMER 105
+#define SYS_UTIME  136
 #define SYS_MMAP   90
 #define SYS_MUNMAP 91
 #define SYS_TRUNCATE 92
@@ -81,6 +87,8 @@
 #define SYS_PREAD 180
 #define SYS_PWRITE 181
 #define SYS_GETCWD 183
+#define SYS_CLOCK_GETTIME 265
+#define SYS_CLOCK_GETRES 266
 #define SYS_DUP3 330
 
 /* Standard file descriptors (compat) */

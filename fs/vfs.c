@@ -1121,3 +1121,18 @@ int fs_mknod(const char *path, uint32_t mode, uint32_t dev)
         return -1;
     return fs_drivers[mp->fs_id].ops.mknod(mp->fs_private, rel, mode, dev);
 }
+
+int fs_utime(const char *path, uint32_t atime, uint32_t mtime)
+{
+    if (!path) return -1;
+    char abs[MAX_PATH_LEN];
+    if (resolve_path(path, abs, sizeof(abs)) != 0) return -1;
+
+    const char *rel;
+    mount_point_t *mp = resolve_mount(abs, &rel);
+    if (!mp) return -1;
+
+    if (!fs_drivers[mp->fs_id].ops.utime)
+        return -1;
+    return fs_drivers[mp->fs_id].ops.utime(mp->fs_private, rel, atime, mtime);
+}

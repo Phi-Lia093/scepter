@@ -31,6 +31,9 @@ vma_t *vma_create(uint32_t start, uint32_t end, uint32_t flags, uint32_t type)
     vma->vm_end = PAGE_ALIGN(end);
     vma->vm_flags = flags;
     vma->vm_type = type;
+    vma->vm_fd = -1;         /* anonymous by default */
+    vma->vm_file_off = 0;
+    vma->vm_shared = 0;
     
     /* Initialize list node */
     INIT_LIST_HEAD(&vma->list);
@@ -222,5 +225,38 @@ void vma_dump(task_struct_t *task)
     
     if (count == 0) {
         printk("  (no VMAs)\n");
+    }
+}
+
+/* ============================================================================
+ * mm_writeback_shared - Write MAP_SHARED file-backed VMA pages back to
+ * their files.  Called from do_exit() while the process's fds are still
+ * open (the VMA holds the fd number captured at mmap() time).
+ * ============================================================================ */
+void mm_writeback_shared(task_struct_t *task)
+{
+    if (!task)
+        return;
+
+    list_head_t *pos;
+    list_for_each(pos, &task->mm.vma_list) {
+        vma_t *vma = list_entry(pos, vma_t, list);
+
+        if (vma->vm_type != VMA_MMAP || vma->vm_fd < 0 || !vma->vm_shared)
+            continue;
+
+        for (uint32_t a = vma->vm_start; a < vma->vm_end; a += 0x1000) {
+            uint32_t pdi = a >> 22;
+            uint32_t pti = (a >> 12) & 0x3FF;
+            uint32_t *pt = task->mm.page_tables[pdi];
+            if (!pt || !(pt[pti] & 0x1))
+                continue;
+
+            uint32_t file_off = vma->vm_file_off + (a - vma->vm_start);
+            /* The page is mapped into user space; read it directly. */
+            extern int fs_pwrite(int fd, const void *buf, size_t count,
+                                 uint32_t offset);
+            fs_pwrite(vma->vm_fd, (const void *)a, 0x1000, file_off);
+        }
     }
 }

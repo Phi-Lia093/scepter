@@ -44,6 +44,10 @@ void do_exit(int status)
     
     /* Declare loop variables once for all uses */
     list_head_t *pos, *tmp;
+
+    /* Write back MAP_SHARED file-backed pages while fds are still open. */
+    extern void mm_writeback_shared(task_struct_t *task);
+    mm_writeback_shared(task);
     
     /* Close all open file descriptors (with proper reference counting) */
     if (!list_empty(&task->files)) {
@@ -202,6 +206,10 @@ int sys_fork(registers_t *regs)
     child->gid  = parent->gid;
     child->egid = parent->egid;
     child->umask = parent->umask;
+    child->itimer_remaining = 0;
+    child->itimer_interval  = 0;
+    child->uticks = 0;
+    child->sticks = 0;
     
     /* Signal state: handlers are inherited, but the child starts with no
      * pending/blocked signals, no handler in flight, and is not stopped. */
@@ -262,6 +270,9 @@ int sys_fork(registers_t *regs)
             fork_cleanup_failed(child);
             return -1;
         }
+        cvma->vm_fd       = pvma->vm_fd;
+        cvma->vm_file_off = pvma->vm_file_off;
+        cvma->vm_shared   = pvma->vm_shared;
         
         vma_insert(child, cvma);
         

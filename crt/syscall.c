@@ -18,6 +18,9 @@
 #include "sys/mman.h"
 #include "sys/uio.h"
 #include "sys/select.h"
+#include "sys/times.h"
+#include "sys/time.h"
+#include "utime.h"
 #include "poll.h"
 #include "dirent.h"
 #include "fcntl.h"
@@ -607,6 +610,13 @@ int munmap(void *addr, size_t length)
     return 0;
 }
 
+int mprotect(void *addr, size_t length, int prot)
+{
+    long ret = syscall3(SYS_MPROTECT, (int)addr, (int)length, prot);
+    if (ret < 0) { errno = -ret; return -1; }
+    return 0;
+}
+
 /* ============================================================================
  * Time
  * ============================================================================ */
@@ -632,6 +642,66 @@ unsigned int sleep(unsigned int seconds)
     if (nanosleep(&req, &rem) < 0)
         return (unsigned int)rem.tv_sec;
     return 0;
+}
+
+time_t time(time_t *tloc)
+{
+    struct timespec ts;
+    if (clock_gettime(CLOCK_REALTIME, &ts) < 0)
+        return (time_t)-1;
+    if (tloc)
+        *tloc = (time_t)ts.tv_sec;
+    return (time_t)ts.tv_sec;
+}
+
+int clock_gettime(clockid_t clockid, struct timespec *ts)
+{
+    long ret = syscall2(SYS_CLOCK_GETTIME, (int)clockid, (int)ts);
+    if (ret < 0) { errno = -ret; return -1; }
+    return 0;
+}
+
+int clock_getres(clockid_t clockid, struct timespec *ts)
+{
+    long ret = syscall2(SYS_CLOCK_GETRES, (int)clockid, (int)ts);
+    if (ret < 0) { errno = -ret; return -1; }
+    return 0;
+}
+
+unsigned int alarm(unsigned int seconds)
+{
+    long ret = syscall1(SYS_ALARM, (int)seconds);
+    if (ret < 0) { errno = -ret; return 0; }
+    return (unsigned int)ret;
+}
+
+int setitimer(int which, const struct itimerval *new_value,
+              struct itimerval *old_value)
+{
+    long ret = syscall3(SYS_SETITIMER, which, (int)new_value, (int)old_value);
+    if (ret < 0) { errno = -ret; return -1; }
+    return 0;
+}
+
+int getitimer(int which, struct itimerval *value)
+{
+    long ret = syscall2(SYS_GETITIMER, which, (int)value);
+    if (ret < 0) { errno = -ret; return -1; }
+    return 0;
+}
+
+int utime(const char *path, const struct utimbuf *times)
+{
+    long ret = syscall2(SYS_UTIME, (int)path, (int)times);
+    if (ret < 0) { errno = -ret; return -1; }
+    return 0;
+}
+
+clock_t times(struct tms *buf)
+{
+    long ret = syscall1(SYS_TIMES, (int)buf);
+    if (ret < 0) { errno = -ret; return (clock_t)-1; }
+    return (clock_t)ret;
 }
 
 /* ============================================================================

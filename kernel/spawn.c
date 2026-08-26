@@ -85,6 +85,10 @@ int spawn_init(const char *path)
     task->pgid = task->pid;
     task->sid  = task->pid;
     task->umask = 0;
+    task->itimer_remaining = 0;
+    task->itimer_interval  = 0;
+    task->uticks = 0;
+    task->sticks = 0;
     
     /* Open binary file */
     int fd = fs_open(path, O_RDONLY);

@@ -9,8 +9,12 @@
  * ============================================================================ */
 
 #include <stddef.h>
+#include <stdint.h>
+
+#define BLOCK_MAGIC 0x4D414C43   /* "MALC" */
 
 typedef struct block {
+    size_t      magic;    /* BLOCK_MAGIC (used to detect aligned allocs) */
     size_t      size;     /* usable data size (excluding header) */
     struct block *next;   /* next block in address order        */
     int         is_free;
@@ -70,6 +74,7 @@ static block_t *request_space(block_t *last, size_t size)
     block_t *b = (block_t *)sbrk(BLOCK_SIZE + size);
     if (b == (void *)-1)
         return NULL;
+    b->magic   = BLOCK_MAGIC;
     b->size    = size;
     b->next    = NULL;
     b->is_free = 0;
@@ -122,6 +127,37 @@ void *malloc(size_t size)
 }
 
 /* ============================================================================
+ * posix_memalign - aligned allocation.
+ *
+ * Allocates size + alignment + room for a back-pointer via malloc(), then
+ * rounds the returned pointer up.  The raw malloc pointer is stored in the
+ * word immediately before the aligned pointer so free() can recover it.
+ * ============================================================================ */
+
+int posix_memalign(void **memptr, size_t alignment, size_t size)
+{
+    if (!memptr)
+        return 22;   /* EINVAL */
+    if (alignment < sizeof(void *) || (alignment & (alignment - 1)) != 0)
+        return 22;   /* EINVAL: not a power of two >= sizeof(void *) */
+    if (size == 0)
+        size = 1;
+
+    void *raw = malloc(size + alignment + sizeof(void *));
+    if (!raw)
+        return 12;   /* ENOMEM */
+
+    uintptr_t addr = (uintptr_t)raw + sizeof(void *);
+    addr = (addr + alignment - 1) & ~(alignment - 1);
+
+    void **slot = (void **)(addr - sizeof(void *));
+    slot[0] = raw;
+
+    *memptr = (void *)addr;
+    return 0;
+}
+
+/* ============================================================================
  * free (with coalescing)
  * ============================================================================ */
 
@@ -129,6 +165,16 @@ void free(void *ptr)
 {
     if (!ptr)
         return;
+
+    /* posix_memalign result?  The word before the user pointer holds the
+     * raw malloc'd block; verify it really is a live heap block. */
+    void **slot = (void **)((char *)ptr - sizeof(void *));
+    block_t *raw = (block_t *)slot[0];
+    if (raw && heap_start && heap_end &&
+        (char *)raw >= (char *)heap_start && (char *)raw < (char *)heap_end &&
+        raw->magic == BLOCK_MAGIC) {
+        ptr = (void *)(raw + 1);
+    }
 
     block_t *b = (block_t *)ptr - 1;
     b->is_free = 1;

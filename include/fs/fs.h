@@ -138,6 +138,9 @@ typedef struct fs_ops {
     /* mknod: create a device node (mode has S_IFCHR/S_IFBLK, dev in dev) */
     int (*mknod)(void *fs_private, const char *path, uint32_t mode,
                  uint32_t dev);
+    /* utime: set access + modification times of a path */
+    int (*utime)(void *fs_private, const char *path,
+                 uint32_t atime, uint32_t mtime);
 
     /* ---- Poll (non-blocking readiness) ---- */
     /* Returns a POLLIN/POLLOUT/POLLERR/POLLHUP mask for the open file.
@@ -320,6 +323,9 @@ int fs_fchmod(int fd, uint32_t mode);
 
 /** Create a device node. */
 int fs_mknod(const char *path, uint32_t mode, uint32_t dev);
+
+/** Set access + modification times of a path. */
+int fs_utime(const char *path, uint32_t atime, uint32_t mtime);
 
 /**
  * Wake all processes blocked in select()/poll() so they re-check fd

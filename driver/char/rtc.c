@@ -147,24 +147,35 @@ uint32_t rtc_get_boot_unix_time(void)
 }
 
 /* =========================================================================
- * Driver Callbacks (stub implementations)
+ * Driver Callbacks
  * ========================================================================= */
+
+#define RTC_CHAR_DEV_ID 4   /* 0=VGA 1=PIT 2=TTY 3=KBD 4=RTC 10-13=serial */
+
+/* ioctl commands (must match crt/include/sys/ioctl.h) */
+#define IOCTL_RTC_GET_TIME 1  /* return current Unix time */
 
 static int rtc_read(int scnd_id)
 {
     (void)scnd_id;
-    rtc_time_t time;
-    if (rtc_get_time(&time) == 0) {
-        return (char)time.second;
-    }
-    return 0;
+    /* Return the low byte of the current Unix timestamp. */
+    return (int)(rtc_get_unix_time() & 0xFF);
 }
 
 static int rtc_write(int scnd_id, char c)
 {
     (void)scnd_id;
     (void)c;
-    return 0;  /* Stub - no-op */
+    return -1;  /* read-only */
+}
+
+static int rtc_ioctl(int prim_id, int scnd_id, unsigned int command,
+                     uint32_t arg)
+{
+    (void)prim_id; (void)scnd_id; (void)arg;
+    if (command == IOCTL_RTC_GET_TIME)
+        return (int)rtc_get_unix_time();
+    return -1;
 }
 
 /* =========================================================================
@@ -173,16 +184,21 @@ static int rtc_write(int scnd_id, char c)
 
 void rtc_init(void)
 {
-    /* Register as char device 2 */
-    char_ops_t ops = { 
-        .read = rtc_read, 
-        .write = rtc_write, 
-        .ioctl = NULL 
+    char_ops_t ops = {
+        .read  = rtc_read,
+        .write = rtc_write,
+        .ioctl = rtc_ioctl,
     };
-    register_char_device(2, &ops);
-    
+
+    /* tty0 holds prim 2; RTC must use its own id or register fails and
+     * /dev/rtc0 would silently point at the TTY. */
+    if (register_char_device(RTC_CHAR_DEV_ID, &ops) != 0) {
+        printk("[RTC] Failed to register char device %d\n", RTC_CHAR_DEV_ID);
+        return;
+    }
+
     /* Add devfs node */
-    devfs_register_device("rtc0", DT_CHRDEV, 2, 0);
+    devfs_register_device("rtc0", DT_CHRDEV, RTC_CHAR_DEV_ID, 0);
     
     /* Capture boot wall-clock time for gettimeofday() */
     rtc_boot_time = rtc_get_unix_time();

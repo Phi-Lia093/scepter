@@ -191,6 +191,36 @@ list_head_t *task_list_head(void)
     return &task_list;
 }
 
+/* ============================================================================
+ * timer_tick - Per-tick housekeeping, called from the PIT interrupt.
+ *
+ *   - decrements ITIMER_REAL counters, firing SIGALRM on expiry
+ *   - charges one tick of CPU time to the currently running task
+ *
+ * Safe from interrupt context: single-CPU, interrupts disabled while the
+ * task list is walked (schedule() also runs inside pit_isr).
+ * ============================================================================ */
+void timer_tick(void)
+{
+    if (current && current != &kernel_task)
+        current->uticks++;
+
+    list_head_t *pos;
+    list_for_each(pos, &task_list) {
+        task_struct_t *t = list_entry(pos, task_struct_t, task_list);
+
+        if (t->itimer_remaining > 0) {
+            t->itimer_remaining--;
+            if (t->itimer_remaining == 0) {
+                extern int send_signal(uint32_t pid, int signum);
+                send_signal(t->pid, SIGALRM);
+                if (t->itimer_interval > 0)
+                    t->itimer_remaining = t->itimer_interval;
+            }
+        }
+    }
+}
+
 task_struct_t *find_task_by_pid(uint32_t pid)
 {
     list_head_t *pos;

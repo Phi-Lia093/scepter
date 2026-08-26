@@ -28,6 +28,11 @@ typedef struct vma {
     uint32_t    vm_end;         /* End address (exclusive, page-aligned) */
     uint32_t    vm_flags;       /* Permissions: VM_READ|VM_WRITE|VM_EXEC */
     uint32_t    vm_type;        /* VMA_HEAP, VMA_STACK, VMA_MMAP, VMA_CODE */
+
+    /* ---- File-backed mmap support ---- */
+    int         vm_fd;          /* backing fd for VMA_MMAP (-1 = anonymous) */
+    uint32_t    vm_file_off;    /* base offset in the backing file          */
+    int         vm_shared;      /* 1 = MAP_SHARED (write-back on unmap)     */
 } vma_t;
 
 /* Forward declaration */
@@ -106,5 +111,11 @@ int vma_expand(vma_t *vma, uint32_t new_end);
  * @param task Task structure
  */
 void vma_dump(struct task_struct *task);
+
+/**
+ * Write MAP_SHARED file-backed VMA pages back to their files.
+ * Called from do_exit() while the process's fds are still open.
+ */
+void mm_writeback_shared(struct task_struct *task);
 
 #endif /* VMA_H */

@@ -286,6 +286,13 @@ static int minix3_vfs_seek(void *file_private, int32_t offset, int whence,
     
     if (target < 0) return -1;
     
+    /* Directory fds use dir_pos (entry index) for rewinddir/seekdir. */
+    if (MINIX3_ISDIR(file->inode.i_mode)) {
+        file->dir_pos = (uint32_t)target;
+        *new_offset = file->dir_pos;
+        return 0;
+    }
+
     file->offset = (uint32_t)target;
     *new_offset = file->offset;
     return 0;
@@ -1359,6 +1366,32 @@ static int minix3_vfs_mknod(void *fs_private, const char *path,
     return 0;
 }
 
+/**
+ * minix3_vfs_utime - Set access + modification times of a path.
+ */
+static int minix3_vfs_utime(void *fs_private, const char *path,
+                            uint32_t atime, uint32_t mtime)
+{
+    minix3_fs_info_t *fs = (minix3_fs_info_t *)fs_private;
+    if (!fs || !path) return -1;
+
+    void *file_private = NULL;
+    if (minix3_vfs_open(fs, path, O_RDONLY, &file_private) < 0)
+        return -1;
+    minix3_file_info_t *file = (minix3_file_info_t *)file_private;
+
+    file->inode.i_atime = atime;
+    file->inode.i_mtime = mtime;
+    file->dirty = 1;
+    if (minix3_write_inode(fs, file->inode_num, &file->inode) < 0) {
+        minix3_vfs_close(file_private);
+        return -1;
+    }
+
+    minix3_vfs_close(file_private);
+    return 0;
+}
+
 static fs_ops_t minix3_ops = {
     .mount    = minix3_mount,
     .unmount  = minix3_unmount,
@@ -1381,6 +1414,7 @@ static fs_ops_t minix3_ops = {
     .chmod    = minix3_vfs_chmod,
     .fchmod   = minix3_vfs_fchmod,
     .mknod    = minix3_vfs_mknod,
+    .utime    = minix3_vfs_utime,
 };
 
 /* ============================================================================

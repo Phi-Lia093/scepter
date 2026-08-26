@@ -73,6 +73,16 @@ static int allocate_page(task_struct_t *task, uint32_t fault_addr, vma_t *vma)
     
     /* Zero the page */
     memset(page_virt, 0, PAGE_SIZE);
+
+    /* File-backed mapping: load the page content from the file.
+     * The fd belongs to the faulting process (vma->vm_fd was captured
+     * at mmap() time and its refcount keeps the open_file alive). */
+    if (vma->vm_fd >= 0 && vma->vm_type == VMA_MMAP) {
+        uint32_t vaddr = PAGE_ALIGN_DOWN(fault_addr);
+        uint32_t file_off = vma->vm_file_off + (vaddr - vma->vm_start);
+        extern int fs_pread(int fd, void *buf, size_t count, uint32_t offset);
+        fs_pread(vma->vm_fd, page_virt, PAGE_SIZE, file_off);
+    }
     
     /* Get physical address */
     uint32_t page_phys = VIRT_TO_PHYS((uint32_t)page_virt);
@@ -88,6 +98,16 @@ static int allocate_page(task_struct_t *task, uint32_t fault_addr, vma_t *vma)
         printk("[PAGEFAULT] Failed to map page\n");
         page_free(page_virt);
         return -1;
+    }
+
+    /* Keep task->mm.page_tables[] in sync: map_page() only writes the
+     * physical PDE in pgdir[], but check_user_range()/copy_to_user() walk
+     * page_tables[] (kernel-virtual page table pointers).  Without this,
+     * user-range checks on demand-paged mmap regions fail with EFAULT. */
+    uint32_t pdi = vaddr >> 22;
+    if (task->mm.page_tables[pdi] == NULL) {
+        uint32_t pde = task->mm.pgdir[pdi];
+        task->mm.page_tables[pdi] = (uint32_t *)((pde & ~0xFFF) + KERNEL_VMA);
     }
     
     return 0;

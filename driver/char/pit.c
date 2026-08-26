@@ -33,6 +33,10 @@ void pit_isr(void)
     pit_ticks++;
     interrupt_eoi(IRQ0);
     
+    /* Interval timers + CPU-time accounting (SIGALRM, times()) */
+    extern void timer_tick(void);
+    timer_tick();
+    
     /* Wake nanosleep() waiters every tick (100 Hz) */
     wake_up(&timer_wq);
     

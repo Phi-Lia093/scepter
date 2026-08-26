@@ -119,6 +119,14 @@ typedef struct task_struct {
     uint32_t      stop_sig;        /* signal that stopped us (0 = running)    */
     int           stop_reported;   /* wait4(WUNTRACED) already reported stop  */
     int           continued;       /* SIGCONT delivered while stopped         */
+
+    /* ---- Interval timer (ITIMER_REAL -> SIGALRM) ---- */
+    uint32_t      itimer_remaining; /* ticks until SIGALRM (0 = timer off)    */
+    uint32_t      itimer_interval;  /* reload value in ticks (0 = one-shot)   */
+
+    /* ---- CPU time accounting (times()/clock_gettime) ---- */
+    uint32_t      uticks;          /* ticks in user mode                     */
+    uint32_t      sticks;          /* ticks in kernel mode                   */
 } task_struct_t;
 
 /* =========================================================================
@@ -182,6 +190,7 @@ void remove_task(task_struct_t *task);
  * Accessor for the global task list head (used by signal.c to iterate).
  */
 list_head_t *task_list_head(void);
+void timer_tick(void);
 
 /**
  * Allocate a new task structure

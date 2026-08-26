@@ -527,23 +527,52 @@ static int sys_brk(uint32_t addr)
  * @param offset File offset (must be 0 for anonymous)
  * @return Mapped address on success, -1 on error
  */
+/**
+ * task_get_pte - Resolve a PTE in a specific task's page directory.
+ * Unlike get_pte() (which walks boot_page_directory), this works for
+ * user mappings while the task's own pgdir is active in CR3.
+ */
+static uint32_t *task_get_pte(task_struct_t *task, uint32_t virt_addr)
+{
+    uint32_t pde_idx = virt_addr >> 22;
+    uint32_t pte_idx = (virt_addr >> 12) & 0x3FF;
+
+    uint32_t pde = task->mm.pgdir[pde_idx];
+    if (!(pde & 0x1))
+        return NULL;
+    uint32_t *pt = (uint32_t *)((pde & ~0xFFF) + KERNEL_VMA);
+    return &pt[pte_idx];
+}
+
+/** Unmap a range of user pages in the current task's page directory. */
+static void user_unmap_range(uint32_t virt_start, uint32_t virt_end)
+{
+    for (uint32_t a = virt_start & ~0xFFF; a < virt_end; a += 0x1000) {
+        uint32_t *pte = task_get_pte(current, a);
+        if (pte && (*pte & 0x1)) {
+            *pte = 0;
+            asm volatile("invlpg (%0)" :: "r"(a) : "memory");
+        }
+    }
+}
+
+/**
+ * sys_mmap - Map memory.
+ */
 static int sys_mmap(uint32_t addr, size_t length, int prot, int flags,
                     int fd, uint32_t offset)
 {
     task_struct_t *task = current;
     
-    /* Only support anonymous mapping for now */
-    if (fd != -1 || offset != 0) {
-        return -EINVAL;
-    }
-    
-    if (!(flags & 0x20)) {  /* MAP_ANONYMOUS */
-        return -EINVAL;
-    }
-    
     /* Validate length */
     if (length == 0) {
         return -EINVAL;
+    }
+    
+    int is_anon = (flags & 0x20) != 0;   /* MAP_ANONYMOUS */
+    if (!is_anon) {
+        if (fd < 0 || !fs_fd_valid(fd))
+            return -EBADF;
     }
     
     /* Find free region */
@@ -557,6 +586,7 @@ static int sys_mmap(uint32_t addr, size_t length, int prot, int flags,
     if (prot & 0x1) vm_flags |= VM_READ;   /* PROT_READ */
     if (prot & 0x2) vm_flags |= VM_WRITE;  /* PROT_WRITE */
     if (prot & 0x4) vm_flags |= VM_EXEC;   /* PROT_EXEC */
+    if (flags & 0x1) vm_flags |= VM_SHARED; /* MAP_SHARED */
     
     /* Create VMA for mmap region */
     vma_t *vma = vma_create(map_addr, map_addr + length, vm_flags, VMA_MMAP);
@@ -564,11 +594,60 @@ static int sys_mmap(uint32_t addr, size_t length, int prot, int flags,
         return -ENOMEM;
     }
     
+    /* File-backed mapping: remember the fd + offset.  The fd's refcount
+     * keeps the open_file alive for the lifetime of the VMA. */
+    vma->vm_fd       = is_anon ? -1 : fd;
+    vma->vm_file_off = offset;
+    vma->vm_shared   = (flags & 0x1) ? 1 : 0;
+    
     vma_insert(task, vma);
     
     /* Pages will be allocated on-demand via page fault handler */
     
     return (int)map_addr;
+}
+
+/**
+ * sys_mprotect - Change protection on a memory region.
+ * @param addr Start address
+ * @param length Size of region
+ * @param prot PROT_NONE / PROT_READ / PROT_WRITE / PROT_EXEC
+ * @return 0 on success
+ */
+static int sys_mprotect(uint32_t addr, size_t length, int prot)
+{
+    task_struct_t *task = current;
+
+    uint32_t start = addr & ~0xFFF;
+    uint32_t end   = (addr + length + 0xFFF) & ~0xFFF;
+    if (end <= start)
+        return -EINVAL;
+
+    vma_t *vma = vma_find(task, start);
+    if (!vma || start < vma->vm_start || end > vma->vm_end)
+        return -ENOMEM;   /* region must be covered by a single VMA */
+
+    uint32_t vm_flags = 0;
+    if (prot & 0x1) vm_flags |= VM_READ;
+    if (prot & 0x2) vm_flags |= VM_WRITE;
+    if (prot & 0x4) vm_flags |= VM_EXEC;
+
+    /* Preserve shared/growsdown attributes. */
+    vma->vm_flags = (vma->vm_flags & (VM_SHARED | VM_GROWSDOWN)) | vm_flags;
+
+    /* Update PTEs for already-mapped pages. */
+    for (uint32_t a = start; a < end; a += 0x1000) {
+        uint32_t *pte = task_get_pte(task, a);
+        if (pte && (*pte & 0x1)) {
+            if (vm_flags & VM_WRITE)
+                *pte |= 0x2;       /* R/W */
+            else
+                *pte &= ~0x2;      /* read-only */
+            asm volatile("invlpg (%0)" :: "r"(a) : "memory");
+        }
+    }
+
+    return 0;
 }
 
 /**
@@ -594,11 +673,28 @@ static int sys_munmap(uint32_t addr, size_t length)
         if (start < vma->vm_end && end > vma->vm_start) {
             /* For simplicity, only handle exact match for now */
             if (start == vma->vm_start && end == vma->vm_end) {
-                /* Unmap pages in this region */
-                unmap_range(vma->vm_start, vma->vm_end);
+                /* MAP_SHARED file-backed: write dirty pages back to the
+                 * file before unmapping. */
+                if (vma->vm_fd >= 0 && vma->vm_shared) {
+                    for (uint32_t a = vma->vm_start; a < vma->vm_end;
+                         a += 0x1000) {
+                        uint32_t *pte = task_get_pte(task, a);
+                        if (pte && (*pte & 0x1)) {
+                            uint32_t file_off =
+                                vma->vm_file_off + (a - vma->vm_start);
+                            char page[0x1000];
+                            if (copy_from_user(page, (void *)a, 0x1000) == 0)
+                                fs_pwrite(vma->vm_fd, page, 0x1000, file_off);
+                        }
+                    }
+                }
+
+                /* Unmap pages in this region (in the task's own pgdir) */
+                user_unmap_range(vma->vm_start, vma->vm_end);
                 
-                /* Remove and destroy VMA */
-                vma_remove(task, vma);
+                /* vma_destroy unlinks from the list AND frees the VMA.
+                 * (vma_remove must NOT be called first: its list_del
+                 * nulls the links, and vma_destroy would then double-del.) */
                 vma_destroy(vma);
             } else {
                 return -EINVAL;
@@ -1259,6 +1355,223 @@ static int sys_mknod(const char *user_path, uint32_t mode, uint32_t dev)
 }
 
 /* ============================================================================
+ * Time syscalls (clock_gettime, times, itimers, utime)
+ * ============================================================================ */
+
+#define CLOCK_REALTIME           0
+#define CLOCK_MONOTONIC          1
+#define CLOCK_PROCESS_CPUTIME_ID 2
+
+#define ITIMER_REAL 0
+
+/* POSIX tms (must match crt/include/sys/times.h) */
+struct tms_k {
+    int32_t tms_utime;
+    int32_t tms_stime;
+    int32_t tms_cutime;
+    int32_t tms_cstime;
+};
+
+/* POSIX itimerval (must match crt/include/sys/time.h) */
+struct itimerval_k {
+    timeval_t it_interval;
+    timeval_t it_value;
+};
+
+/* POSIX utimbuf (must match crt/include/utime.h) */
+struct utimbuf_k {
+    int32_t actime;
+    int32_t modtime;
+};
+
+/* Ticks -> timespec. The PIT runs at 100 Hz (10 ms/tick). */
+static void ticks_to_timespec(int32_t *sec, int32_t *nsec, uint32_t ticks)
+{
+    *sec  = (int32_t)(ticks / 100);
+    *nsec = (int32_t)((ticks % 100) * 10000000);
+}
+
+/* timespec -> ticks, rounding up so a nonzero request sleeps at least 1 tick */
+static uint32_t timespec_to_ticks(int32_t sec, int32_t nsec)
+{
+    uint32_t t = (uint32_t)sec * 100 + (uint32_t)nsec / 10000000;
+    if (sec > 0 || nsec > 0) {
+        if ((nsec % 10000000) != 0)
+            t++;
+    }
+    return t;
+}
+
+static int sys_clock_gettime(int clockid, timespec_t *user_ts)
+{
+    if (!valid_user_pointer(user_ts, sizeof(timespec_t)))
+        return -EFAULT;
+
+    timespec_t ts;
+    uint32_t ticks = pit_get_ticks();
+
+    switch (clockid) {
+        case CLOCK_REALTIME: {
+            /* Wall clock = boot time + uptime.  Compute separately to
+             * avoid overflowing 32-bit ticks with boot_time * 100. */
+            ticks_to_timespec(&ts.tv_sec, &ts.tv_nsec, ticks);
+            ts.tv_sec += (int32_t)rtc_get_boot_unix_time();
+            if (copy_to_user(user_ts, &ts, sizeof(timespec_t)) < 0)
+                return -EFAULT;
+            return 0;
+        }
+        case CLOCK_MONOTONIC:
+            break;
+        case CLOCK_PROCESS_CPUTIME_ID:
+            ticks = current->uticks + current->sticks;
+            break;
+        default:
+            return -EINVAL;
+    }
+
+    ticks_to_timespec(&ts.tv_sec, &ts.tv_nsec, ticks);
+    if (copy_to_user(user_ts, &ts, sizeof(timespec_t)) < 0)
+        return -EFAULT;
+    return 0;
+}
+
+static int sys_clock_getres(int clockid, timespec_t *user_ts)
+{
+    timespec_t ts = { 0, 10000000 };   /* 10 ms resolution */
+
+    switch (clockid) {
+        case CLOCK_REALTIME:
+        case CLOCK_MONOTONIC:
+        case CLOCK_PROCESS_CPUTIME_ID:
+            break;
+        default:
+            return -EINVAL;
+    }
+
+    if (user_ts) {
+        if (!valid_user_pointer(user_ts, sizeof(timespec_t)))
+            return -EFAULT;
+        if (copy_to_user(user_ts, &ts, sizeof(timespec_t)) < 0)
+            return -EFAULT;
+    }
+    return 0;
+}
+
+static int sys_times(struct tms_k *user_tms)
+{
+    if (!valid_user_pointer(user_tms, sizeof(struct tms_k)))
+        return -EFAULT;
+
+    struct tms_k tms;
+    tms.tms_utime  = (int32_t)current->uticks;
+    tms.tms_stime  = (int32_t)current->sticks;
+    tms.tms_cutime = 0;   /* no per-child accounting yet */
+    tms.tms_cstime = 0;
+
+    if (copy_to_user(user_tms, &tms, sizeof(struct tms_k)) < 0)
+        return -EFAULT;
+    return (int)pit_get_ticks();   /* return clock ticks since boot */
+}
+
+static int sys_alarm(uint32_t seconds)
+{
+    uint32_t old_ticks = current->itimer_remaining;
+    uint32_t old_secs  = (old_ticks + 99) / 100;   /* round up */
+
+    current->itimer_remaining = seconds * 100;
+    current->itimer_interval  = 0;
+    return (int)old_secs;
+}
+
+static int sys_setitimer(int which, struct itimerval_k *user_new,
+                         struct itimerval_k *user_old)
+{
+    if (which != ITIMER_REAL)
+        return -EINVAL;
+
+    if (user_old) {
+        if (!valid_user_pointer(user_old, sizeof(struct itimerval_k)))
+            return -EFAULT;
+        struct itimerval_k old;
+        old.it_value.tv_sec  = (int32_t)(current->itimer_remaining / 100);
+        old.it_value.tv_usec = (int32_t)((current->itimer_remaining % 100) * 10000);
+        old.it_interval.tv_sec  = (int32_t)(current->itimer_interval / 100);
+        old.it_interval.tv_usec = (int32_t)((current->itimer_interval % 100) * 10000);
+        if (copy_to_user(user_old, &old, sizeof(struct itimerval_k)) < 0)
+            return -EFAULT;
+    }
+
+    if (user_new) {
+        if (!valid_user_pointer(user_new, sizeof(struct itimerval_k)))
+            return -EFAULT;
+        struct itimerval_k nv;
+        if (copy_from_user(&nv, user_new, sizeof(struct itimerval_k)) < 0)
+            return -EFAULT;
+
+        if (nv.it_value.tv_sec == 0 && nv.it_value.tv_usec == 0) {
+            /* Disarm the timer. */
+            current->itimer_remaining = 0;
+        } else {
+            current->itimer_remaining =
+                timespec_to_ticks(nv.it_value.tv_sec, nv.it_value.tv_usec);
+        }
+        if (nv.it_interval.tv_sec == 0 && nv.it_interval.tv_usec == 0)
+            current->itimer_interval = 0;
+        else
+            current->itimer_interval =
+                timespec_to_ticks(nv.it_interval.tv_sec, nv.it_interval.tv_usec);
+    }
+
+    return 0;
+}
+
+static int sys_getitimer(int which, struct itimerval_k *user_old)
+{
+    if (which != ITIMER_REAL)
+        return -EINVAL;
+    if (!valid_user_pointer(user_old, sizeof(struct itimerval_k)))
+        return -EFAULT;
+
+    struct itimerval_k old;
+    old.it_value.tv_sec  = (int32_t)(current->itimer_remaining / 100);
+    old.it_value.tv_usec = (int32_t)((current->itimer_remaining % 100) * 10000);
+    old.it_interval.tv_sec  = (int32_t)(current->itimer_interval / 100);
+    old.it_interval.tv_usec = (int32_t)((current->itimer_interval % 100) * 10000);
+
+    if (copy_to_user(user_old, &old, sizeof(struct itimerval_k)) < 0)
+        return -EFAULT;
+    return 0;
+}
+
+static int sys_utime(const char *user_path, struct utimbuf_k *user_times)
+{
+    char path[MAX_PATH_LEN];
+    if (copy_path_from_user(user_path, path, sizeof(path)) < 0)
+        return -EFAULT;
+
+    uint32_t atime, mtime;
+    if (user_times) {
+        if (!valid_user_pointer(user_times, sizeof(struct utimbuf_k)))
+            return -EFAULT;
+        struct utimbuf_k ut;
+        if (copy_from_user(&ut, user_times, sizeof(struct utimbuf_k)) < 0)
+            return -EFAULT;
+        atime = (uint32_t)ut.actime;
+        mtime = (uint32_t)ut.modtime;
+    } else {
+        uint32_t now = rtc_get_boot_unix_time() + pit_get_ticks() / 100;
+        atime = mtime = now;
+    }
+
+    int r = fs_access_perm(path, 2);   /* must be writable */
+    if (r < 0)
+        return r;
+    if (fs_utime(path, atime, mtime) < 0)
+        return -ENOENT;
+    return 0;
+}
+
+/* ============================================================================
  * System Call Dispatcher
  * ============================================================================ */
 
@@ -1359,9 +1672,12 @@ int syscall_handler(registers_t *regs, int num, uint32_t arg1, uint32_t arg2,
             return sys_getdents((int)arg1, (dirent_t *)arg2, (unsigned int)arg3);
         
         case SYS_MMAP:
-            return sys_mmap(arg1, (size_t)arg2, (int)arg3, 
-                           (int)arg4, (int)arg5, 0);
-        
+            return sys_mmap(arg1, (size_t)arg2, (int)arg3,
+                            (int)arg4, (int)arg5, 0);
+
+        case SYS_MPROTECT:
+            return sys_mprotect(arg1, (size_t)arg2, (int)arg3);
+
         case SYS_MUNMAP:
             return sys_munmap(arg1, (size_t)arg2);
         
@@ -1493,6 +1809,28 @@ int syscall_handler(registers_t *regs, int num, uint32_t arg1, uint32_t arg2,
 
         case SYS_UMASK:
             return sys_umask(arg1);
+
+        case SYS_CLOCK_GETTIME:
+            return sys_clock_gettime((int)arg1, (timespec_t *)arg2);
+
+        case SYS_CLOCK_GETRES:
+            return sys_clock_getres((int)arg1, (timespec_t *)arg2);
+
+        case SYS_TIMES:
+            return sys_times((struct tms_k *)arg1);
+
+        case SYS_ALARM:
+            return sys_alarm(arg1);
+
+        case SYS_SETITIMER:
+            return sys_setitimer((int)arg1, (struct itimerval_k *)arg2,
+                                 (struct itimerval_k *)arg3);
+
+        case SYS_GETITIMER:
+            return sys_getitimer((int)arg1, (struct itimerval_k *)arg2);
+
+        case SYS_UTIME:
+            return sys_utime((const char *)arg1, (struct utimbuf_k *)arg2);
 
         default:
             printk("[SYSCALL] Unknown syscall number: %d\n", num);

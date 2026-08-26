@@ -74,16 +74,6 @@ irq\num:
     movw  %ax, %gs
     call  \handler
 
-    /* Deliver pending signals to a user-mode interruptee.  do_signal may
-     * kill the task (default action, never returns) or rewrite the IRET
-     * frame to jump to a handler.  Frame layout at %esp (before this push):
-     *   [esp+0..28]  pusha GPRs, [esp+32..44] segs, [esp+48] cr3,
-     *   [esp+52..68] IRET frame (eip cs eflags user_esp ss)
-     * which matches registers_t's offsets for eip/eflags/user_esp/eax. */
-    pushl %esp
-    call  do_signal
-    addl  $4, %esp
-
     popl  %eax
     movl  %eax, %cr3
     popl  %gs

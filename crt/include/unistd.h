@@ -83,4 +83,41 @@ int isatty(int fd);
 unsigned int sleep(unsigned int seconds);
 int pause(void);
 
+/* Timer */
+unsigned int alarm(unsigned int seconds);
+
+/* exec family */
+int execl(const char *path, const char *arg0, ...);
+int execlp(const char *file, const char *arg0, ...);
+int execvp(const char *file, char *const argv[]);
+
+/* Hostname */
+int gethostname(char *name, size_t len);
+int sethostname(const char *name, size_t len);
+
+/* System configuration */
+#define _SC_CLK_TCK          2
+#define _SC_OPEN_MAX         4
+#define _SC_PAGESIZE         30
+#define _SC_NPROCESSORS_ONLN 84
+#define _SC_PHYS_PAGES       85
+#define _SC_ARG_MAX          0
+#define _SC_CHILD_MAX        1
+
+long sysconf(int name);
+
+/* Path configuration */
+#define _PC_LINK_MAX  0
+#define _PC_NAME_MAX  3
+#define _PC_PATH_MAX  4
+
+long pathconf(const char *path, int name);
+
+/* getopt */
+extern char *optarg;
+extern int optind;
+extern int opterr;
+extern int optopt;
+int getopt(int argc, char *const argv[], const char *optstring);
+
 #endif /* _UNISTD_H */
