@@ -25,6 +25,7 @@ typedef struct devfs_file {
     devfs_node_t *node;     /* pointer into devfs_nodes[]          */
     uint32_t      offset;   /* byte offset (block devices)         */
     int           dir_pos;  /* readdir: next node index to return  */
+    int           nonblock; /* O_NONBLOCK was requested            */
 } devfs_file_t;
 
 /* =========================================================================
@@ -130,9 +131,10 @@ static int devfs_open(void *fs_private, const char *path, int flags,
     if (*name == '\0') {
         devfs_file_t *f = (devfs_file_t *)kalloc(sizeof(devfs_file_t));
         if (!f) return -1;
-        f->node    = NULL;    /* marks this as the directory fd */
-        f->offset  = 0;
-        f->dir_pos = 0;
+        f->node     = NULL;    /* marks this as the directory fd */
+        f->offset   = 0;
+        f->dir_pos  = 0;
+        f->nonblock = (flags & O_NONBLOCK) ? 1 : 0;
         *file_private = f;
         return 0;
     }
@@ -152,9 +154,10 @@ static int devfs_open(void *fs_private, const char *path, int flags,
     devfs_file_t *f = (devfs_file_t *)kalloc(sizeof(devfs_file_t));
     if (!f) return -1;
 
-    f->node    = node;
-    f->offset  = 0;
-    f->dir_pos = 0;
+    f->node     = node;
+    f->offset   = 0;
+    f->dir_pos  = 0;
+    f->nonblock = (flags & O_NONBLOCK) ? 1 : 0;
     *file_private = f;
     return 0;
 }
@@ -178,12 +181,19 @@ static int devfs_read(void *file_private, void *buf, size_t count)
 
     if (node->type == DT_CHRDEV) {
         /* Read count characters one at a time.
-         * char_read_block blocks on devices that enabled blocking reads
-         * (the keyboard), so an interactive process can wait for input.
-         * It returns -EINTR when a signal interrupts the blocked read. */
+         * Blocking devices (the keyboard) sleep until input arrives;
+         * with O_NONBLOCK we poll first and return -EAGAIN when empty.
+         * char_read_block returns -EINTR when a signal interrupts. */
         char *cbuf = (char *)buf;
         for (size_t i = 0; i < count; i++) {
-            int c = char_read_block(node->dev_id, node->minor);
+            int c;
+            if (f->nonblock) {
+                if (!char_poll(node->dev_id, node->minor))
+                    return (int)i > 0 ? (int)i : -EAGAIN;
+                c = cread(node->dev_id, node->minor);
+            } else {
+                c = char_read_block(node->dev_id, node->minor);
+            }
             if (c < 0)
                 return (int)i > 0 ? (int)i : c;   /* -EINTR */
             cbuf[i] = (char)c;
@@ -402,6 +412,31 @@ static int devfs_fstat(void *file_private, stat_t *st)
  * devfs Operations Table
  * ========================================================================= */
 
+/* =========================================================================
+ * VFS Callback: poll (non-blocking readiness)
+ * ========================================================================= */
+
+static int devfs_poll(void *file_private)
+{
+    devfs_file_t *f = (devfs_file_t *)file_private;
+    if (!f)
+        return 0;
+
+    /* Directory fd: always readable */
+    if (!f->node)
+        return POLLIN;
+
+    if (f->node->type == DT_CHRDEV) {
+        int rev = POLLOUT;   /* char devices are always writable */
+        if (char_poll(f->node->dev_id, f->node->minor))
+            rev |= POLLIN;
+        return rev;
+    }
+
+    /* Block devices: always readable + writable */
+    return POLLIN | POLLOUT;
+}
+
 static fs_ops_t devfs_ops = {
     .mount    = devfs_mount,
     .unmount  = devfs_unmount,
@@ -419,6 +454,7 @@ static fs_ops_t devfs_ops = {
     .rename   = devfs_rename,
     .stat     = devfs_stat,
     .fstat    = devfs_fstat,
+    .poll     = devfs_poll,
 };
 
 /* =========================================================================

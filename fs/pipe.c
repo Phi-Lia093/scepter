@@ -3,7 +3,7 @@
 #include "kernel/sched.h"
 #include "mm/slab.h"
 #include "lib/printk.h"
-#include "errno.h"
+#include "fs/fs.h"   /* POLL*, O_NONBLOCK, vfs_poll_wakeup */
 
 /* =========================================================================
  * Pipe - anonymous kernel pipe (ring buffer with blocking I/O)
@@ -52,8 +52,10 @@ int pipe_read(pipe_t *p, char *buf, size_t count)
             total    += take;
 
             wake_up(&p->write_wq);   /* space freed: wake blocked writers */
+            vfs_poll_wakeup();       /* wake select()/poll() waiters      */
         } else if (p->writers == 0) {
-            return (int)total;       /* EOF (0 if nothing read yet) */
+            vfs_poll_wakeup();       /* EOF state changed                 */
+            return (int)total;       /* EOF (0 if nothing read yet)       */
         } else {
             sleep_on(&p->read_wq);   /* empty: block until data arrives */
             if (current->pending)
@@ -90,6 +92,7 @@ int pipe_write(pipe_t *p, const char *buf, size_t count)
             total    += put;
 
             wake_up(&p->read_wq);    /* data available: wake blocked readers */
+            vfs_poll_wakeup();       /* wake select()/poll() waiters         */
         } else {
             sleep_on(&p->write_wq);  /* full: block until space frees */
         }
@@ -121,4 +124,87 @@ void pipe_write_release(pipe_t *p)
         wake_up(&p->read_wq);
     if (p->readers == 0 && p->writers == 0)
         kfree(p);
+}
+
+/* =========================================================================
+ * Non-blocking variants (O_NONBLOCK) and poll support
+ * ========================================================================= */
+
+int pipe_read_nonblock(pipe_t *p, char *buf, size_t count)
+{
+    size_t total = 0;
+
+    if (!p || !buf)
+        return -1;
+
+    if (p->count > 0) {
+        size_t take = p->count;
+        if (take > count)
+            take = count;
+
+        for (size_t i = 0; i < take; i++)
+            buf[i] = p->buf[(p->tail + i) % PIPE_SIZE];
+
+        p->tail  = (p->tail + take) % PIPE_SIZE;
+        p->count -= take;
+        total    += take;
+
+        wake_up(&p->write_wq);
+        vfs_poll_wakeup();
+        return (int)total;
+    }
+
+    if (p->writers == 0)
+        return 0;               /* EOF */
+
+    return -EAGAIN;             /* empty, writers still open */
+}
+
+int pipe_write_nonblock(pipe_t *p, const char *buf, size_t count)
+{
+    size_t total = 0;
+
+    if (!p || !buf)
+        return -1;
+
+    if (p->readers == 0)
+        return -EPIPE;
+
+    size_t space = PIPE_SIZE - p->count;
+    if (space == 0)
+        return -EAGAIN;         /* full */
+
+    size_t put = count;
+    if (put > space)
+        put = space;
+
+    for (size_t i = 0; i < put; i++)
+        p->buf[(p->head + i) % PIPE_SIZE] = buf[total + i];
+
+    p->head  = (p->head + put) % PIPE_SIZE;
+    p->count += put;
+
+    wake_up(&p->read_wq);
+    vfs_poll_wakeup();
+    return (int)put;
+}
+
+int pipe_poll(pipe_t *p, int flags)
+{
+    int rev = 0;
+
+    if (flags & O_WRONLY) {
+        /* Write end */
+        if (p->readers == 0)
+            rev |= POLLERR;      /* EPIPE on write */
+        else if (p->count < PIPE_SIZE)
+            rev |= POLLOUT;      /* space available */
+    } else {
+        /* Read end */
+        if (p->count > 0)
+            rev |= POLLIN;       /* data available */
+        else if (p->writers == 0)
+            rev |= POLLIN | POLLHUP;   /* EOF */
+    }
+    return rev;
 }

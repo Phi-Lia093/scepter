@@ -33,15 +33,35 @@ typedef struct registers {
 #define SYS_OPEN   5
 #define SYS_CLOSE  6
 #define SYS_WAIT4  7    /* Simplified as SYS_WAIT */
+#define SYS_LINK   9    /* Hard link */
 #define SYS_EXEC   10   /* exec(path) - no args               */
 #define SYS_EXECVE 11   /* execve(path, argv, envp)           */
 #define SYS_CHDIR  12   /* Change working directory           */
 #define SYS_EXECV  13   /* execv(path, argv) - no envp        */
+#define SYS_MKNOD  14   /* Create a device node               */
+#define SYS_CHMOD  15   /* Change permission bits             */
 #define SYS_LSEEK  19   /* Reposition file offset */
 #define SYS_GETPID 20   /* Get process ID */
 #define SYS_NANOSLEEP 35  /* Sleep for specified time (PIT tick based) */
 #define SYS_SETUID  23   /* Set real + effective user id */
 #define SYS_GETUID  24   /* Get real user id */
+#define SYS_FCNTL  55    /* File control (fcntl) */
+#define SYS_UMASK  60    /* Set file creation mask */
+#define SYS_SYMLINK 83   /* Create a symbolic link */
+#define SYS_READLINK 85  /* Read a symbolic link */
+#define SYS_FCHMOD 94    /* Change permissions of an open fd */
+#define SYS_LSTAT 107    /* Stat without following symlinks */
+#define SYS_FSYNC 118    /* Sync a file to disk */
+#define SYS_POLL  168    /* Poll fds for readiness */
+#define SYS_SELECT 82    /* Synchronous I/O multiplexing */
+#define SYS_READV 145    /* Vector read */
+#define SYS_WRITEV 146   /* Vector write */
+#define SYS_GETSID 147   /* (see above) */
+#define SYS_FDATASYNC 148 /* Sync file data to disk */
+#define SYS_PREAD 180    /* Read at explicit offset */
+#define SYS_PWRITE 181   /* Write at explicit offset */
+#define SYS_FTRUNCATE 93 /* Truncate an open file */
+#define SYS_DUP3 330     /* dup2 with O_CLOEXEC support */
 #define SYS_SETGID  46   /* Set real + effective group id */
 #define SYS_GETGID  47   /* Get real group id */
 #define SYS_GETEUID 49   /* Get effective user id */

@@ -9,11 +9,15 @@
 #include "mm/pgtable.h"
 #include "mm/slab.h"
 #include "fs/fs.h"
+#include "fs/pipe.h"
 #include "driver/char/pit.h"
 #include "driver/char/rtc.h"
 #include "lib/printk.h"
 #include "errno.h"
 #include "lib/string.h"
+
+/* select()/poll() wait queue (defined in fs/vfs.c) */
+extern wait_queue_head_t select_wq;
 
 /* Kernel virtual memory starts at 3GB */
 #define KERNEL_VMA 0xC0000000
@@ -300,38 +304,10 @@ static int sys_ioctl(int fd, uint32_t cmd, uint32_t arg)
  */
 static int sys_dup(int oldfd)
 {
-    task_struct_t *task = current;
-    
-    /* Find the old fd_entry */
-    fd_entry_t *old_fde = NULL;
-    list_head_t *pos;
-    list_for_each(pos, &task->files) {
-        fd_entry_t *fde = list_entry(pos, fd_entry_t, node);
-        if (fde->fd == oldfd) {
-            old_fde = fde;
-            break;
-        }
-    }
-    
-    if (!old_fde || !old_fde->file) {
+    int r = fs_dup_min(oldfd, 0, 0);
+    if (r < 0)
         return -EBADF;
-    }
-    
-    /* Allocate new fd_entry */
-    fd_entry_t *new_fde = (fd_entry_t *)kalloc(sizeof(fd_entry_t));
-    if (!new_fde) {
-        return -ENOMEM;
-    }
-    
-    /* New fd shares the same open_file */
-    new_fde->fd = task->next_fd++;
-    new_fde->file = old_fde->file;
-    new_fde->file->refcount++;  /* Increment reference count */
-    
-    INIT_LIST_HEAD(&new_fde->node);
-    list_add_tail(&new_fde->node, &task->files);
-    
-    return new_fde->fd;
+    return r;
 }
 
 /**
@@ -345,78 +321,19 @@ static int sys_dup(int oldfd)
  */
 static int sys_dup2(int oldfd, int newfd)
 {
-    task_struct_t *task = current;
-    
-    /* Validate newfd range */
-    if (newfd < 0 || newfd >= 1024) {
+    int r = fs_dup2_fd(oldfd, newfd, 0);
+    if (r < 0)
         return -EBADF;
-    }
-    
-    /* If oldfd == newfd, just validate and return */
-    if (oldfd == newfd) {
-        /* Check if oldfd is valid */
-        list_head_t *pos;
-        list_for_each(pos, &task->files) {
-            fd_entry_t *fde = list_entry(pos, fd_entry_t, node);
-            if (fde->fd == oldfd) {
-                return newfd;  /* Valid, return as-is */
-            }
-        }
+    return r;
+}
+
+static int sys_dup3(int oldfd, int newfd, int flags)
+{
+    int cloexec = (flags & O_CLOEXEC) ? 1 : 0;
+    int r = fs_dup2_fd(oldfd, newfd, cloexec);
+    if (r < 0)
         return -EBADF;
-    }
-    
-    /* Find the old fd_entry */
-    fd_entry_t *old_fde = NULL;
-    list_head_t *pos;
-    list_for_each(pos, &task->files) {
-        fd_entry_t *fde = list_entry(pos, fd_entry_t, node);
-        if (fde->fd == oldfd) {
-            old_fde = fde;
-            break;
-        }
-    }
-    
-    if (!old_fde || !old_fde->file) {
-        return -EBADF;
-    }
-    
-    /* Close newfd if it's already open */
-    fd_entry_t *new_fde = NULL;
-    list_head_t *tmp;
-    list_for_each_safe(pos, tmp, &task->files) {
-        fd_entry_t *fde = list_entry(pos, fd_entry_t, node);
-        if (fde->fd == newfd) {
-            new_fde = fde;
-            break;
-        }
-    }
-    
-    if (new_fde) {
-        /* Close the existing newfd - just call fs_close which handles refcounting */
-        fs_close(newfd);
-        new_fde = NULL;  /* fs_close already freed it */
-    }
-    
-    /* Create new fd_entry for newfd */
-    new_fde = (fd_entry_t *)kalloc(sizeof(fd_entry_t));
-    if (!new_fde) {
-        return -ENOMEM;
-    }
-    
-    /* New fd shares the same open_file */
-    new_fde->fd = newfd;
-    new_fde->file = old_fde->file;
-    new_fde->file->refcount++;  /* Increment reference count */
-    
-    INIT_LIST_HEAD(&new_fde->node);
-    list_add_tail(&new_fde->node, &task->files);
-    
-    /* Update next_fd if necessary */
-    if (newfd >= task->next_fd) {
-        task->next_fd = newfd + 1;
-    }
-    
-    return newfd;
+    return r;
 }
 
 /**
@@ -774,6 +691,7 @@ static int sys_mkdir(const char *user_path, uint32_t mode)
         return -EFAULT;
     if (mode == 0)
         mode = 0777;   /* default permissions when the caller passes 0 */
+    mode &= ~current->umask;
     if (fs_mkdir(kernel_path, mode) < 0)
         return -EEXIST;
     return 0;
@@ -899,6 +817,448 @@ static int sys_uname(struct utsname *user_buf)
 }
 
 /* ============================================================================
+ * fcntl()
+ * ============================================================================ */
+
+#define F_DUPFD  0
+#define F_GETFD  1
+#define F_SETFD  2
+#define F_GETFL  3
+#define F_SETFL  4
+#define F_SETOWN 8
+#define F_GETOWN 9
+#define FD_CLOEXEC 1
+
+static int sys_fcntl(int fd, int cmd, uint32_t arg)
+{
+    task_struct_t *task = current;
+
+    switch (cmd) {
+        case F_DUPFD: {
+            int r = fs_dup_min(fd, (int)arg, 0);
+            if (r < 0)
+                return -EBADF;
+            return r;
+        }
+        case F_GETFD: {
+            int r = fs_get_cloexec(fd);
+            if (r < 0)
+                return -EBADF;
+            return r ? FD_CLOEXEC : 0;
+        }
+        case F_SETFD: {
+            if (fs_set_cloexec(fd, (arg & FD_CLOEXEC) ? 1 : 0) < 0)
+                return -EBADF;
+            return 0;
+        }
+        case F_GETFL:
+        case F_GETOWN: {
+            open_file_t *file = NULL;
+            list_head_t *pos;
+            list_for_each(pos, &task->files) {
+                fd_entry_t *e = list_entry(pos, fd_entry_t, node);
+                if (e->fd == fd) { file = e->file; break; }
+            }
+            if (!file)
+                return -EBADF;
+            return (cmd == F_GETFL) ? file->flags : file->owner;
+        }
+        case F_SETFL:
+        case F_SETOWN: {
+            open_file_t *file = NULL;
+            list_head_t *pos;
+            list_for_each(pos, &task->files) {
+                fd_entry_t *e = list_entry(pos, fd_entry_t, node);
+                if (e->fd == fd) { file = e->file; break; }
+            }
+            if (!file)
+                return -EBADF;
+            if (cmd == F_SETFL) {
+                /* Only the settable flags change; access mode preserved. */
+                file->flags = (file->flags & O_ACCMODE) | (arg & ~O_ACCMODE);
+            } else {
+                file->owner = (int)arg;
+            }
+            return 0;
+        }
+        default:
+            return -EINVAL;
+    }
+}
+
+/* ============================================================================
+ * select() / poll()
+ * ============================================================================ */
+
+#define FD_SETSIZE 256
+#define FD_SETSIZE_BYTES (FD_SETSIZE / 8)
+
+struct pollfd_k {
+    int      fd;
+    short    events;
+    short    revents;
+};
+
+static void fdset_zero(unsigned char *set)
+{
+    memset(set, 0, FD_SETSIZE_BYTES);
+}
+
+static int fdset_isset(const unsigned char *set, int fd)
+{
+    return (set[fd >> 3] >> (fd & 7)) & 1;
+}
+
+static void fdset_set(unsigned char *set, int fd)
+{
+    set[fd >> 3] |= (1 << (fd & 7));
+}
+
+/**
+ * do_poll - Core poll loop shared by poll() and select().
+ * @param fds       Array of (fd, events) pairs (kernel copies)
+ * @param nfds      Number of pairs
+ * @param timeout   Timeout in ms; -1 = block forever
+ * @return Number of fds with revents != 0
+ */
+static int do_poll(struct pollfd_k *fds, int nfds, int timeout)
+{
+    uint32_t deadline = 0;
+    if (timeout >= 0) {
+        /* 100 Hz tick = 10 ms per tick */
+        uint32_t ticks = (uint32_t)((timeout + 9) / 10);
+        deadline = pit_get_ticks() + ticks;
+    }
+
+    for (;;) {
+        int ready = 0;
+        for (int i = 0; i < nfds; i++) {
+            fds[i].revents = 0;
+            if (fds[i].fd < 0)
+                continue;   /* ignored */
+            int mask = fs_poll(fds[i].fd);
+            if (mask & POLLNVAL) {
+                fds[i].revents = POLLNVAL;
+                ready++;
+            } else {
+                fds[i].revents = mask & (fds[i].events | POLLERR |
+                                         POLLHUP | POLLNVAL);
+                if (fds[i].revents)
+                    ready++;
+            }
+        }
+        if (ready > 0)
+            return ready;
+
+        if (timeout == 0)
+            return 0;
+        if (deadline && (int32_t)(pit_get_ticks() - deadline) >= 0)
+            return 0;
+        if (current->pending)
+            return -EINTR;
+
+        sleep_on(&select_wq);
+    }
+}
+
+static int sys_poll(struct pollfd_k *user_fds, int nfds, int timeout)
+{
+    if (!user_fds || nfds < 0)
+        return -EINVAL;
+    if (nfds > 64)
+        nfds = 64;
+
+    struct pollfd_k fds[64];
+    if (nfds > 0) {
+        if (!valid_user_pointer(user_fds, nfds * sizeof(struct pollfd_k)))
+            return -EFAULT;
+        if (copy_from_user(fds, user_fds, nfds * sizeof(struct pollfd_k)) < 0)
+            return -EFAULT;
+    }
+
+    int r = do_poll(fds, nfds, timeout);
+    if (r < 0)
+        return r;
+
+    if (copy_to_user(user_fds, fds, nfds * sizeof(struct pollfd_k)) < 0)
+        return -EFAULT;
+    return r;
+}
+
+static int sys_select(int nfds, void *user_read, void *user_write,
+                      void *user_except, void *user_timeout)
+{
+    unsigned char read_set[FD_SETSIZE_BYTES];
+    unsigned char write_set[FD_SETSIZE_BYTES];
+    unsigned char except_set[FD_SETSIZE_BYTES];
+    unsigned char out_read[FD_SETSIZE_BYTES];
+    unsigned char out_write[FD_SETSIZE_BYTES];
+    unsigned char out_except[FD_SETSIZE_BYTES];
+
+    if (nfds < 0 || nfds > FD_SETSIZE)
+        return -EINVAL;
+
+    fdset_zero(read_set);
+    fdset_zero(write_set);
+    fdset_zero(except_set);
+    fdset_zero(out_read);
+    fdset_zero(out_write);
+    fdset_zero(out_except);
+
+    if (user_read && !valid_user_pointer(user_read, FD_SETSIZE_BYTES))
+        return -EFAULT;
+    if (user_write && !valid_user_pointer(user_write, FD_SETSIZE_BYTES))
+        return -EFAULT;
+    if (user_except && !valid_user_pointer(user_except, FD_SETSIZE_BYTES))
+        return -EFAULT;
+
+    if (user_read)
+        copy_from_user(read_set, user_read, FD_SETSIZE_BYTES);
+    if (user_write)
+        copy_from_user(write_set, user_write, FD_SETSIZE_BYTES);
+    if (user_except)
+        copy_from_user(except_set, user_except, FD_SETSIZE_BYTES);
+
+    /* Build the poll array. */
+    struct pollfd_k fds[FD_SETSIZE];
+    int n = 0;
+    for (int fd = 0; fd < nfds; fd++) {
+        short ev = 0;
+        if (user_read && fdset_isset(read_set, fd))
+            ev |= POLLIN;
+        if (user_write && fdset_isset(write_set, fd))
+            ev |= POLLOUT;
+        if (user_except && fdset_isset(except_set, fd))
+            ev |= POLLPRI;
+        if (ev) {
+            fds[n].fd = fd;
+            fds[n].events = ev;
+            fds[n].revents = 0;
+            n++;
+        }
+    }
+
+    /* Timeout: NULL = forever, else timeval. */
+    int timeout = -1;
+    if (user_timeout) {
+        if (!valid_user_pointer(user_timeout, sizeof(timeval_t)))
+            return -EFAULT;
+        timeval_t tv;
+        if (copy_from_user(&tv, user_timeout, sizeof(tv)) < 0)
+            return -EFAULT;
+        timeout = (int)(tv.tv_sec * 1000) + (int)(tv.tv_usec / 1000);
+        if (timeout < 0)
+            timeout = 0;
+    }
+
+    int r = do_poll(fds, n, timeout);
+    if (r < 0)
+        return r;
+
+    /* Map results back into the fd_sets. */
+    for (int i = 0; i < n; i++) {
+        if (fds[i].revents & (POLLIN | POLLPRI | POLLHUP | POLLERR))
+            fdset_set(out_read, fds[i].fd);
+        if (fds[i].revents & (POLLOUT | POLLERR))
+            fdset_set(out_write, fds[i].fd);
+        if (fds[i].revents & POLLPRI)
+            fdset_set(out_except, fds[i].fd);
+    }
+
+    if (user_read && copy_to_user(user_read, out_read, FD_SETSIZE_BYTES) < 0)
+        return -EFAULT;
+    if (user_write && copy_to_user(user_write, out_write, FD_SETSIZE_BYTES) < 0)
+        return -EFAULT;
+    if (user_except && copy_to_user(user_except, out_except, FD_SETSIZE_BYTES) < 0)
+        return -EFAULT;
+
+    return r;
+}
+
+/* ============================================================================
+ * Vector / positional I/O
+ * ============================================================================ */
+
+struct iovec_k {
+    void    *iov_base;
+    uint32_t iov_len;
+};
+
+static int sys_readv(int fd, struct iovec_k *user_vec, int count)
+{
+    if (count < 0)
+        return -EINVAL;
+    if (count > 16)
+        count = 16;
+
+    struct iovec_k vec[16];
+    if (count > 0) {
+        if (!valid_user_pointer(user_vec, count * sizeof(struct iovec_k)))
+            return -EFAULT;
+        if (copy_from_user(vec, user_vec, count * sizeof(struct iovec_k)) < 0)
+            return -EFAULT;
+    }
+
+    int total = 0;
+    for (int i = 0; i < count; i++) {
+        int n = sys_read(fd, vec[i].iov_base, vec[i].iov_len);
+        if (n < 0)
+            return total > 0 ? total : n;
+        total += n;
+        if (n < (int)vec[i].iov_len)
+            break;   /* EOF or short read */
+    }
+    return total;
+}
+
+static int sys_writev(int fd, struct iovec_k *user_vec, int count)
+{
+    if (count < 0)
+        return -EINVAL;
+    if (count > 16)
+        count = 16;
+
+    struct iovec_k vec[16];
+    if (count > 0) {
+        if (!valid_user_pointer(user_vec, count * sizeof(struct iovec_k)))
+            return -EFAULT;
+        if (copy_from_user(vec, user_vec, count * sizeof(struct iovec_k)) < 0)
+            return -EFAULT;
+    }
+
+    int total = 0;
+    for (int i = 0; i < count; i++) {
+        int n = sys_write(fd, vec[i].iov_base, vec[i].iov_len);
+        if (n < 0)
+            return total > 0 ? total : n;
+        total += n;
+        if (n < (int)vec[i].iov_len)
+            break;
+    }
+    return total;
+}
+
+static int sys_pread(int fd, void *buf, size_t count, uint32_t offset)
+{
+    if (!valid_user_pointer(buf, count))
+        return -EFAULT;
+    return fs_pread(fd, buf, count, offset);
+}
+
+static int sys_pwrite(int fd, const void *buf, size_t count, uint32_t offset)
+{
+    if (!valid_user_pointer(buf, count))
+        return -EFAULT;
+    return fs_pwrite(fd, buf, count, offset);
+}
+
+static int sys_ftruncate(int fd, uint32_t length)
+{
+    if (fs_truncate(fd, length) < 0)
+        return -EINVAL;
+    return 0;
+}
+
+static int sys_fsync(int fd)
+{
+    /* minix3 writes are synchronous; nothing to flush. */
+    if (!fs_fd_valid(fd))
+        return -EBADF;
+    return 0;
+}
+
+static int sys_fdatasync(int fd)
+{
+    return sys_fsync(fd);
+}
+
+/* ============================================================================
+ * Links / metadata
+ * ============================================================================ */
+
+static int sys_link(const char *user_old, const char *user_new)
+{
+    char old_path[MAX_PATH_LEN], new_path[MAX_PATH_LEN];
+    if (copy_path_from_user(user_old, old_path, sizeof(old_path)) < 0)
+        return -EFAULT;
+    if (copy_path_from_user(user_new, new_path, sizeof(new_path)) < 0)
+        return -EFAULT;
+    int r = fs_access_perm(old_path, 2);
+    if (r < 0)
+        return r;
+    if (fs_link(old_path, new_path) < 0)
+        return -EEXIST;
+    return 0;
+}
+
+static int sys_symlink(const char *user_target, const char *user_path)
+{
+    char target[MAX_PATH_LEN], path[MAX_PATH_LEN];
+    if (copy_path_from_user(user_target, target, sizeof(target)) < 0)
+        return -EFAULT;
+    if (copy_path_from_user(user_path, path, sizeof(path)) < 0)
+        return -EFAULT;
+    if (fs_symlink(target, path) < 0)
+        return -EEXIST;
+    return 0;
+}
+
+static int sys_readlink(const char *user_path, char *user_buf, size_t bufsize)
+{
+    char path[MAX_PATH_LEN];
+    if (copy_path_from_user(user_path, path, sizeof(path)) < 0)
+        return -EFAULT;
+    if (!valid_user_pointer(user_buf, bufsize))
+        return -EFAULT;
+
+    char kbuf[256];
+    size_t n = bufsize > sizeof(kbuf) ? sizeof(kbuf) : bufsize;
+    int r = fs_readlink(path, kbuf, n);
+    if (r < 0)
+        return -EINVAL;
+    if (copy_to_user(user_buf, kbuf, (size_t)r + 1) < 0)
+        return -EFAULT;
+    return r;
+}
+
+static int sys_lstat(const char *user_path, stat_t *user_stat)
+{
+    /* Symlinks are not followed anywhere in this kernel yet, so lstat
+     * and stat behave identically. */
+    return sys_stat(user_path, user_stat);
+}
+
+static int sys_chmod(const char *user_path, uint32_t mode)
+{
+    char path[MAX_PATH_LEN];
+    if (copy_path_from_user(user_path, path, sizeof(path)) < 0)
+        return -EFAULT;
+    int r = fs_access_perm(path, 2);
+    if (r < 0)
+        return r;
+    if (fs_chmod(path, mode) < 0)
+        return -ENOENT;
+    return 0;
+}
+
+static int sys_fchmod(int fd, uint32_t mode)
+{
+    if (fs_fchmod(fd, mode) < 0)
+        return -EBADF;
+    return 0;
+}
+
+static int sys_mknod(const char *user_path, uint32_t mode, uint32_t dev)
+{
+    char path[MAX_PATH_LEN];
+    if (copy_path_from_user(user_path, path, sizeof(path)) < 0)
+        return -EFAULT;
+    if (fs_mknod(path, mode, dev) < 0)
+        return -EPERM;
+    return 0;
+}
+
+/* ============================================================================
  * System Call Dispatcher
  * ============================================================================ */
 
@@ -949,6 +1309,9 @@ int syscall_handler(registers_t *regs, int num, uint32_t arg1, uint32_t arg2,
         
         case SYS_DUP2:
             return sys_dup2((int)arg1, (int)arg2);
+
+        case SYS_DUP3:
+            return sys_dup3((int)arg1, (int)arg2, (int)arg3);
         
         case SYS_GETPPID:
             return sys_getppid();
@@ -1075,6 +1438,61 @@ int syscall_handler(registers_t *regs, int num, uint32_t arg1, uint32_t arg2,
 
         case SYS_SIGSUSPEND:
             return sys_sigsuspend((sigset_t *)arg1);
+
+        case SYS_FCNTL:
+            return sys_fcntl((int)arg1, (int)arg2, arg3);
+
+        case SYS_SELECT:
+            return sys_select((int)arg1, (void *)arg2, (void *)arg3,
+                              (void *)arg4, (void *)arg5);
+
+        case SYS_POLL:
+            return sys_poll((struct pollfd_k *)arg1, (int)arg2, (int)arg3);
+
+        case SYS_READV:
+            return sys_readv((int)arg1, (struct iovec_k *)arg2, (int)arg3);
+
+        case SYS_WRITEV:
+            return sys_writev((int)arg1, (struct iovec_k *)arg2, (int)arg3);
+
+        case SYS_PREAD:
+            return sys_pread((int)arg1, (void *)arg2, (size_t)arg3, arg4);
+
+        case SYS_PWRITE:
+            return sys_pwrite((int)arg1, (const void *)arg2, (size_t)arg3, arg4);
+
+        case SYS_FTRUNCATE:
+            return sys_ftruncate((int)arg1, arg2);
+
+        case SYS_FSYNC:
+            return sys_fsync((int)arg1);
+
+        case SYS_FDATASYNC:
+            return sys_fdatasync((int)arg1);
+
+        case SYS_LINK:
+            return sys_link((const char *)arg1, (const char *)arg2);
+
+        case SYS_SYMLINK:
+            return sys_symlink((const char *)arg1, (const char *)arg2);
+
+        case SYS_READLINK:
+            return sys_readlink((const char *)arg1, (char *)arg2, (size_t)arg3);
+
+        case SYS_LSTAT:
+            return sys_lstat((const char *)arg1, (stat_t *)arg2);
+
+        case SYS_CHMOD:
+            return sys_chmod((const char *)arg1, arg2);
+
+        case SYS_FCHMOD:
+            return sys_fchmod((int)arg1, arg2);
+
+        case SYS_MKNOD:
+            return sys_mknod((const char *)arg1, arg2, arg3);
+
+        case SYS_UMASK:
+            return sys_umask(arg1);
 
         default:
             printk("[SYSCALL] Unknown syscall number: %d\n", num);

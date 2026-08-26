@@ -35,4 +35,11 @@ int    pipe_write(pipe_t *p, const char *buf, size_t count);
 void   pipe_read_release(pipe_t *p);   /* close one read end  */
 void   pipe_write_release(pipe_t *p);  /* close one write end */
 
+/* Non-blocking variants: return -EAGAIN if no data / no space. */
+int    pipe_read_nonblock(pipe_t *p, char *buf, size_t count);
+int    pipe_write_nonblock(pipe_t *p, const char *buf, size_t count);
+
+/* Poll readiness. Returns a POLL* mask. */
+int    pipe_poll(pipe_t *p, int flags);
+
 #endif /* FS_PIPE_H */

@@ -34,6 +34,10 @@ typedef struct {
 static mount_point_t mount_table[MAX_MOUNT_POINTS];
 static fs_driver_t   fs_drivers[MAX_MOUNT_POINTS];
 
+/* Wait queue for select()/poll(): any fd-state change (pipe I/O, keyboard
+ * IRQ, PIT tick) wakes it so selectors re-check readiness. */
+wait_queue_head_t select_wq;
+
 /* =========================================================================
  * Path Resolution
  *
@@ -153,6 +157,7 @@ static open_file_t *alloc_open_file(int fs_id, void *fs_priv,
     file->file_private = file_priv;
     file->offset       = 0;
     file->flags        = flags;
+    file->owner        = 0;
     file->refcount     = 1;
     file->pipe         = NULL;   /* not a pipe end unless fs_pipe sets it */
 
@@ -189,8 +194,9 @@ static fd_entry_t *alloc_fd_entry(open_file_t *file)
     fd_entry_t *fde = (fd_entry_t *)kalloc(sizeof(fd_entry_t));
     if (!fde) return NULL;
 
-    fde->fd   = current->next_fd++;
-    fde->file = file;
+    fde->fd      = current->next_fd++;
+    fde->file    = file;
+    fde->cloexec = 0;
 
     list_add_tail(&fde->node, &current->files);
     return fde;
@@ -384,9 +390,10 @@ int fs_open(const char *path, int flags)
         }
     }
 
-    /* Create shared open_file structure with refcount=1 */
+    /* Create shared open_file structure with refcount=1.
+     * O_CLOEXEC is a per-fd flag, not part of the file description. */
     open_file_t *file = alloc_open_file(fs_id, mp->fs_private, 
-                                         file_private, flags);
+                                         file_private, flags & ~O_CLOEXEC);
     if (!file) {
         /* Cleanup on allocation failure */
         if (fs_drivers[fs_id].ops.close) {
@@ -402,6 +409,7 @@ int fs_open(const char *path, int flags)
         open_file_put(file);  /* Will close the file since refcount=1 */
         return -1;
     }
+    fde->cloexec = (flags & O_CLOEXEC) ? 1 : 0;
 
     return fde->fd;
 }
@@ -435,8 +443,9 @@ int fs_pipe(int fds[2])
 
     fd_entry_t *rfde = (fd_entry_t *)kalloc(sizeof(fd_entry_t));
     if (!rfde) { kfree(rfile); pipe_read_release(pipe); return -1; }
-    rfde->fd   = current->next_fd++;
-    rfde->file = rfile;
+    rfde->fd      = current->next_fd++;
+    rfde->file    = rfile;
+    rfde->cloexec = 0;
     list_add_tail(&rfde->node, &current->files);
 
     /* Write end */
@@ -446,8 +455,9 @@ int fs_pipe(int fds[2])
 
     fd_entry_t *wfde = (fd_entry_t *)kalloc(sizeof(fd_entry_t));
     if (!wfde) { kfree(wfile); fs_close(rfde->fd); pipe_write_release(pipe); return -1; }
-    wfde->fd   = current->next_fd++;
-    wfde->file = wfile;
+    wfde->fd      = current->next_fd++;
+    wfde->file    = wfile;
+    wfde->cloexec = 0;
     list_add_tail(&wfde->node, &current->files);
 
     fds[0] = rfde->fd;
@@ -466,8 +476,11 @@ int fs_read(int fd, void *buf, size_t count)
     if ((file->flags & O_RDWR) == O_WRONLY) return -1;
 
     /* Pipe read (may block until data or EOF) */
-    if (file->pipe)
+    if (file->pipe) {
+        if (file->flags & O_NONBLOCK)
+            return pipe_read_nonblock(file->pipe, buf, count);
         return pipe_read(file->pipe, buf, count);
+    }
 
     int n = -1;
     if (fs_drivers[file->fs_id].ops.read) {
@@ -498,8 +511,11 @@ int fs_write(int fd, const void *buf, size_t count)
     }
 
     /* Pipe write (may block until space or EPIPE) */
-    if (file->pipe)
+    if (file->pipe) {
+        if (file->flags & O_NONBLOCK)
+            return pipe_write_nonblock(file->pipe, buf, count);
         return pipe_write(file->pipe, buf, count);
+    }
 
     int n = -1;
     if (fs_drivers[file->fs_id].ops.write) {
@@ -803,5 +819,305 @@ void vfs_init(void)
     for (int i = 0; i < MAX_MOUNT_POINTS; i++)
         fs_drivers[i].in_use = 0;
 
+    init_waitqueue_head(&select_wq);
+
     printk("[VFS] Virtual filesystem initialized\n");
+}
+
+/* =========================================================================
+ * Extended file operations (Phase B)
+ * ========================================================================= */
+
+/**
+ * vfs_poll_wakeup - Wake processes blocked in select()/poll().
+ * Safe from interrupt context (single-CPU, IF=0).
+ */
+void vfs_poll_wakeup(void)
+{
+    wake_up(&select_wq);
+}
+
+/**
+ * fs_dup_min - Duplicate oldfd to the lowest free fd >= minfd.
+ */
+int fs_dup_min(int oldfd, int minfd, int cloexec)
+{
+    fd_entry_t *old_fde = find_fd_entry(oldfd);
+    if (!old_fde || !old_fde->file)
+        return -1;
+
+    /* Find the lowest free fd >= minfd. */
+    int newfd = minfd;
+    int found = 0;
+    while (!found) {
+        found = 1;
+        list_head_t *pos;
+        list_for_each(pos, &current->files) {
+            fd_entry_t *fde = list_entry(pos, fd_entry_t, node);
+            if (fde->fd == newfd) {
+                newfd++;
+                found = 0;
+                break;
+            }
+        }
+    }
+
+    fd_entry_t *new_fde = (fd_entry_t *)kalloc(sizeof(fd_entry_t));
+    if (!new_fde)
+        return -1;
+
+    new_fde->fd      = newfd;
+    new_fde->file    = old_fde->file;
+    new_fde->cloexec = cloexec ? 1 : 0;
+    old_fde->file->refcount++;
+
+    /* Keep next_fd in sync so alloc_fd_entry() won't hand out the same fd. */
+    if (newfd >= current->next_fd)
+        current->next_fd = newfd + 1;
+
+    INIT_LIST_HEAD(&new_fde->node);
+    list_add_tail(&new_fde->node, &current->files);
+    return newfd;
+}
+
+/**
+ * fs_dup2_fd - Duplicate oldfd onto newfd (closing newfd first).
+ */
+int fs_dup2_fd(int oldfd, int newfd, int cloexec)
+{
+    if (newfd < 0)
+        return -1;
+
+    if (oldfd == newfd) {
+        fd_entry_t *fde = find_fd_entry(oldfd);
+        if (!fde)
+            return -1;
+        fde->cloexec = cloexec ? 1 : 0;
+        return newfd;
+    }
+
+    fd_entry_t *old_fde = find_fd_entry(oldfd);
+    if (!old_fde || !old_fde->file)
+        return -1;
+
+    /* Close newfd if it is open. */
+    fd_entry_t *new_fde = find_fd_entry(newfd);
+    if (new_fde) {
+        open_file_put(new_fde->file);
+        free_fd_entry(newfd);
+    }
+
+    new_fde = (fd_entry_t *)kalloc(sizeof(fd_entry_t));
+    if (!new_fde)
+        return -1;
+
+    new_fde->fd      = newfd;
+    new_fde->file    = old_fde->file;
+    new_fde->cloexec = cloexec ? 1 : 0;
+    old_fde->file->refcount++;
+
+    /* Keep next_fd in sync. */
+    if (newfd >= current->next_fd)
+        current->next_fd = newfd + 1;
+
+    INIT_LIST_HEAD(&new_fde->node);
+    list_add_tail(&new_fde->node, &current->files);
+    return newfd;
+}
+
+/**
+ * fs_close_on_exec - Close every fd with FD_CLOEXEC set (exec time).
+ */
+void fs_close_on_exec(void)
+{
+    list_head_t *pos, *tmp;
+    list_for_each_safe(pos, tmp, &current->files) {
+        fd_entry_t *fde = list_entry(pos, fd_entry_t, node);
+        if (fde->cloexec)
+            fs_close(fde->fd);
+    }
+}
+
+/**
+ * fs_poll - Non-blocking readiness poll for an fd.
+ */
+int fs_poll(int fd)
+{
+    fd_entry_t *fde = find_fd_entry(fd);
+    if (!fde || !fde->file)
+        return POLLNVAL;
+
+    open_file_t *file = fde->file;
+
+    if (file->pipe)
+        return pipe_poll(file->pipe, file->flags);
+
+    if (fs_drivers[file->fs_id].ops.poll)
+        return fs_drivers[file->fs_id].ops.poll(file->file_private);
+
+    /* Regular files / unknown: always readable + writable. */
+    return POLLIN | POLLOUT;
+}
+
+/**
+ * fs_fd_valid - Check whether an fd is open.
+ */
+int fs_fd_valid(int fd)
+{
+    return find_fd_entry(fd) != NULL;
+}
+
+/**
+ * fs_get_cloexec - Return 0/1 for the FD_CLOEXEC flag, or -1 if invalid.
+ */
+int fs_get_cloexec(int fd)
+{
+    fd_entry_t *fde = find_fd_entry(fd);
+    if (!fde)
+        return -1;
+    return fde->cloexec ? 1 : 0;
+}
+
+/**
+ * fs_set_cloexec - Set/clear the FD_CLOEXEC flag. Returns 0 or -1.
+ */
+int fs_set_cloexec(int fd, int on)
+{
+    fd_entry_t *fde = find_fd_entry(fd);
+    if (!fde)
+        return -1;
+    fde->cloexec = on ? 1 : 0;
+    return 0;
+}
+
+/**
+ * fs_pread - Read at an explicit offset without changing the file offset.
+ * Uses fs_seek so both the VFS and the FS-driver offsets stay in sync.
+ */
+int fs_pread(int fd, void *buf, size_t count, uint32_t offset)
+{
+    fd_entry_t *fde = find_fd_entry(fd);
+    if (!fde || !fde->file)
+        return -1;
+    if (fde->file->pipe)
+        return -1;   /* ESPIPE: pread is invalid on pipes */
+
+    uint32_t saved = fde->file->offset;
+    if (fs_seek(fd, (int32_t)offset, SEEK_SET) < 0)
+        return -1;
+    int n = fs_read(fd, buf, count);
+    fs_seek(fd, (int32_t)saved, SEEK_SET);
+    return n;
+}
+
+/**
+ * fs_pwrite - Write at an explicit offset without changing the file offset.
+ */
+int fs_pwrite(int fd, const void *buf, size_t count, uint32_t offset)
+{
+    fd_entry_t *fde = find_fd_entry(fd);
+    if (!fde || !fde->file)
+        return -1;
+    if (fde->file->pipe)
+        return -1;   /* ESPIPE */
+
+    uint32_t saved = fde->file->offset;
+    if (fs_seek(fd, (int32_t)offset, SEEK_SET) < 0)
+        return -1;
+    int n = fs_write(fd, buf, count);
+    fs_seek(fd, (int32_t)saved, SEEK_SET);
+    return n;
+}
+
+/* ---- Links / metadata (VFS wrappers) ---- */
+
+int fs_link(const char *old_path, const char *new_path)
+{
+    if (!old_path || !new_path) return -1;
+    char abs_old[MAX_PATH_LEN], abs_new[MAX_PATH_LEN];
+    if (resolve_path(old_path, abs_old, sizeof(abs_old)) != 0) return -1;
+    if (resolve_path(new_path, abs_new, sizeof(abs_new)) != 0) return -1;
+
+    const char *rel_old, *rel_new;
+    mount_point_t *mp_old = resolve_mount(abs_old, &rel_old);
+    mount_point_t *mp_new = resolve_mount(abs_new, &rel_new);
+    if (!mp_old || !mp_new || mp_old->fs_id != mp_new->fs_id)
+        return -1;
+
+    if (!fs_drivers[mp_old->fs_id].ops.link)
+        return -1;
+    return fs_drivers[mp_old->fs_id].ops.link(mp_old->fs_private,
+                                               rel_old, rel_new);
+}
+
+int fs_symlink(const char *target, const char *new_path)
+{
+    if (!target || !new_path) return -1;
+    char abs_new[MAX_PATH_LEN];
+    if (resolve_path(new_path, abs_new, sizeof(abs_new)) != 0) return -1;
+
+    const char *rel_new;
+    mount_point_t *mp = resolve_mount(abs_new, &rel_new);
+    if (!mp) return -1;
+
+    if (!fs_drivers[mp->fs_id].ops.symlink)
+        return -1;
+    return fs_drivers[mp->fs_id].ops.symlink(mp->fs_private, target, rel_new);
+}
+
+int fs_readlink(const char *path, char *buf, size_t bufsize)
+{
+    if (!path || !buf) return -1;
+    char abs[MAX_PATH_LEN];
+    if (resolve_path(path, abs, sizeof(abs)) != 0) return -1;
+
+    const char *rel;
+    mount_point_t *mp = resolve_mount(abs, &rel);
+    if (!mp) return -1;
+
+    if (!fs_drivers[mp->fs_id].ops.readlink)
+        return -1;
+    return fs_drivers[mp->fs_id].ops.readlink(mp->fs_private, rel, buf, bufsize);
+}
+
+int fs_chmod(const char *path, uint32_t mode)
+{
+    if (!path) return -1;
+    char abs[MAX_PATH_LEN];
+    if (resolve_path(path, abs, sizeof(abs)) != 0) return -1;
+
+    const char *rel;
+    mount_point_t *mp = resolve_mount(abs, &rel);
+    if (!mp) return -1;
+
+    if (!fs_drivers[mp->fs_id].ops.chmod)
+        return -1;
+    return fs_drivers[mp->fs_id].ops.chmod(mp->fs_private, rel, mode);
+}
+
+int fs_fchmod(int fd, uint32_t mode)
+{
+    fd_entry_t *fde = find_fd_entry(fd);
+    if (!fde || !fde->file) return -1;
+
+    open_file_t *file = fde->file;
+    if (file->pipe) return -1;
+    if (!fs_drivers[file->fs_id].ops.fchmod)
+        return -1;
+    return fs_drivers[file->fs_id].ops.fchmod(file->file_private, mode);
+}
+
+int fs_mknod(const char *path, uint32_t mode, uint32_t dev)
+{
+    if (!path) return -1;
+    char abs[MAX_PATH_LEN];
+    if (resolve_path(path, abs, sizeof(abs)) != 0) return -1;
+
+    const char *rel;
+    mount_point_t *mp = resolve_mount(abs, &rel);
+    if (!mp) return -1;
+
+    if (!fs_drivers[mp->fs_id].ops.mknod)
+        return -1;
+    return fs_drivers[mp->fs_id].ops.mknod(mp->fs_private, rel, mode, dev);
 }

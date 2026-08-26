@@ -159,5 +159,6 @@ int sys_getgid(void);
 int sys_getegid(void);
 int sys_setuid(uint32_t uid);
 int sys_setgid(uint32_t gid);
+int sys_umask(uint32_t mask);
 
 #endif /* PROCESS_H */

@@ -294,6 +294,13 @@ static int tty_read(int scnd_id)
     return char_read_block(3, 0);
 }
 
+static int tty_poll(int scnd_id)
+{
+    (void)scnd_id;
+    /* Data available iff the keyboard has buffered characters. */
+    return char_poll(3, 0);
+}
+
 static int tty_write_cb(int scnd_id, char c)
 {
     (void)scnd_id;
@@ -326,7 +333,7 @@ void tty_init(void)
     tty.current_param = 0;
     tty.bold         = 0;
 
-    char_ops_t ops = { .read = tty_read, .write = tty_write_cb, .ioctl = tty_ioctl };
+    char_ops_t ops = { .read = tty_read, .write = tty_write_cb, .poll = tty_poll, .ioctl = tty_ioctl };
     register_char_device(2, &ops);
     devfs_register_device("tty0", DT_CHRDEV, 2, 0);
 }

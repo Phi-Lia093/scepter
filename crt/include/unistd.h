@@ -41,7 +41,22 @@ int close(int fd);
 off_t lseek(int fd, off_t offset, int whence);
 int dup(int oldfd);
 int dup2(int oldfd, int newfd);
+int dup3(int oldfd, int newfd, int flags);
 int pipe(int fds[2]);
+
+/* Vector / positional I/O */
+ssize_t pread(int fd, void *buf, size_t count, off_t offset);
+ssize_t pwrite(int fd, const void *buf, size_t count, off_t offset);
+int ftruncate(int fd, off_t length);
+int fsync(int fd);
+int fdatasync(int fd);
+
+/* Links */
+int link(const char *oldpath, const char *newpath);
+int symlink(const char *target, const char *linkpath);
+ssize_t readlink(const char *path, char *buf, size_t bufsize);
+int chmod(const char *path, mode_t mode);
+int mknod(const char *path, mode_t mode, int dev);
 
 /* Directory operations */
 char *getcwd(char *buf, size_t size);

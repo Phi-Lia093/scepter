@@ -106,6 +106,17 @@ void char_wakeup(int prim_id)
     if (!dev)
         return;
     wake_up(&dev->read_wq);
+    /* Also wake select()/poll() waiters so they re-check readiness. */
+    extern void vfs_poll_wakeup(void);
+    vfs_poll_wakeup();
+}
+
+int char_poll(int prim_id, int scnd_id)
+{
+    char_device_t *dev = find_char_device(prim_id);
+    if (!dev || !dev->ops.poll)
+        return 1;   /* no poll callback: assume always ready */
+    return dev->ops.poll(scnd_id);
 }
 
 void char_set_blocking(int prim_id, int enable)

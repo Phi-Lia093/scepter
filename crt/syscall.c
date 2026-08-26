@@ -16,7 +16,11 @@
 #include "sys/ioctl.h"
 #include "sys/utsname.h"
 #include "sys/mman.h"
+#include "sys/uio.h"
+#include "sys/select.h"
+#include "poll.h"
 #include "dirent.h"
+#include "fcntl.h"
 
 /* ============================================================================
  * Syscall invocation helpers (int 0x80, up to 5 args)
@@ -289,6 +293,26 @@ int close(int fd)
     return (int)ret;
 }
 
+int fcntl(int fd, int cmd, ...)
+{
+    uint32_t arg = 0;
+    __builtin_va_list ap;
+    __builtin_va_start(ap, cmd);
+    arg = __builtin_va_arg(ap, uint32_t);
+    __builtin_va_end(ap);
+
+    long ret = syscall3(SYS_FCNTL, fd, cmd, (int)arg);
+    if (ret < 0) { errno = -ret; return -1; }
+    return (int)ret;
+}
+
+int dup3(int oldfd, int newfd, int flags)
+{
+    long ret = syscall3(SYS_DUP3, oldfd, newfd, flags);
+    if (ret < 0) { errno = -ret; return -1; }
+    return (int)ret;
+}
+
 off_t lseek(int fd, off_t offset, int whence)
 {
     long ret = syscall3(SYS_LSEEK, fd, (int)offset, whence);
@@ -422,6 +446,139 @@ int uname(struct utsname *buf)
     long ret = syscall1(SYS_UNAME, (int)buf);
     if (ret < 0) { errno = -ret; return -1; }
     return 0;
+}
+
+/* ============================================================================
+ * Extended file I/O (Phase B)
+ * ============================================================================ */
+
+ssize_t pread(int fd, void *buf, size_t count, off_t offset)
+{
+    long ret = syscall4(SYS_PREAD, fd, (int)buf, (int)count, (int)offset);
+    if (ret < 0) { errno = -ret; return -1; }
+    return (ssize_t)ret;
+}
+
+ssize_t pwrite(int fd, const void *buf, size_t count, off_t offset)
+{
+    long ret = syscall4(SYS_PWRITE, fd, (int)buf, (int)count, (int)offset);
+    if (ret < 0) { errno = -ret; return -1; }
+    return (ssize_t)ret;
+}
+
+int ftruncate(int fd, off_t length)
+{
+    long ret = syscall2(SYS_FTRUNCATE, fd, (int)length);
+    if (ret < 0) { errno = -ret; return -1; }
+    return 0;
+}
+
+int fsync(int fd)
+{
+    long ret = syscall1(SYS_FSYNC, fd);
+    if (ret < 0) { errno = -ret; return -1; }
+    return 0;
+}
+
+int fdatasync(int fd)
+{
+    long ret = syscall1(SYS_FDATASYNC, fd);
+    if (ret < 0) { errno = -ret; return -1; }
+    return 0;
+}
+
+ssize_t readv(int fd, const struct iovec *iov, int iovcnt)
+{
+    long ret = syscall3(SYS_READV, fd, (int)iov, iovcnt);
+    if (ret < 0) { errno = -ret; return -1; }
+    return (ssize_t)ret;
+}
+
+ssize_t writev(int fd, const struct iovec *iov, int iovcnt)
+{
+    long ret = syscall3(SYS_WRITEV, fd, (int)iov, iovcnt);
+    if (ret < 0) { errno = -ret; return -1; }
+    return (ssize_t)ret;
+}
+
+/* ============================================================================
+ * Links / metadata (Phase B)
+ * ============================================================================ */
+
+int link(const char *oldpath, const char *newpath)
+{
+    long ret = syscall2(SYS_LINK, (int)oldpath, (int)newpath);
+    if (ret < 0) { errno = -ret; return -1; }
+    return 0;
+}
+
+int symlink(const char *target, const char *linkpath)
+{
+    long ret = syscall2(SYS_SYMLINK, (int)target, (int)linkpath);
+    if (ret < 0) { errno = -ret; return -1; }
+    return 0;
+}
+
+ssize_t readlink(const char *path, char *buf, size_t bufsize)
+{
+    long ret = syscall3(SYS_READLINK, (int)path, (int)buf, (int)bufsize);
+    if (ret < 0) { errno = -ret; return -1; }
+    return (ssize_t)ret;
+}
+
+int lstat(const char *path, struct stat *buf)
+{
+    long ret = syscall2(SYS_LSTAT, (int)path, (int)buf);
+    if (ret < 0) { errno = -ret; return -1; }
+    return 0;
+}
+
+int chmod(const char *path, mode_t mode)
+{
+    long ret = syscall2(SYS_CHMOD, (int)path, (int)mode);
+    if (ret < 0) { errno = -ret; return -1; }
+    return 0;
+}
+
+int fchmod(int fd, mode_t mode)
+{
+    long ret = syscall2(SYS_FCHMOD, fd, (int)mode);
+    if (ret < 0) { errno = -ret; return -1; }
+    return 0;
+}
+
+int mknod(const char *path, mode_t mode, int dev)
+{
+    long ret = syscall3(SYS_MKNOD, (int)path, (int)mode, dev);
+    if (ret < 0) { errno = -ret; return -1; }
+    return 0;
+}
+
+mode_t umask(mode_t mask)
+{
+    long ret = syscall1(SYS_UMASK, (int)mask);
+    if (ret < 0) { errno = -ret; return 0; }
+    return (mode_t)ret;
+}
+
+/* ============================================================================
+ * select() / poll()
+ * ============================================================================ */
+
+int poll(struct pollfd *fds, nfds_t nfds, int timeout)
+{
+    long ret = syscall3(SYS_POLL, (int)fds, (int)nfds, timeout);
+    if (ret < 0) { errno = -ret; return -1; }
+    return (int)ret;
+}
+
+int select(int nfds, fd_set *readfds, fd_set *writefds,
+           fd_set *exceptfds, struct timeval *timeout)
+{
+    long ret = syscall5(SYS_SELECT, nfds, (int)readfds, (int)writefds,
+                        (int)exceptfds, (int)timeout);
+    if (ret < 0) { errno = -ret; return -1; }
+    return (int)ret;
 }
 
 /* ============================================================================

@@ -181,6 +181,12 @@ static int kbd_read(int scnd_id)
     return kbd_buffer_pop();
 }
 
+static int kbd_poll(int scnd_id)
+{
+    (void)scnd_id;
+    return kbd_state.count > 0;
+}
+
 static int kbd_write(int scnd_id, char c)
 {
     (void)scnd_id; (void)c;
@@ -210,7 +216,7 @@ void kbd_init(void)
     idt_set_gate(33, (uint32_t)irq1, GDT_KERNEL_CODE, IDT_GATE_INT32);
     interrupt_enable_irq(IRQ1);
 
-    char_ops_t ops = { .read = kbd_read, .write = kbd_write, .ioctl = kbd_ioctl };
+    char_ops_t ops = { .read = kbd_read, .write = kbd_write, .poll = kbd_poll, .ioctl = kbd_ioctl };
     register_char_device(3, &ops);
     char_set_blocking(3, 1);   /* reads block until a key is pressed */
     devfs_register_device("kbd0", DT_CHRDEV, 3, 0);

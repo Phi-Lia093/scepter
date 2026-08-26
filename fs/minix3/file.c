@@ -21,7 +21,7 @@
 int minix3_read_file(minix3_fs_info_t *fs, struct minix3_inode *inode,
                      uint32_t offset, uint8_t *buf, uint32_t count)
 {
-    if (!MINIX3_ISREG(inode->i_mode)) {
+    if (!MINIX3_ISREG(inode->i_mode) && !MINIX3_ISLNK(inode->i_mode)) {
         printk("[minix3] Not a regular file\n");
         return -1;
     }
@@ -107,7 +107,7 @@ int minix3_read_entire_file(minix3_fs_info_t *fs, struct minix3_inode *inode,
  */
 void minix3_cat_file(minix3_fs_info_t *fs, struct minix3_inode *inode, uint32_t max_bytes)
 {
-    if (!MINIX3_ISREG(inode->i_mode)) {
+    if (!MINIX3_ISREG(inode->i_mode) && !MINIX3_ISLNK(inode->i_mode)) {
         printk("[minix3] Not a regular file\n");
         return;
     }
@@ -293,7 +293,7 @@ static int minix3_alloc_file_block(minix3_fs_info_t *fs, struct minix3_inode *in
 int minix3_write_file(minix3_fs_info_t *fs, struct minix3_inode *inode,
                       uint32_t offset, const uint8_t *buf, uint32_t count)
 {
-    if (!MINIX3_ISREG(inode->i_mode)) {
+    if (!MINIX3_ISREG(inode->i_mode) && !MINIX3_ISLNK(inode->i_mode)) {
         printk("[minix3] Not a regular file\n");
         return -1;
     }
@@ -374,7 +374,7 @@ int minix3_write_file(minix3_fs_info_t *fs, struct minix3_inode *inode,
 int minix3_truncate_file(minix3_fs_info_t *fs, struct minix3_inode *inode,
                          uint32_t new_size)
 {
-    if (!MINIX3_ISREG(inode->i_mode)) {
+    if (!MINIX3_ISREG(inode->i_mode) && !MINIX3_ISLNK(inode->i_mode)) {
         printk("[minix3] Cannot truncate non-regular file\n");
         return -1;
     }

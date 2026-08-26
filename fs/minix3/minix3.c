@@ -456,9 +456,13 @@ static int minix3_vfs_unlink(void *fs_private, const char *path)
     
     /* If no more links, free the file */
     if (file_inode.i_nlinks == 0) {
-        /* Truncate to 0 to free all blocks */
-        if (minix3_truncate_file(fs, &file_inode, 0) < 0) {
-            return -1;
+        /* Regular files and symlinks own data blocks; device nodes store
+         * their device number in i_zone[0] and must NOT be truncated. */
+        if (MINIX3_ISREG(file_inode.i_mode) || MINIX3_ISLNK(file_inode.i_mode)) {
+            /* Truncate to 0 to free all blocks */
+            if (minix3_truncate_file(fs, &file_inode, 0) < 0) {
+                return -1;
+            }
         }
         
         /* Free the inode */
@@ -1082,6 +1086,279 @@ static int minix3_vfs_fstat(void *file_private, stat_t *st)
  * Filesystem Operations Table
  * ============================================================================ */
 
+/* ============================================================================
+ * VFS Callbacks: links / metadata (Phase B)
+ * ============================================================================ */
+
+/**
+ * minix3_vfs_link - Hard-link old_path to new_path (same filesystem).
+ */
+static int minix3_vfs_link(void *fs_private, const char *old_path,
+                           const char *new_path)
+{
+    minix3_fs_info_t *fs = (minix3_fs_info_t *)fs_private;
+    if (!fs || !old_path || !new_path) return -1;
+
+    /* Resolve the source inode via a normal (non-following) open. */
+    void *file_private = NULL;
+    if (minix3_vfs_open(fs, old_path, O_RDONLY, &file_private) < 0)
+        return -1;
+    minix3_file_info_t *file = (minix3_file_info_t *)file_private;
+
+    /* POSIX: hard links to directories are not permitted. */
+    if (MINIX3_ISDIR(file->inode.i_mode)) {
+        minix3_vfs_close(file_private);
+        return -1;
+    }
+
+    uint32_t ino = file->inode_num;
+
+    /* Resolve the target parent directory. */
+    char parent_path[256];
+    char name[MINIX3_NAME_LEN];
+    parse_parent_and_name(new_path, parent_path, name);
+    if (name[0] == '\0' || strcmp(name, ".") == 0 ||
+        strcmp(name, "..") == 0 || strchr(name, '/') != NULL) {
+        minix3_vfs_close(file_private);
+        return -1;
+    }
+
+    uint32_t parent_ino;
+    struct minix3_inode parent_inode;
+    if (lookup_directory_by_path(fs, parent_path, &parent_ino,
+                                 &parent_inode) < 0) {
+        minix3_vfs_close(file_private);
+        return -1;
+    }
+
+    /* Target must not already exist. */
+    uint32_t existing;
+    if (minix3_lookup(fs, &parent_inode, name, &existing) == 0) {
+        minix3_vfs_close(file_private);
+        return -1;
+    }
+
+    /* Add the directory entry pointing at the source inode. */
+    if (minix3_add_dirent(fs, &parent_inode, name, ino) < 0) {
+        minix3_vfs_close(file_private);
+        return -1;
+    }
+
+    /* Bump the link count on the source inode and write it back. */
+    file->inode.i_nlinks++;
+    if (minix3_write_inode(fs, ino, &file->inode) < 0) {
+        minix3_vfs_close(file_private);
+        return -1;
+    }
+
+    minix3_vfs_close(file_private);
+
+    /* Write back the parent directory. */
+    if (minix3_write_inode(fs, parent_ino, &parent_inode) < 0)
+        return -1;
+
+    minix3_sync_bitmaps(fs);
+    return 0;
+}
+
+/**
+ * minix3_vfs_symlink - Create new_path as a symbolic link to target.
+ */
+static int minix3_vfs_symlink(void *fs_private, const char *target,
+                              const char *new_path)
+{
+    minix3_fs_info_t *fs = (minix3_fs_info_t *)fs_private;
+    if (!fs || !target || !new_path) return -1;
+
+    char parent_path[256];
+    char name[MINIX3_NAME_LEN];
+    parse_parent_and_name(new_path, parent_path, name);
+    if (name[0] == '\0' || strcmp(name, ".") == 0 ||
+        strcmp(name, "..") == 0 || strchr(name, '/') != NULL)
+        return -1;
+
+    uint32_t parent_ino;
+    struct minix3_inode parent_inode;
+    if (lookup_directory_by_path(fs, parent_path, &parent_ino,
+                                 &parent_inode) < 0)
+        return -1;
+
+    uint32_t existing;
+    if (minix3_lookup(fs, &parent_inode, name, &existing) == 0)
+        return -1;
+
+    size_t tlen = strlen(target);
+    if (tlen > 512)
+        return -1;
+
+    /* Allocate a symlink inode. */
+    uint32_t ino;
+    if (minix3_alloc_inode(fs, MINIX3_S_IFLNK | 0777, &ino) < 0)
+        return -1;
+
+    struct minix3_inode inode;
+    if (minix3_read_inode(fs, ino, &inode) < 0) {
+        minix3_free_inode(fs, ino);
+        return -1;
+    }
+
+    /* Store the target string in the inode's data blocks.  The write path
+     * is bounded by i_size, so set it first. */
+    inode.i_size = tlen;
+    int n = minix3_write_file(fs, &inode, 0, (const uint8_t *)target, tlen);
+    if (n < 0 || (uint32_t)n != tlen) {
+        minix3_truncate_file(fs, &inode, 0);
+        minix3_free_inode(fs, ino);
+        return -1;
+    }
+    if (minix3_write_inode(fs, ino, &inode) < 0) {
+        minix3_free_inode(fs, ino);
+        return -1;
+    }
+
+    if (minix3_add_dirent(fs, &parent_inode, name, ino) < 0) {
+        minix3_remove_dirent(fs, &parent_inode, name);
+        minix3_free_inode(fs, ino);
+        return -1;
+    }
+
+    if (minix3_write_inode(fs, parent_ino, &parent_inode) < 0)
+        return -1;
+
+    minix3_sync_bitmaps(fs);
+    return 0;
+}
+
+/**
+ * minix3_vfs_readlink - Read the target of a symbolic link.
+ */
+static int minix3_vfs_readlink(void *fs_private, const char *path,
+                               char *buf, size_t bufsize)
+{
+    minix3_fs_info_t *fs = (minix3_fs_info_t *)fs_private;
+    if (!fs || !path || !buf || bufsize == 0) return -1;
+
+    void *file_private = NULL;
+    if (minix3_vfs_open(fs, path, O_RDONLY, &file_private) < 0)
+        return -1;
+    minix3_file_info_t *file = (minix3_file_info_t *)file_private;
+
+    if (!MINIX3_ISLNK(file->inode.i_mode)) {
+        minix3_vfs_close(file_private);
+        return -1;
+    }
+
+    uint32_t len = file->inode.i_size;
+    if (len >= bufsize)
+        len = bufsize - 1;
+
+    if (minix3_read_file(fs, &file->inode, 0, (uint8_t *)buf, len) < 0) {
+        minix3_vfs_close(file_private);
+        return -1;
+    }
+    buf[len] = '\0';
+
+    minix3_vfs_close(file_private);
+    return (int)len;
+}
+
+/**
+ * minix3_vfs_chmod - Change permission bits of a path.
+ */
+static int minix3_vfs_chmod(void *fs_private, const char *path, uint32_t mode)
+{
+    minix3_fs_info_t *fs = (minix3_fs_info_t *)fs_private;
+    if (!fs || !path) return -1;
+
+    void *file_private = NULL;
+    if (minix3_vfs_open(fs, path, O_RDONLY, &file_private) < 0)
+        return -1;
+    minix3_file_info_t *file = (minix3_file_info_t *)file_private;
+
+    /* Keep the file-type bits, replace the permission bits. */
+    file->inode.i_mode = (file->inode.i_mode & 0xF000) | (mode & 0x0FFF);
+    file->dirty = 1;
+    if (minix3_write_inode(fs, file->inode_num, &file->inode) < 0) {
+        minix3_vfs_close(file_private);
+        return -1;
+    }
+
+    minix3_vfs_close(file_private);
+    return 0;
+}
+
+/**
+ * minix3_vfs_fchmod - Change permission bits of an open file.
+ */
+static int minix3_vfs_fchmod(void *file_private, uint32_t mode)
+{
+    if (!file_private) return -1;
+    minix3_file_info_t *file = (minix3_file_info_t *)file_private;
+
+    file->inode.i_mode = (file->inode.i_mode & 0xF000) | (mode & 0x0FFF);
+    file->dirty = 1;
+    return minix3_write_inode(file->fs, file->inode_num, &file->inode);
+}
+
+/**
+ * minix3_vfs_mknod - Create a character/block device node.
+ */
+static int minix3_vfs_mknod(void *fs_private, const char *path,
+                            uint32_t mode, uint32_t dev)
+{
+    minix3_fs_info_t *fs = (minix3_fs_info_t *)fs_private;
+    if (!fs || !path) return -1;
+
+    uint32_t type = mode & 0xF000;
+    if (type != MINIX3_S_IFCHR && type != MINIX3_S_IFBLK)
+        return -1;   /* only device nodes via mknod */
+
+    char parent_path[256];
+    char name[MINIX3_NAME_LEN];
+    parse_parent_and_name(path, parent_path, name);
+    if (name[0] == '\0' || strcmp(name, ".") == 0 ||
+        strcmp(name, "..") == 0 || strchr(name, '/') != NULL)
+        return -1;
+
+    uint32_t parent_ino;
+    struct minix3_inode parent_inode;
+    if (lookup_directory_by_path(fs, parent_path, &parent_ino,
+                                 &parent_inode) < 0)
+        return -1;
+
+    uint32_t existing;
+    if (minix3_lookup(fs, &parent_inode, name, &existing) == 0)
+        return -1;
+
+    uint32_t ino;
+    if (minix3_alloc_inode(fs, type | (mode & 0777), &ino) < 0)
+        return -1;
+
+    struct minix3_inode inode;
+    if (minix3_read_inode(fs, ino, &inode) < 0) {
+        minix3_free_inode(fs, ino);
+        return -1;
+    }
+
+    /* Store the device number in zone[0] (a common minix convention). */
+    inode.i_zone[0] = dev;
+    if (minix3_write_inode(fs, ino, &inode) < 0) {
+        minix3_free_inode(fs, ino);
+        return -1;
+    }
+
+    if (minix3_add_dirent(fs, &parent_inode, name, ino) < 0) {
+        minix3_free_inode(fs, ino);
+        return -1;
+    }
+
+    if (minix3_write_inode(fs, parent_ino, &parent_inode) < 0)
+        return -1;
+
+    minix3_sync_bitmaps(fs);
+    return 0;
+}
+
 static fs_ops_t minix3_ops = {
     .mount    = minix3_mount,
     .unmount  = minix3_unmount,
@@ -1098,6 +1375,12 @@ static fs_ops_t minix3_ops = {
     .rename   = minix3_vfs_rename,
     .stat     = minix3_vfs_stat,
     .fstat    = minix3_vfs_fstat,
+    .link     = minix3_vfs_link,
+    .symlink  = minix3_vfs_symlink,
+    .readlink = minix3_vfs_readlink,
+    .chmod    = minix3_vfs_chmod,
+    .fchmod   = minix3_vfs_fchmod,
+    .mknod    = minix3_vfs_mknod,
 };
 
 /* ============================================================================

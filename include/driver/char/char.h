@@ -16,10 +16,12 @@ typedef int (*ioctl_fn)(int prim_id, int scnd_id, unsigned int command, uint32_t
  * ========================================================================= */
 typedef int  (*char_read_fn)(int scnd_id);
 typedef int  (*char_write_fn)(int scnd_id, char c);
+typedef int  (*char_poll_fn)(int scnd_id);
 
 typedef struct {
     char_read_fn  read;
     char_write_fn write;
+    char_poll_fn  poll;    /* 1 if data is available without blocking */
     ioctl_fn      ioctl;
 } char_ops_t;
 
@@ -32,6 +34,9 @@ int  register_char_device(int prim_id, char_ops_t *ops);
 
 /** Read one character from char device prim_id. Returns 0 on error. */
 int cread(int prim_id, int scnd_id);
+
+/** Non-blocking readiness check: 1 if a read would return data. */
+int char_poll(int prim_id, int scnd_id);
 
 /**
  * Read one character from char device prim_id, blocking until data arrives.

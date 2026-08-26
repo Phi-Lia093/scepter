@@ -71,6 +71,7 @@ typedef struct task_struct {
     uint32_t      euid;          /* effective user id                */
     uint32_t      gid;           /* real group id                    */
     uint32_t      egid;          /* effective group id               */
+    uint32_t      umask;         /* file creation mask               */
     task_state_t  state;
     char          name[32];
     int           priority;        /* nice value; lower = higher priority */

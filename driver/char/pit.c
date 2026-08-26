@@ -36,6 +36,10 @@ void pit_isr(void)
     /* Wake nanosleep() waiters every tick (100 Hz) */
     wake_up(&timer_wq);
     
+    /* Wake select()/poll() waiters every tick so their timeouts fire. */
+    extern void vfs_poll_wakeup(void);
+    vfs_poll_wakeup();
+    
     /* Call scheduler every 10 ticks (100ms at 100Hz) */
     if (pit_ticks % 10 == 0) {
         schedule();

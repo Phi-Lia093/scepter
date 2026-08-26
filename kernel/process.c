@@ -201,6 +201,7 @@ int sys_fork(registers_t *regs)
     child->euid = parent->euid;
     child->gid  = parent->gid;
     child->egid = parent->egid;
+    child->umask = parent->umask;
     
     /* Signal state: handlers are inherited, but the child starts with no
      * pending/blocked signals, no handler in flight, and is not stopped. */
@@ -236,6 +237,7 @@ int sys_fork(registers_t *regs)
         /* Point to the SAME open_file (shared!) */
         cfd->fd = pfd->fd;           /* Same fd number */
         cfd->file = pfd->file;       /* Shared open_file pointer */
+        cfd->cloexec = pfd->cloexec; /* FD_CLOEXEC flag is per-fd */
         INIT_LIST_HEAD(&cfd->node);
         
         /* Increment refcount on shared open_file */
@@ -778,7 +780,8 @@ static int do_exec(const char *user_path, char **user_argv, char **user_envp)
     /* Get file size */
     int file_size_tmp = fs_seek(fd, 0, SEEK_END);
     if (file_size_tmp <= 0) {
-        printk("[EXEC] Invalid file size: %d\n", file_size_tmp);
+        printk("[EXEC] Invalid file size: %d (path=%s fd=%d)\n",
+               file_size_tmp, kernel_path, fd);
         fs_close(fd);
         return -ENOEXEC;
     }
@@ -958,6 +961,9 @@ static int do_exec(const char *user_path, char **user_argv, char **user_envp)
         printk("[EXEC] Initial stack too small for argv/envp\n");
         return -E2BIG;
     }
+
+    /* Close every fd marked FD_CLOEXEC (POSIX exec semantics). */
+    fs_close_on_exec();
     
     extern void enter_userspace(uint32_t cr3, uint32_t entry, uint32_t user_esp);
     
@@ -1168,4 +1174,17 @@ int sys_setgid(uint32_t gid)
     task->gid  = gid;
     task->egid = gid;
     return 0;
+}
+
+/**
+ * sys_umask - Set the file creation mask.
+ * @param mask New mask (only the permission bits are used)
+ * @return The previous mask
+ */
+int sys_umask(uint32_t mask)
+{
+    task_struct_t *task = current;
+    uint32_t old = task->umask;
+    task->umask = mask & 0777;
+    return (int)old;
 }

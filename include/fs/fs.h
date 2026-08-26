@@ -21,10 +21,13 @@
 #define O_RDONLY     0x0001
 #define O_WRONLY     0x0002
 #define O_RDWR       0x0003
+#define O_ACCMODE    0x0003
 #define O_CREAT      0x0100
 #define O_APPEND     0x0200
 #define O_DIRECTORY  0x0400   /* hint: opening a directory */
 #define O_TRUNC      0x0800   /* truncate file on open */
+#define O_NONBLOCK   0x1000   /* don't block on reads/writes when no data */
+#define O_CLOEXEC    0x2000   /* close-on-exec (stored per-fd, not on file) */
 
 /* Standard file descriptors (reserved) */
 #define STDIN_FD   0
@@ -43,6 +46,14 @@
 #define DT_CHRDEV   3   /* character device */
 #define DT_BLKDEV   4   /* block device    */
 #define DT_SYMLINK  5   /* symbolic link   */
+
+/* poll() event/revents bits (Linux/POSIX values) */
+#define POLLIN     0x0001
+#define POLLPRI    0x0002
+#define POLLOUT    0x0004
+#define POLLERR    0x0008
+#define POLLHUP    0x0010
+#define POLLNVAL   0x0020
 
 /* -------------------------------------------------------------------------
  * dirent – one directory entry (returned by fs_readdir)
@@ -109,6 +120,29 @@ typedef struct fs_ops {
                   const char *new_path);
     int (*stat)(void *fs_private, const char *path, stat_t *st);
     int (*fstat)(void *file_private, stat_t *st);
+
+    /* ---- Links / metadata ---- */
+    /* link: hard-link old_path to new_path (same filesystem) */
+    int (*link)(void *fs_private, const char *old_path,
+                const char *new_path);
+    /* symlink: create new_path as a symbolic link to target */
+    int (*symlink)(void *fs_private, const char *target,
+                   const char *new_path);
+    /* readlink: read the target of a symbolic link into buf */
+    int (*readlink)(void *fs_private, const char *path,
+                    char *buf, size_t bufsize);
+    /* chmod: change permission bits of path */
+    int (*chmod)(void *fs_private, const char *path, uint32_t mode);
+    /* fchmod: change permission bits of an open file */
+    int (*fchmod)(void *file_private, uint32_t mode);
+    /* mknod: create a device node (mode has S_IFCHR/S_IFBLK, dev in dev) */
+    int (*mknod)(void *fs_private, const char *path, uint32_t mode,
+                 uint32_t dev);
+
+    /* ---- Poll (non-blocking readiness) ---- */
+    /* Returns a POLLIN/POLLOUT/POLLERR/POLLHUP mask for the open file.
+     * NULL means "always ready" (regular files). */
+    int (*poll)(void *file_private);
 } fs_ops_t;
 
 /* -------------------------------------------------------------------------
@@ -124,6 +158,7 @@ typedef struct open_file {
     void        *file_private;  /* file-specific data (inode, etc.)        */
     uint32_t     offset;        /* current read/write position (SHARED!)   */
     int          flags;         /* open flags (O_RDONLY, etc.)             */
+    int          owner;         /* F_SETOWN owner pid (SIGIO not yet sent) */
     int          refcount;      /* number of fd_entry's referencing this   */
     struct pipe *pipe;          /* non-NULL if this is a pipe end          */
 } open_file_t;
@@ -138,6 +173,7 @@ typedef struct open_file {
 typedef struct fd_entry {
     list_head_t  node;          /* embedded in task_struct.files           */
     int          fd;            /* file descriptor number                  */
+    int          cloexec;       /* FD_CLOEXEC (closed on exec)             */
     open_file_t *file;          /* pointer to shared open file description */
 } fd_entry_t;
 
@@ -235,6 +271,61 @@ int fs_fstat(int fd, stat_t *st);
  *         uid 0 (root bypasses permission checks).
  */
 int fs_access_perm(const char *path, int mask);
+
+/* -------------------------------------------------------------------------
+ * Extended file operations (Phase B)
+ * ------------------------------------------------------------------------- */
+
+/** Duplicate oldfd to the lowest free fd >= minfd. Returns new fd. */
+int fs_dup_min(int oldfd, int minfd, int cloexec);
+
+/** Duplicate oldfd onto newfd (closing newfd first). Returns newfd. */
+int fs_dup2_fd(int oldfd, int newfd, int cloexec);
+
+/** Close every fd with FD_CLOEXEC set (called from exec). */
+void fs_close_on_exec(void);
+
+/** Non-blocking readiness poll for an fd. Returns POLL* mask. */
+int fs_poll(int fd);
+
+/** 1 if fd is a valid, open file descriptor. */
+int fs_fd_valid(int fd);
+
+/** Return 0/1 for the FD_CLOEXEC flag, or -1 if fd is invalid. */
+int fs_get_cloexec(int fd);
+
+/** Set/clear the FD_CLOEXEC flag. Returns 0 or -1. */
+int fs_set_cloexec(int fd, int on);
+
+/** Read at an explicit offset without changing the file offset. */
+int fs_pread(int fd, void *buf, size_t count, uint32_t offset);
+
+/** Write at an explicit offset without changing the file offset. */
+int fs_pwrite(int fd, const void *buf, size_t count, uint32_t offset);
+
+/** Hard-link old_path to new_path. */
+int fs_link(const char *old_path, const char *new_path);
+
+/** Create new_path as a symlink to target. */
+int fs_symlink(const char *target, const char *new_path);
+
+/** Read the target of a symlink. Returns length, or -1. */
+int fs_readlink(const char *path, char *buf, size_t bufsize);
+
+/** Change permission bits of path. */
+int fs_chmod(const char *path, uint32_t mode);
+
+/** Change permission bits of an open fd. */
+int fs_fchmod(int fd, uint32_t mode);
+
+/** Create a device node. */
+int fs_mknod(const char *path, uint32_t mode, uint32_t dev);
+
+/**
+ * Wake all processes blocked in select()/poll() so they re-check fd
+ * readiness.  Called by pipe I/O, the keyboard IRQ, and the PIT tick.
+ */
+void vfs_poll_wakeup(void);
 
 /* -------------------------------------------------------------------------
  * Working Directory (stored in task_struct.cwd)
