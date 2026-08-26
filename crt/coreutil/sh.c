@@ -20,6 +20,7 @@
 #include "sys/ioctl.h"
 #include "sys/wait.h"
 #include "sys/stat.h"
+#include "termios.h"
 
 #define MAX_LINE   512
 #define MAX_WORDS  96
@@ -61,6 +62,44 @@ static void reap_jobs(void)
  *
  * Returns: line length on success, -1 on EOF (Ctrl-D / read error),
  *          -2 when the line was aborted with Ctrl-C.
+ * ============================================================================ */
+
+/* ============================================================================
+ * termios helpers
+ *
+ * The shell performs its own line editing, so it puts the tty in raw mode
+ * (ICANON/ECHO off, ISIG kept on so ^C still works) while reading a line,
+ * and restores cooked mode while a foreground command is running.
+ * ============================================================================ */
+
+static struct termios shell_saved_tio;
+static int shell_tio_saved = 0;
+
+static void set_term_raw(void)
+{
+    struct termios t;
+    if (tcgetattr(STDIN_FILENO, &t) == 0) {
+        /* Capture the pristine cooked termios exactly once, at the first
+         * prompt.  Never overwrite it: a child (e.g. tertest) may have
+         * left the tty in raw mode, and we must not treat that as the
+         * "cooked" state we restore for the next foreground job. */
+        if (!shell_tio_saved) {
+            shell_saved_tio = t;
+            shell_tio_saved = 1;
+        }
+        t.c_lflag &= ~(ICANON | ECHO);
+        tcsetattr(STDIN_FILENO, TCSANOW, &t);
+    }
+}
+
+static void set_term_cooked(void)
+{
+    if (shell_tio_saved)
+        tcsetattr(STDIN_FILENO, TCSANOW, &shell_saved_tio);
+}
+
+/* ============================================================================
+ * read_line - read one line from stdin (raw mode: one byte at a time)
  * ============================================================================ */
 
 static int read_line(char *buf, int size)
@@ -572,6 +611,9 @@ int main(int argc, char *argv[], char *envp[])
 
         reap_jobs();
 
+        /* The shell does its own line editing: raw mode while reading. */
+        set_term_raw();
+
         if (getcwd(cwd, sizeof cwd))
             printf("%s $ ", cwd);
         else
@@ -584,6 +626,8 @@ int main(int argc, char *argv[], char *envp[])
         }
         if (r == 0)
             continue;
+        /* Children get the cooked terminal (canonical + echo). */
+        set_term_cooked();
         run_line(line);
     }
 

@@ -160,4 +160,5 @@ void char_init(void)
     tty_init();     /* TTY emulator:  hw init + register char dev 2  */
     pit_init(100);  /* PIT @ 100 Hz:  hw init + register char dev 1  */
     kbd_init();     /* PS/2 kbd:      hw init + register char dev 3  */
+    miscdev_init(); /* /dev/null, /dev/zero: char devs 5, 6          */
 }

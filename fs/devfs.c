@@ -94,6 +94,21 @@ int devfs_unregister_device(const char *name)
     return -1;
 }
 
+int devfs_resolve(const char *path, uint8_t *type, int *dev_id, int *minor)
+{
+    if (!path) return -1;
+
+    const char *name = strip_leading_slash(path);
+    devfs_node_t *node = devfs_find_node(name);
+    if (!node)
+        return -1;
+
+    if (type)   *type   = node->type;
+    if (dev_id) *dev_id = node->dev_id;
+    if (minor)  *minor  = node->minor;
+    return 0;
+}
+
 /* =========================================================================
  * fs_ops_t Callbacks
  * ========================================================================= */
@@ -180,6 +195,16 @@ static int devfs_read(void *file_private, void *buf, size_t count)
     devfs_node_t *node = f->node;
 
     if (node->type == DT_CHRDEV) {
+        /* /dev/null: reads return EOF (0 bytes). */
+        if (node->dev_id == CHAR_DEV_NULL)
+            return 0;
+        /* /dev/zero: infinite zero-fill. */
+        if (node->dev_id == CHAR_DEV_ZERO) {
+            char *cbuf = (char *)buf;
+            for (size_t i = 0; i < count; i++)
+                cbuf[i] = 0;
+            return (int)count;
+        }
         /* Read count characters one at a time.
          * Blocking devices (the keyboard) sleep until input arrives;
          * with O_NONBLOCK we poll first and return -EAGAIN when empty.
@@ -197,6 +222,12 @@ static int devfs_read(void *file_private, void *buf, size_t count)
             if (c < 0)
                 return (int)i > 0 ? (int)i : c;   /* -EINTR */
             cbuf[i] = (char)c;
+            /* A canonical tty buffers a whole line and hands it out one
+             * byte at a time; once the device reports no more buffered
+             * data the line is exhausted, so read() must return now
+             * rather than block filling count bytes. */
+            if (!char_poll(node->dev_id, node->minor))
+                return (int)i + 1;
         }
         return (int)count;
     }

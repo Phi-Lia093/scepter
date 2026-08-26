@@ -1483,6 +1483,77 @@ static int sys_alarm(uint32_t seconds)
     return (int)old_secs;
 }
 
+/* ============================================================================
+ * Filesystem mount/umount/sync
+ * ============================================================================ */
+
+static int sys_mount(const char *user_source, const char *user_target,
+                     const char *user_fstype, unsigned long flags,
+                     const void *data)
+{
+    (void)flags; (void)data;
+
+    /* Only root may mount. */
+    if (current->euid != 0)
+        return -EPERM;
+
+    char source[MAX_PATH_LEN], target[MAX_PATH_LEN], fstype[16];
+    if (copy_path_from_user(user_source, source, sizeof(source)) < 0)
+        return -EFAULT;
+    if (copy_path_from_user(user_target, target, sizeof(target)) < 0)
+        return -EFAULT;
+    if (copy_path_from_user(user_fstype, fstype, sizeof(fstype)) < 0)
+        return -EFAULT;
+
+    /* Resolve the source to a block device via devfs.  The source is a
+     * path like "/dev/hdb2"; devfs nodes are named without the "/dev/". */
+    extern int devfs_resolve(const char *path, uint8_t *type,
+                             int *dev_id, int *minor);
+    const char *devname = source;
+    while (*devname == '/')
+        devname++;
+    if (strncmp(devname, "dev/", 4) == 0)
+        devname += 4;
+
+    uint8_t dtype;
+    int dev_id, minor;
+    if (devfs_resolve(devname, &dtype, &dev_id, &minor) < 0 ||
+        dtype != DT_BLKDEV)
+        return -ENODEV;
+
+    /* The mount target must exist and be a directory. */
+    stat_t st;
+    if (fs_stat(target, &st) < 0)
+        return -ENOENT;
+    if (st.type != DT_DIR)
+        return -ENOTDIR;
+
+    if (fs_mount(dev_id, minor, fstype, target) < 0)
+        return -EINVAL;
+    return 0;
+}
+
+static int sys_umount(const char *user_target)
+{
+    if (current->euid != 0)
+        return -EPERM;
+
+    char target[MAX_PATH_LEN];
+    if (copy_path_from_user(user_target, target, sizeof(target)) < 0)
+        return -EFAULT;
+
+    if (fs_unmount(target) < 0)
+        return -EINVAL;
+    return 0;
+}
+
+static int sys_sync(void)
+{
+    extern int cache_flush(void);
+    cache_flush();
+    return 0;
+}
+
 static int sys_setitimer(int which, struct itimerval_k *user_new,
                          struct itimerval_k *user_old)
 {
@@ -1821,6 +1892,17 @@ int syscall_handler(registers_t *regs, int num, uint32_t arg1, uint32_t arg2,
 
         case SYS_ALARM:
             return sys_alarm(arg1);
+
+        case SYS_MOUNT:
+            return sys_mount((const char *)arg1, (const char *)arg2,
+                             (const char *)arg3, (unsigned long)arg4,
+                             (const void *)arg5);
+
+        case SYS_UMOUNT:
+            return sys_umount((const char *)arg1);
+
+        case SYS_SYNC:
+            return sys_sync();
 
         case SYS_SETITIMER:
             return sys_setitimer((int)arg1, (struct itimerval_k *)arg2,

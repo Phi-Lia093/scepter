@@ -106,6 +106,9 @@ int sethostname(const char *name, size_t len);
 
 long sysconf(int name);
 
+/* Flush pending disk writes to stable storage. */
+void sync(void);
+
 /* Path configuration */
 #define _PC_LINK_MAX  0
 #define _PC_NAME_MAX  3

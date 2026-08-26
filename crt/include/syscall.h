@@ -26,12 +26,15 @@
 #define SYS_CHMOD  15
 #define SYS_LSEEK  19
 #define SYS_GETPID 20
+#define SYS_MOUNT 21
+#define SYS_UMOUNT 22
 #define SYS_ALARM  27
 #define SYS_SETUID 23
 #define SYS_GETUID 24
 #define SYS_ACCESS 33
 #define SYS_NICE   34
 #define SYS_NANOSLEEP 35
+#define SYS_SYNC 36
 #define SYS_KILL   37
 #define SYS_RENAME 38
 #define SYS_MKDIR  39

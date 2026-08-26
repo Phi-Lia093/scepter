@@ -12,6 +12,19 @@ typedef int (*ioctl_fn)(int prim_id, int scnd_id, unsigned int command, uint32_t
 #endif
 
 /* =========================================================================
+ * Character device IDs
+ *   0 = VGA, 1 = PIT, 2 = TTY, 3 = KBD, 4 = RTC, 5 = null, 6 = zero,
+ *   10-13 = serial.
+ * ========================================================================= */
+#define CHAR_DEV_VGA    0
+#define CHAR_DEV_PIT    1
+#define CHAR_DEV_TTY    2
+#define CHAR_DEV_KBD    3
+#define CHAR_DEV_RTC    4
+#define CHAR_DEV_NULL   5
+#define CHAR_DEV_ZERO   6
+
+/* =========================================================================
  * Character device callback types
  * ========================================================================= */
 typedef int  (*char_read_fn)(int scnd_id);
@@ -73,5 +86,8 @@ int  char_ioctl(int prim_id, int scnd_id, unsigned int command, uint32_t arg);
  * Safe to call before buddy/slab (uses no dynamic allocation).
  */
 void char_init(void);
+
+/** Initialise /dev/null and /dev/zero (called from char_init). */
+void miscdev_init(void);
 
 #endif /* DRIVER_CHAR_H */

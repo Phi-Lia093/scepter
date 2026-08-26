@@ -21,6 +21,8 @@
 #include "sys/times.h"
 #include "sys/time.h"
 #include "utime.h"
+#include "termios.h"
+#include "sys/mount.h"
 #include "poll.h"
 #include "dirent.h"
 #include "fcntl.h"
@@ -695,6 +697,104 @@ int utime(const char *path, const struct utimbuf *times)
     long ret = syscall2(SYS_UTIME, (int)path, (int)times);
     if (ret < 0) { errno = -ret; return -1; }
     return 0;
+}
+
+/* ============================================================================
+ * termios
+ * ============================================================================ */
+
+int tcgetattr(int fd, struct termios *t)
+{
+    long ret = syscall3(SYS_IOCTL, fd, TCGETS, (int)t);
+    if (ret < 0) { errno = -ret; return -1; }
+    return 0;
+}
+
+int tcsetattr(int fd, int optional_actions, const struct termios *t)
+{
+    unsigned int cmd = TCSETS;
+    if (optional_actions == TCSADRAIN)
+        cmd = TCSETSW;
+    else if (optional_actions == TCSAFLUSH)
+        cmd = TCSETSF;
+    long ret = syscall3(SYS_IOCTL, fd, cmd, (int)t);
+    if (ret < 0) { errno = -ret; return -1; }
+    return 0;
+}
+
+int tcflow(int fd, int action)
+{
+    (void)action;
+    long ret = syscall3(SYS_IOCTL, fd, TCSETSW, (int)0);
+    (void)ret;
+    errno = ENOTTY;
+    return -1;   /* not implemented */
+}
+
+int tcflush(int fd, int queue_selector)
+{
+    if (queue_selector == TCIFLUSH) {
+        /* TCSETSF with the current settings flushes input. */
+        struct termios t;
+        if (tcgetattr(fd, &t) == 0)
+            return tcsetattr(fd, TCSAFLUSH, &t);
+        return -1;
+    }
+    errno = EINVAL;
+    return -1;
+}
+
+int tcsendbreak(int fd, int duration)
+{
+    (void)fd; (void)duration;
+    return 0;
+}
+
+void cfmakeraw(struct termios *t)
+{
+    t->c_iflag &= ~(IGNBRK | BRKINT | PARMRK | ISTRIP | INLCR | IGNCR |
+                    ICRNL | IXON);
+    t->c_oflag &= ~OPOST;
+    t->c_lflag &= ~(ECHO | ECHONL | ICANON | ISIG | IEXTEN);
+    t->c_cflag &= ~(CSIZE | PARENB);
+    t->c_cflag |= CS8;
+    t->c_cc[VMIN]  = 1;
+    t->c_cc[VTIME] = 0;
+}
+
+speed_t cfgetispeed(const struct termios *t) { (void)t; return 0; }
+speed_t cfgetospeed(const struct termios *t) { (void)t; return 0; }
+
+/* ============================================================================
+ * Filesystem mount/umount/sync
+ * ============================================================================ */
+
+int mount(const char *source, const char *target,
+          const char *filesystemtype, unsigned long mountflags,
+          const void *data)
+{
+    long ret = syscall5(SYS_MOUNT, (int)source, (int)target,
+                        (int)filesystemtype, (int)mountflags, (int)data);
+    if (ret < 0) { errno = -ret; return -1; }
+    return 0;
+}
+
+int umount(const char *target)
+{
+    long ret = syscall1(SYS_UMOUNT, (int)target);
+    if (ret < 0) { errno = -ret; return -1; }
+    return 0;
+}
+
+int umount2(const char *target, int flags)
+{
+    (void)flags;
+    return umount(target);
+}
+
+void sync(void)
+{
+    (void)syscall0(SYS_SYNC);
 }
 
 clock_t times(struct tms *buf)

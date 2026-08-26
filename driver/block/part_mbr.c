@@ -1,6 +1,7 @@
 #include "driver/block/part_mbr.h"
 #include "driver/block/ide.h"
 #include "driver/driver.h"
+#include "fs/fs.h"
 #include "lib/printk.h"
 #include "lib/string.h"
 #include <stddef.h>
@@ -203,6 +204,25 @@ void mbr_init(void)
             if (register_block_device(prim_id, &part_ops) == 0) {
                 printk("[MBR] Registered %sX (partitions) as block device %d\n",
                        disk_names[disk_id], prim_id);
+            }
+
+            /* Expose each valid partition as /dev/hdXY (e.g. /dev/hdb2) so
+             * mount(2) can resolve it by name. */
+            for (int i = 0; i < MBR_PARTITION_COUNT; i++) {
+                if (partitions[disk_id][i].valid) {
+                    extern int devfs_register_device(const char *, uint8_t, int, int);
+                    char node[8];
+                    int n = 0;
+                    const char *dn = disk_names[disk_id];
+                    while (dn[n] && n < 4) {
+                        node[n] = dn[n];
+                        n++;
+                    }
+                    node[n++] = (char)('0' + partitions[disk_id][i].partition_num);
+                    node[n] = '\0';
+                    devfs_register_device(node, DT_BLKDEV, prim_id,
+                                          partitions[disk_id][i].partition_num);
+                }
             }
             
             printk("[MBR] Found %d partition%s on %s\n",

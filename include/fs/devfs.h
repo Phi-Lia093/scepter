@@ -68,4 +68,12 @@ int devfs_unregister_device(const char *name);
  */
 void devfs_init(void);
 
+/**
+ * Resolve a device path (e.g. "/dev/hdb2") to its (type, dev_id, minor).
+ * Any of the output pointers may be NULL.
+ *
+ * @return 0 on success, -1 if no such device node exists.
+ */
+int devfs_resolve(const char *path, uint8_t *type, int *dev_id, int *minor);
+
 #endif /* DEVFS_H */

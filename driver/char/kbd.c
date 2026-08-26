@@ -153,19 +153,14 @@ void kbd_isr(void)
     }
 
     if (ascii != 0) {
-        /* Ctrl-C (0x03) goes to the foreground process as SIGINT rather
-         * than into the input buffer.  This lets the user interrupt a
-         * running foreground command. */
-        if (ascii == 3 && tty_get_foreground() > 0) {
-            extern int send_signal(uint32_t pid, int signum);
-            send_signal((uint32_t)tty_get_foreground(), SIGINT);
-            /* Wake any process blocked in read() so it can notice the
-             * pending SIGINT (char_read_block returns -EINTR). */
-            char_wakeup(3);
-        } else {
+        /* Control characters (^C, ^\, ^Z) may be consumed by the tty line
+         * discipline as terminal signals (ISIG).  If they are not consumed
+         * they go into the input buffer like any other byte. */
+        extern int tty_handle_control(int ascii);
+        if (!tty_handle_control(ascii))
             kbd_buffer_push(ascii);
-        }
-        /* Wake any process blocked in read() on the keyboard/tty */
+        /* Wake any process blocked in read() so it can notice the byte
+         * (or the pending signal -> char_read_block returns -EINTR). */
         char_wakeup(3);
     }
     interrupt_eoi(IRQ1);

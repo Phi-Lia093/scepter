@@ -14,4 +14,9 @@ typedef uint32_t uid_t;
 typedef uint32_t gid_t;
 typedef uint32_t size_t_alt;   /* not used; size_t comes from <stddef.h> */
 
+/* termios types */
+typedef uint32_t tcflag_t;
+typedef uint8_t  cc_t;
+typedef uint32_t speed_t;
+
 #endif /* _SYS_TYPES_H */

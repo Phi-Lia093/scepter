@@ -79,4 +79,14 @@ void tty_set_foreground(int pid);
  */
 int tty_get_foreground(void);
 
+/**
+ * Handle a raw input byte that may be an ISIG control character
+ * (^C / ^\ / ^Z).  If ISIG is enabled and a foreground process exists,
+ * sends the corresponding signal and returns 1 (byte consumed).  Returns
+ * 0 if the byte should be passed through as data.
+ *
+ * Called from the keyboard driver's IRQ handler.
+ */
+int tty_handle_control(int ascii);
+
 #endif /* TTY_H */

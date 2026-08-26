@@ -24,15 +24,25 @@ echo "[1/5] Creating ${DISK_SIZE_MB}MB disk image..."
 dd if=/dev/zero of="$DISK_IMG" bs=1M count=$DISK_SIZE_MB status=progress
 
 # Step 2: Create partition table with fdisk
-echo "[2/5] Creating MBR partition table with one Minix partition..."
+#   p1: 2048 .. +60M  (Minix - the "root" data filesystem)
+#   p2:      .. +60M  (Minix - used by the mount(2) test)
+echo "[2/5] Creating MBR partition table with two Minix partitions..."
 fdisk "$DISK_IMG" << EOF > /dev/null 2>&1
 o
 n
 p
 1
 2048
-
++60M
 t
+81
+n
+p
+2
+
++60M
+t
+2
 81
 w
 EOF
@@ -49,6 +59,7 @@ sleep 1
 # Step 4: Format partition as Minix filesystem
 echo "[4/5] Formatting partition 1 as Minix filesystem..."
 mkfs.minix -3 "${LOOP_DEV}p1" > /dev/null 2>&1
+mkfs.minix -3 "${LOOP_DEV}p2" > /dev/null 2>&1
 
 # Step 5: Verify and show partition info
 echo "[5/5] Verifying partition table..."
@@ -64,7 +75,7 @@ echo "SUCCESS! Test disk created: $DISK_IMG"
 echo "=================================================="
 echo "Disk size: ${DISK_SIZE_MB}MB"
 echo "Partition 1: Minix filesystem (type 0x81)"
-echo "Partition size: ~${DISK_SIZE_MB}MB"
+echo "Partition 2: Minix filesystem (type 0x81)"
 echo ""
 echo "You can now attach this disk to your kernel for testing:"
 echo "  - Add to bochsrc: ata0-master: type=disk, path=\"$DISK_IMG\""

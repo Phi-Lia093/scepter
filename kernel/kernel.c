@@ -66,6 +66,7 @@ void kernel_main(void)
     pit_init(100);
     kbd_init();
     rtc_init();  /* RTC prints system time automatically */
+    miscdev_init(); /* /dev/null, /dev/zero */
 
     printk("[KERNEL] Early initialization complete\n\n");
 

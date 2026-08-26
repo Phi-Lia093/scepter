@@ -64,7 +64,7 @@ ALL_LIB_OBJECTS = $(LIBC_OBJECTS) $(SYSCALL_OBJECTS)
 # Core utilities (init goes to /, the rest to /bin)
 # ============================================================================
 
-COREUTILS = sh ls cat echo mkdir rm rmdir mv cp pwd clear uname test sigtest ftest ptest alarmtest
+COREUTILS = sh ls cat echo mkdir rm rmdir mv cp pwd clear uname test sigtest ftest ptest alarmtest tertest mtest
 INIT_BIN  = $(ROOT_DIR)/init
 CORE_BINS = $(addprefix $(BIN_DIR)/, $(COREUTILS))
 TEST_BIN  = $(BIN_DIR)/test

@@ -42,8 +42,11 @@ typedef struct registers {
 #define SYS_CHMOD  15   /* Change permission bits             */
 #define SYS_LSEEK  19   /* Reposition file offset */
 #define SYS_GETPID 20   /* Get process ID */
+#define SYS_MOUNT  21   /* Mount a filesystem */
+#define SYS_UMOUNT 22   /* Unmount a filesystem */
 #define SYS_ALARM  27   /* Schedule SIGALRM after N seconds   */
 #define SYS_NANOSLEEP 35  /* Sleep for specified time (PIT tick based) */
+#define SYS_SYNC   36   /* Flush all pending disk writes */
 #define SYS_SETUID  23   /* Set real + effective user id */
 #define SYS_GETUID  24   /* Get real user id */
 #define SYS_TIMES  100   /* Get process and system times      */
