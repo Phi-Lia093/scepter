@@ -24,6 +24,7 @@ typedef struct {
 typedef struct {
     char     fs_name[MAX_FS_NAME];
     fs_ops_t ops;
+    int      flags;    /* FS_FLAG_* */
     int      in_use;
 } fs_driver_t;
 
@@ -295,11 +296,42 @@ int register_filesystem(const char *fs_name, fs_ops_t *ops)
         if (!fs_drivers[i].in_use) {
             strcpy(fs_drivers[i].fs_name, fs_name);
             fs_drivers[i].ops    = *ops;
+            fs_drivers[i].flags  = 0;
             fs_drivers[i].in_use = 1;
             return i;
         }
     }
     return -1;
+}
+
+int register_pseudo_filesystem(const char *fs_name, fs_ops_t *ops)
+{
+    int id = register_filesystem(fs_name, ops);
+    if (id >= 0)
+        fs_drivers[id].flags |= FS_FLAG_PSEUDO;
+    return id;
+}
+
+int fs_is_pseudo_fs(const char *fs_name)
+{
+    for (int i = 0; i < MAX_MOUNT_POINTS; i++) {
+        if (fs_drivers[i].in_use &&
+            strcmp(fs_drivers[i].fs_name, fs_name) == 0) {
+            return (fs_drivers[i].flags & FS_FLAG_PSEUDO) ? 1 : 0;
+        }
+    }
+    return -1;
+}
+
+int fs_is_mounted(const char *mount_path)
+{
+    if (!mount_path) return 0;
+    for (int i = 0; i < MAX_MOUNT_POINTS; i++) {
+        if (mount_table[i].in_use &&
+            strcmp(mount_table[i].mount_path, mount_path) == 0)
+            return 1;
+    }
+    return 0;
 }
 
 /* =========================================================================
@@ -310,6 +342,9 @@ int fs_mount(int device_id, int partition_id,
              const char *fs_type, const char *mount_path)
 {
     if (!fs_type || !mount_path) return -1;
+
+    /* A filesystem is already mounted here (e.g. init respawn). */
+    if (fs_is_mounted(mount_path)) return -1;
 
     int fs_id = find_fs_driver(fs_type);
     if (fs_id < 0) {

@@ -1505,28 +1505,38 @@ static int sys_mount(const char *user_source, const char *user_target,
     if (copy_path_from_user(user_fstype, fstype, sizeof(fstype)) < 0)
         return -EFAULT;
 
-    /* Resolve the source to a block device via devfs.  The source is a
-     * path like "/dev/hdb2"; devfs nodes are named without the "/dev/". */
-    extern int devfs_resolve(const char *path, uint8_t *type,
-                             int *dev_id, int *minor);
-    const char *devname = source;
-    while (*devname == '/')
-        devname++;
-    if (strncmp(devname, "dev/", 4) == 0)
-        devname += 4;
-
-    uint8_t dtype;
-    int dev_id, minor;
-    if (devfs_resolve(devname, &dtype, &dev_id, &minor) < 0 ||
-        dtype != DT_BLKDEV)
-        return -ENODEV;
-
     /* The mount target must exist and be a directory. */
     stat_t st;
     if (fs_stat(target, &st) < 0)
         return -ENOENT;
     if (st.type != DT_DIR)
         return -ENOTDIR;
+
+    if (fs_is_mounted(target))
+        return -EBUSY;
+
+    int pseudo = fs_is_pseudo_fs(fstype);
+    if (pseudo < 0)
+        return -ENODEV;   /* unknown filesystem type */
+
+    int dev_id = -1, minor = -1;
+    if (!pseudo) {
+        /* Block-backed filesystem: resolve the source to a block device
+         * via devfs.  The source is a path like "/dev/hdb2"; devfs nodes
+         * are named without the "/dev/". */
+        extern int devfs_resolve(const char *path, uint8_t *type,
+                                 int *dev_id, int *minor);
+        const char *devname = source;
+        while (*devname == '/')
+            devname++;
+        if (strncmp(devname, "dev/", 4) == 0)
+            devname += 4;
+
+        uint8_t dtype;
+        if (devfs_resolve(devname, &dtype, &dev_id, &minor) < 0 ||
+            dtype != DT_BLKDEV)
+            return -ENODEV;
+    }
 
     if (fs_mount(dev_id, minor, fstype, target) < 0)
         return -EINVAL;

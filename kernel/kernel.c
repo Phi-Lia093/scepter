@@ -95,7 +95,7 @@ void kernel_main(void)
      * Virtual filesystem
      * ------------------------------------------------------------------ */
     vfs_init();
-    devfs_init();   /* mount devfs at /dev */
+    devfs_init();   /* register devfs type (init mounts it at /dev) */
     minix3_init();  /* register minix3 filesystem driver */
 
     printk("[KERNEL] Initialization complete\n\n");
@@ -103,7 +103,11 @@ void kernel_main(void)
     /* ------------------------------------------------------------------
      * Mount root filesystem
      * ------------------------------------------------------------------ */
-    if (fs_mount(5, 1, "minix3", "/") != 0) {
+    /* Mount the root filesystem: the single merged disk is hda, so its
+     * first partition (hda1 = block device 4, partition 1) is the root.
+     * It holds /init, /bin and /boot (GRUB reads the kernel from /boot
+     * before this point). */
+    if (fs_mount(4, 1, "minix3", "/") != 0) {
         printk("[KERNEL] Failed to mount root filesystem\n");
         sti();
         while (1);

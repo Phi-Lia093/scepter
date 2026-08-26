@@ -211,6 +211,17 @@ int sys_sigsuspend(sigset_t *user_mask)
     uint32_t old = task->blocked;
     task->blocked = mask & ~((1u << SIGKILL) | (1u << SIGSTOP));
 
+    /* Race guard: a signal may have been delivered (pending bit set and
+     * wake_up fired) while we were RUNNING, before entering this syscall.
+     * send_signal only wakes BLOCKED tasks, so that wake is lost - if we
+     * sleep now we would never be woken.  Interrupts are disabled during
+     * syscalls (IF=0), so no signal can arrive between this check and
+     * sleep_on(): the sequence is atomic w.r.t. IRQ-driven wakeups. */
+    if (task->pending & ~task->blocked) {
+        task->blocked = old;
+        return -EINTR;
+    }
+
     sleep_on(&task->wait);
     task->blocked = old;
     return -EINTR;

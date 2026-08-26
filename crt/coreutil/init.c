@@ -1,7 +1,7 @@
 /* ============================================================================
  * init - PID 1
- * Opens the console as stdin/stdout/stderr, then spawns and respawns
- * /bin/sh, reaping each shell as it exits.
+ * Automounts devfs at /dev, opens the console as stdin/stdout/stderr, then
+ * spawns and respawns /bin/sh, reaping each shell as it exits.
  * ============================================================================ */
 
 #include "stdio.h"
@@ -10,6 +10,9 @@
 #include "fcntl.h"
 #include "sys/ioctl.h"
 #include "sys/wait.h"
+#include "sys/stat.h"
+#include "sys/mount.h"
+#include "errno.h"
 
 int main(int argc, char *argv[], char *envp[])
 {
@@ -17,6 +20,18 @@ int main(int argc, char *argv[], char *envp[])
     (void)argv;
 
     char *sh_argv[] = { "sh", NULL };
+
+    /* ---- Automount devfs at /dev -------------------------------------
+     * The kernel registers the "devfs" filesystem type but does not mount
+     * it (like Linux devtmpfs).  We create the mount point and mount it
+     * here, before opening any device node.  On a respawn (init is reused
+     * after the shell exits) /dev is already mounted and mount() returns
+     * EBUSY, which is fine. */
+    mkdir("/dev", 0755);
+    if (mount("devfs", "/dev", "devfs", 0, NULL) < 0) {
+        if (errno != EBUSY)
+            printf("init: devfs mount failed (errno=%d)\n", errno);
+    }
 
     /* Set up the console as fd 0/1/2 */
     if (open("/dev/tty0", O_RDWR) < 0) {

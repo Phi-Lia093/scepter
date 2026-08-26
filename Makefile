@@ -15,7 +15,7 @@ MODULES = kernel mm lib driver fs
 # This is much cleaner than listing every single object file
 KERNEL_OBJS = $(wildcard $(BUILD_DIR)/*.o)
 
-.PHONY: all modules clean run debug grub data mount umount mountd umountd
+.PHONY: all modules clean run debug root mount umount app
 
 # Default target
 all: $(BUILD_DIR) modules $(TARGET)
@@ -44,27 +44,28 @@ $(TARGET): modules
 	nm --no-sort $@ > kernel.sym
 
 # ===========================================================================
-# GRUB Disk Management
+# Root Disk Management
+#
+# One disk image (root.img) holds everything: GRUB in the MBR and a single
+# minix v3 partition (hda1) that is both the boot partition (/boot/kernel.elf)
+# and the root filesystem (/init, /bin; /dev is devfs automounted by init).
 # ===========================================================================
 MOUNT_DIR = mnt
 
-grub:
-	@echo "Creating clean GRUB disk image..."
+root:
+	@echo "Creating root disk image (GRUB + root filesystem)..."
 	@sudo ./script/make_grub_disk.sh
-	@echo "Done! Use 'make mount' to mount the disk."
-
-data:
-	@sudo ./script/make_test_disk.sh
+	@echo "Done! Use 'make mount' to mount it, then 'make app'."
 
 mount:
-	@if [ ! -f disk.img ]; then \
-		echo "ERROR: disk.img not found. Run 'make grub' first."; \
+	@if [ ! -f root.img ]; then \
+		echo "ERROR: root.img not found. Run 'make root' first."; \
 		exit 1; \
 	fi
-	@echo "Mounting disk.img to ./$(MOUNT_DIR)..."
+	@echo "Mounting root.img to ./$(MOUNT_DIR)..."
 	@mkdir -p $(MOUNT_DIR)
-	@sudo losetup -fP disk.img
-	@LOOP=$$(losetup -j disk.img | cut -d: -f1); \
+	@sudo losetup -fP root.img
+	@LOOP=$$(losetup -j root.img | cut -d: -f1); \
 	sudo mount $${LOOP}p1 $(MOUNT_DIR); \
 	sudo chown -R $(USER):$(USER) $(MOUNT_DIR); \
 	echo "✓ Mounted at ./$(MOUNT_DIR) (owned by $(USER))"
@@ -74,32 +75,7 @@ umount:
 	@if mountpoint -q $(MOUNT_DIR); then \
 		sudo umount $(MOUNT_DIR); \
 	fi
-	@LOOP=$$(losetup -j disk.img 2>/dev/null | cut -d: -f1); \
-	if [ -n "$$LOOP" ]; then \
-		sudo losetup -d $$LOOP; \
-	fi
-	@rmdir $(MOUNT_DIR) 2>/dev/null || true
-	@echo "✓ Unmounted"
-
-mountd:
-	@if [ ! -f data.img ]; then \
-		echo "ERROR: data.img not found. Run 'make data' first."; \
-		exit 1; \
-	fi
-	@echo "Mounting data.img to ./$(MOUNT_DIR)..."
-	@mkdir -p $(MOUNT_DIR)
-	@sudo losetup -fP data.img
-	@LOOP=$$(losetup -j data.img | cut -d: -f1); \
-	sudo mount $${LOOP}p1 $(MOUNT_DIR); \
-	sudo chown -R $(USER):$(USER) $(MOUNT_DIR); \
-	echo "✓ Mounted at ./$(MOUNT_DIR) (owned by $(USER))"
-
-umountd:
-	@echo "Unmounting ./$(MOUNT_DIR)..."
-	@if mountpoint -q $(MOUNT_DIR); then \
-		sudo umount $(MOUNT_DIR); \
-	fi
-	@LOOP=$$(losetup -j data.img 2>/dev/null | cut -d: -f1); \
+	@LOOP=$$(losetup -j root.img 2>/dev/null | cut -d: -f1); \
 	if [ -n "$$LOOP" ]; then \
 		sudo losetup -d $$LOOP; \
 	fi
@@ -110,8 +86,8 @@ umountd:
 # Run and Debug
 # ===========================================================================
 run: $(TARGET)
-	@if [ ! -f disk.img ]; then \
-		echo "ERROR: disk.img not found. Run 'make grub' first."; \
+	@if [ ! -f root.img ]; then \
+		echo "ERROR: root.img not found. Run 'make root' first."; \
 		exit 1; \
 	fi
 	@if ! mountpoint -q $(MOUNT_DIR); then \
@@ -126,14 +102,13 @@ run: $(TARGET)
 	@echo "Starting QEMU..."
 	@rm -f kernel.log
 	@qemu-system-i386 -m 128 \
-		-drive file=disk.img,format=raw,if=ide,index=0,media=disk \
-		-drive file=data.img,format=raw,if=ide,index=1,media=disk \
+		-drive file=root.img,format=raw,if=ide,index=0,media=disk \
 		-serial file:kernel.log
 
 
 debug: $(TARGET)
-	@if [ ! -f disk.img ]; then \
-		echo "ERROR: disk.img not found. Run 'make grub' first."; \
+	@if [ ! -f root.img ]; then \
+		echo "ERROR: root.img not found. Run 'make root' first."; \
 		exit 1; \
 	fi
 	@if ! mountpoint -q $(MOUNT_DIR); then \
@@ -150,14 +125,15 @@ debug: $(TARGET)
 	@bochs
 
 app:
-	@make mountd
+	@make mount
 	@make -C crt all
 	@echo "Copying userspace programs to disk..."
+	@rm -f mnt/bin/* mnt/init
 	@cp crt/build/root/init mnt/
 	@mkdir -p mnt/bin
 	@cp crt/build/root/bin/* mnt/bin/
 	@echo "✓ Userspace programs installed"
-	@make umountd
+	@make umount
 
 # ===========================================================================
 # Clean

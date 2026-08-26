@@ -186,6 +186,23 @@ typedef struct fd_entry {
 
 int register_filesystem(const char *fs_name, fs_ops_t *ops);
 
+/* Filesystem flags */
+#define FS_FLAG_PSEUDO  0x1   /* no backing block device (devfs, procfs...) */
+
+/**
+ * Register a pseudo filesystem (no block device backing, e.g. devfs).
+ * Mounting it requires no source device.
+ */
+int register_pseudo_filesystem(const char *fs_name, fs_ops_t *ops);
+
+/**
+ * Returns:
+ *   1  if fs_name is a registered pseudo filesystem,
+ *   0  if it is a registered block-backed filesystem,
+ *  -1  if it is not registered at all.
+ */
+int fs_is_pseudo_fs(const char *fs_name);
+
 /* -------------------------------------------------------------------------
  * Mount Management
  * ------------------------------------------------------------------------- */
@@ -193,6 +210,9 @@ int register_filesystem(const char *fs_name, fs_ops_t *ops);
 int fs_mount(int device_id, int partition_id, const char *fs_type,
              const char *mount_path);
 int fs_unmount(const char *mount_path);
+
+/** Returns 1 if a filesystem is mounted at the given path, else 0. */
+int fs_is_mounted(const char *mount_path);
 
 /* -------------------------------------------------------------------------
  * File Operations

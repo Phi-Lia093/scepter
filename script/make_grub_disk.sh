@@ -1,17 +1,25 @@
 #!/bin/bash
 #
-# Create a clean bootable GRUB disk image with minix
+# Create a single bootable disk image that merges the boot disk and the
+# root filesystem into one (root.img):
+#
+#   - GRUB bootloader in the MBR
+#   - one minix v3 partition (hda1) that serves BOTH as the boot partition
+#     (GRUB reads /boot/kernel.elf from it) and as the root filesystem
+#     (the kernel mounts it at /, containing /init and /bin)
+#   - /dev is populated at runtime by init (devfs automount)
+#
 # Usage: sudo ./script/make_grub_disk.sh
 #
 
 set -e  # Exit on error
 
-DISK_IMG="disk.img"
-DISK_SIZE_MB=64
+DISK_IMG="root.img"
+DISK_SIZE_MB=128
 
-echo "=================================================="
-echo "Creating Clean Bootable GRUB Disk Image (minix)"
-echo "=================================================="
+echo "=============================================="
+echo "Creating Bootable Root Disk Image (root.img)"
+echo "=============================================="
 
 # Check if running as root
 if [ "$EUID" -ne 0 ]; then
@@ -23,7 +31,7 @@ fi
 echo "[1/7] Creating ${DISK_SIZE_MB}MB disk image..."
 dd if=/dev/zero of="$DISK_IMG" bs=1M count=$DISK_SIZE_MB status=progress
 
-# Step 2: Create partition table with fdisk
+# Step 2: Create partition table with fdisk (one bootable minix partition)
 echo "[2/7] Creating MBR partition table..."
 fdisk "$DISK_IMG" << EOF > /dev/null 2>&1
 o
@@ -47,18 +55,21 @@ echo "    Loop device: $LOOP_DEV"
 # Wait for partition to appear
 sleep 1
 
-# Step 4: Format partition as minix
-echo "[4/7] Formatting partition as minix..."
-mkfs.minix "${LOOP_DEV}p1" > /dev/null 2>&1
+# Step 4: Format partition as minix v3 (the kernel's minix3 driver + GRUB's
+# minix3 module both understand this format)
+echo "[4/7] Formatting partition as minix v3..."
+mkfs.minix -3 "${LOOP_DEV}p1" > /dev/null 2>&1
 
 # Step 5: Mount partition temporarily
 echo "[5/7] Mounting partition..."
 TEMP_MOUNT=$(mktemp -d)
 mount "${LOOP_DEV}p1" "$TEMP_MOUNT"
 
-# Step 6: Install GRUB
+# Step 6: Install GRUB.
+# The minix3 module is embedded in the core image so GRUB can read the v3
+# root partition to find grub.cfg and load /boot/kernel.elf.
 echo "[6/7] Installing GRUB bootloader..."
-grub-install --target=i386-pc --boot-directory="$TEMP_MOUNT/boot" --install-modules="minix normal multiboot" "$LOOP_DEV" 2>&1 | grep -v "Installing"
+grub-install --target=i386-pc --boot-directory="$TEMP_MOUNT/boot" --install-modules="minix3 normal multiboot" "$LOOP_DEV" 2>&1 | grep -v "Installing"
 
 # Step 7: Create grub.cfg
 echo "[7/7] Creating GRUB configuration..."
@@ -73,8 +84,26 @@ menuentry "kernel" {
 }
 EOF
 
+# Root filesystem layout: /boot (GRUB), /bin, /dev (devfs mounts over it),
+# and /init is installed later by 'make app'.
+mkdir -p "$TEMP_MOUNT/bin" "$TEMP_MOUNT/dev"
+
 # Cleanup
+sync
 umount "$TEMP_MOUNT"
 rmdir "$TEMP_MOUNT"
 losetup -d "$LOOP_DEV"
 chmod 666 "$DISK_IMG"
+
+echo ""
+echo "=============================================="
+echo "SUCCESS! Bootable root disk created: $DISK_IMG"
+echo "=============================================="
+echo "  Partition 1: minix v3 filesystem (type 0x81, bootable)"
+echo "  /boot  -> GRUB + kernel.elf"
+echo "  /bin   -> core utilities (installed by 'make app')"
+echo "  /init  -> init process (installed by 'make app')"
+echo "  /dev   -> devfs (automounted by init)"
+echo ""
+echo "Run 'make mount' to mount it, then 'make app' to install userspace."
+echo ""

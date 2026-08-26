@@ -494,14 +494,16 @@ static fs_ops_t devfs_ops = {
 
 void devfs_init(void)
 {
-    /* Node table is already zeroed (static storage), so in_use=0 for all. */
-    if (register_filesystem("devfs", &devfs_ops) < 0) {
+    /* Node table is already zeroed (static storage), so in_use=0 for all.
+     *
+     * Register the filesystem type so it can be mounted from userspace.
+     * We deliberately do NOT mount it here: the init process (PID 1)
+     * automounts devfs at /dev via mount(2), which keeps the decision
+     * about where to mount it in user space (like Linux devtmpfs). */
+    if (register_pseudo_filesystem("devfs", &devfs_ops) < 0) {
         printk("[devfs] FAILED to register filesystem type\n");
         return;
     }
-
-    if (fs_mount(-1, -1, "devfs", "/dev") != 0) {
-        printk("[devfs] FAILED to mount at /dev\n");
-        return;
-    }
+    printk("[devfs] filesystem type registered (%d nodes)\n",
+           devfs_node_count);
 }
