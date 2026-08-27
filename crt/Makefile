@@ -9,7 +9,8 @@ LD = gcc
 OBJCOPY = objcopy
 
 CFLAGS = -c -ffreestanding -nostdlib -fno-builtin -fno-stack-protector \
-          -fno-pie -mno-red-zone -O2 -Wall -Wextra -fno-pic -m32 -I ./include
+         -fno-pie -mno-red-zone -O2 -Wall -Wextra -fno-pic -fomit-frame-pointer \
+         -m32 -I ./include
 ASFLAGS = -c -ffreestanding -nostdlib -fno-builtin -fno-stack-protector \
           -fno-pie -mno-red-zone -O2 -Wall -Wextra -fno-pic -m32 -I ./include
 ARFLAGS = rcs

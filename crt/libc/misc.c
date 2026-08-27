@@ -173,13 +173,6 @@ int gethostname(char *name, size_t len)
     return 0;
 }
 
-int sethostname(const char *name, size_t len)
-{
-    (void)name; (void)len;
-    errno = EPERM;
-    return -1;
-}
-
 /* ---- sysconf / pathconf ---- */
 
 long sysconf(int name)
@@ -209,35 +202,4 @@ long pathconf(const char *path, int name)
             errno = EINVAL;
             return -1;
     }
-}
-
-/* ---- getrlimit / setrlimit (best-effort) ---- */
-
-int getrlimit(int resource, struct rlimit *rlim)
-{
-    if (!rlim) {
-        errno = EFAULT;
-        return -1;
-    }
-    switch (resource) {
-        case RLIMIT_NOFILE:
-            rlim->rlim_cur = 1024;
-            rlim->rlim_max = 1024;
-            return 0;
-        case RLIMIT_STACK:
-            rlim->rlim_cur = 8 * 1024 * 1024;
-            rlim->rlim_max = 8 * 1024 * 1024;
-            return 0;
-        default:
-            rlim->rlim_cur = RLIM_INFINITY;
-            rlim->rlim_max = RLIM_INFINITY;
-            return 0;
-    }
-}
-
-int setrlimit(int resource, const struct rlimit *rlim)
-{
-    (void)resource; (void)rlim;
-    errno = EPERM;
-    return -1;
 }

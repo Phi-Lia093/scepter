@@ -80,6 +80,21 @@ typedef struct stat {
     uint32_t gid;     /* owner group id (0 if unsupported)      */
 } stat_t;
 
+/* Filesystem statistics (Linux statfs fields, 32-bit) */
+typedef struct fs_statfs {
+    uint32_t f_type;      /* filesystem type magic (minix3 super magic) */
+    uint32_t f_bsize;     /* optimal transfer block size (bytes)        */
+    uint32_t f_blocks;    /* total data blocks                          */
+    uint32_t f_bfree;     /* free data blocks                           */
+    uint32_t f_bavail;    /* free blocks available to unprivileged      */
+    uint32_t f_files;     /* total inodes                               */
+    uint32_t f_ffree;     /* free inodes                                */
+    uint32_t f_fsid;      /* filesystem ID (device encoding)            */
+    uint32_t f_namelen;   /* maximum filename length                    */
+    uint32_t f_frsize;    /* fragment size (same as f_bsize)            */
+    uint32_t f_spare[2];  /* reserved                                   */
+} fs_statfs_t;
+
 /* -------------------------------------------------------------------------
  * Filesystem Driver Operations
  * ------------------------------------------------------------------------- */
@@ -91,7 +106,7 @@ typedef struct fs_ops {
 
     /* ---- File open / close ---- */
     int (*open)(void *fs_private, const char *path, int flags,
-                void **file_private);
+                uint32_t mode, void **file_private);
     int (*close)(void *file_private);
 
     /* ---- File I/O ---- */
@@ -141,6 +156,14 @@ typedef struct fs_ops {
     /* utime: set access + modification times of a path */
     int (*utime)(void *fs_private, const char *path,
                  uint32_t atime, uint32_t mtime);
+    /* chown: change owner (uid/gid, -1 = leave unchanged) of a path */
+    int (*chown)(void *fs_private, const char *path, int uid, int gid);
+    /* fchown: change owner of an open file */
+    int (*fchown)(void *file_private, int uid, int gid);
+    /* statfs: fill in filesystem statistics */
+    int (*statfs)(void *fs_private, fs_statfs_t *buf);
+    /* getpath: resolve an open file back to its absolute path (for fchdir) */
+    int (*getpath)(void *file_private, char *buf, size_t bufsize);
 
     /* ---- Poll (non-blocking readiness) ---- */
     /* Returns a POLLIN/POLLOUT/POLLERR/POLLHUP mask for the open file.
@@ -219,7 +242,7 @@ int fs_is_mounted(const char *mount_path);
  * ------------------------------------------------------------------------- */
 
 /** Open a file or directory. Returns fd >= 3 on success, -1 on error. */
-int fs_open(const char *path, int flags);
+int fs_open(const char *path, int flags, uint32_t mode);
 
 /**
  * Create an anonymous pipe.
@@ -314,6 +337,12 @@ int fs_poll(int fd);
 /** 1 if fd is a valid, open file descriptor. */
 int fs_fd_valid(int fd);
 
+/* Set the per-fd close-on-exec flag (pipe2 O_CLOEXEC). */
+int fs_fd_set_cloexec(int fd);
+
+/* Set O_NONBLOCK on the shared open-file description (pipe2 O_NONBLOCK). */
+int fs_fd_set_nonblock(int fd);
+
 /** Return 0/1 for the FD_CLOEXEC flag, or -1 if fd is invalid. */
 int fs_get_cloexec(int fd);
 
@@ -346,6 +375,24 @@ int fs_mknod(const char *path, uint32_t mode, uint32_t dev);
 
 /** Set access + modification times of a path. */
 int fs_utime(const char *path, uint32_t atime, uint32_t mtime);
+
+/** Change owner (uid/gid, -1 = unchanged) of a path. */
+int fs_chown(const char *path, int uid, int gid);
+
+/** Change owner of an open fd. */
+int fs_fchown(int fd, int uid, int gid);
+
+/** Get filesystem statistics for the fs containing path. */
+int fs_statfs(const char *path, fs_statfs_t *buf);
+
+/** Get filesystem statistics for an open fd. */
+int fs_fstatfs(int fd, fs_statfs_t *buf);
+
+/** Change working directory to an open directory fd. */
+int fs_fchdir(int fd);
+
+/** Close all fds in [first, last]. */
+int fs_close_range(unsigned int first, unsigned int last);
 
 /**
  * Wake all processes blocked in select()/poll() so they re-check fd

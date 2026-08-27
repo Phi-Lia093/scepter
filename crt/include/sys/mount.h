@@ -11,6 +11,12 @@
 #define MS_SYNCHRONOUS 0x0010
 #define MS_REMOUNT     0x0020
 
+/* umount2() flags */
+#define MNT_FORCE 1
+#define MNT_DETACH 2
+#define MNT_EXPIRE 4
+
+
 int mount(const char *source, const char *target,
           const char *filesystemtype, unsigned long mountflags,
           const void *data);

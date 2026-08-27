@@ -192,6 +192,15 @@ static void open_file_put(open_file_t *file)
 
 static fd_entry_t *alloc_fd_entry(open_file_t *file)
 {
+    /* Enforce RLIMIT_NOFILE. */
+    if (current->rlimit_cur[RLIMIT_NOFILE] != RLIM_INFINITY) {
+        int n = 0;
+        fd_entry_t *e;
+        list_for_each_entry(e, &current->files, node) n++;
+        if (n >= (int)current->rlimit_cur[RLIMIT_NOFILE])
+            return NULL;
+    }
+
     fd_entry_t *fde = (fd_entry_t *)kalloc(sizeof(fd_entry_t));
     if (!fde) return NULL;
 
@@ -404,7 +413,7 @@ int fs_unmount(const char *mount_path)
  * File Operations
  * ========================================================================= */
 
-int fs_open(const char *path, int flags)
+int fs_open(const char *path, int flags, uint32_t mode)
 {
     if (!path) return -1;
 
@@ -420,7 +429,7 @@ int fs_open(const char *path, int flags)
     /* Open the file via filesystem driver */
     if (fs_drivers[fs_id].ops.open) {
         if (fs_drivers[fs_id].ops.open(mp->fs_private, rel_path,
-                                       flags, &file_private) != 0) {
+                                       flags, mode, &file_private) != 0) {
             return -1;
         }
     }
@@ -465,6 +474,15 @@ int fs_close(int fd)
 int fs_pipe(int fds[2])
 {
     if (!fds) return -1;
+
+    /* Enforce RLIMIT_NOFILE (pipe creates 2 fds). */
+    if (current->rlimit_cur[RLIMIT_NOFILE] != RLIM_INFINITY) {
+        int n = 0;
+        fd_entry_t *e;
+        list_for_each_entry(e, &current->files, node) n++;
+        if (n + 1 >= (int)current->rlimit_cur[RLIMIT_NOFILE])
+            return -1;
+    }
 
     pipe_t *pipe = pipe_create();
     if (!pipe) {
@@ -1002,6 +1020,24 @@ int fs_fd_valid(int fd)
     return find_fd_entry(fd) != NULL;
 }
 
+/* Set the per-fd close-on-exec flag (pipe2 with O_CLOEXEC). */
+int fs_fd_set_cloexec(int fd)
+{
+    fd_entry_t *fde = find_fd_entry(fd);
+    if (!fde) return -EBADF;
+    fde->cloexec = 1;
+    return 0;
+}
+
+/* Set O_NONBLOCK on the shared open-file description (pipe2). */
+int fs_fd_set_nonblock(int fd)
+{
+    fd_entry_t *fde = find_fd_entry(fd);
+    if (!fde) return -EBADF;
+    fde->file->flags |= O_NONBLOCK;
+    return 0;
+}
+
 /**
  * fs_get_cloexec - Return 0/1 for the FD_CLOEXEC flag, or -1 if invalid.
  */
@@ -1170,4 +1206,110 @@ int fs_utime(const char *path, uint32_t atime, uint32_t mtime)
     if (!fs_drivers[mp->fs_id].ops.utime)
         return -1;
     return fs_drivers[mp->fs_id].ops.utime(mp->fs_private, rel, atime, mtime);
+}
+
+int fs_chown(const char *path, int uid, int gid)
+{
+    if (!path) return -1;
+    char abs[MAX_PATH_LEN];
+    if (resolve_path(path, abs, sizeof(abs)) != 0) return -1;
+
+    const char *rel;
+    mount_point_t *mp = resolve_mount(abs, &rel);
+    if (!mp) return -1;
+
+    if (!fs_drivers[mp->fs_id].ops.chown)
+        return -ENOSYS;
+    return fs_drivers[mp->fs_id].ops.chown(mp->fs_private, rel, uid, gid);
+}
+
+int fs_fchown(int fd, int uid, int gid)
+{
+    fd_entry_t *fde = find_fd_entry(fd);
+    if (!fde) return -EBADF;
+
+    if (!fs_drivers[fde->file->fs_id].ops.fchown)
+        return -ENOSYS;
+    return fs_drivers[fde->file->fs_id].ops.fchown(fde->file->file_private,
+                                                   uid, gid);
+}
+
+int fs_statfs(const char *path, fs_statfs_t *buf)
+{
+    if (!path || !buf) return -EINVAL;
+    char abs[MAX_PATH_LEN];
+    if (resolve_path(path, abs, sizeof(abs)) != 0) return -ENOENT;
+
+    const char *rel;
+    mount_point_t *mp = resolve_mount(abs, &rel);
+    if (!mp) return -ENOENT;
+
+    if (!fs_drivers[mp->fs_id].ops.statfs)
+        return -ENOSYS;
+    return fs_drivers[mp->fs_id].ops.statfs(mp->fs_private, buf);
+}
+
+int fs_fstatfs(int fd, fs_statfs_t *buf)
+{
+    if (!buf) return -EINVAL;
+    fd_entry_t *fde = find_fd_entry(fd);
+    if (!fde) return -EBADF;
+
+    if (!fs_drivers[fde->file->fs_id].ops.statfs)
+        return -ENOSYS;
+    return fs_drivers[fde->file->fs_id].ops.statfs(fde->file->fs_private, buf);
+}
+
+int fs_fchdir(int fd)
+{
+    fd_entry_t *fde = find_fd_entry(fd);
+    if (!fde) return -EBADF;
+
+    int fs_id = fde->file->fs_id;
+
+    /* The fd must be a directory.  Verify via fstat. */
+    if (fs_drivers[fs_id].ops.fstat) {
+        stat_t st;
+        if (fs_drivers[fs_id].ops.fstat(fde->file->file_private, &st) != 0)
+            return -EINVAL;
+        if (st.type != DT_DIR)
+            return -ENOTDIR;
+    }
+
+    /* Resolve the directory back to an absolute path (fchdir on Linux
+     * works even after the path is renamed/unlinked; our simple path-based
+     * cwd requires a resolvable path, so support what the FS can give us). */
+    if (fs_drivers[fs_id].ops.getpath) {
+        char buf[MAX_PATH_LEN];
+        if (fs_drivers[fs_id].ops.getpath(fde->file->file_private,
+                                          buf, sizeof(buf)) != 0)
+            return -ENOENT;
+
+        /* Re-resolve so the mount prefix is correct for path lookups. */
+        char abs[MAX_PATH_LEN];
+        if (resolve_path(buf, abs, sizeof(abs)) != 0)
+            return -ENOENT;
+
+        strncpy(current->cwd, abs, MAX_PATH_LEN - 1);
+        current->cwd[MAX_PATH_LEN - 1] = '\0';
+        return 0;
+    }
+
+    return -ENOSYS;
+}
+
+int fs_close_range(unsigned int first, unsigned int last)
+{
+    int closed = 0;
+
+    /* Collect fds first (fs_close mutates the list). */
+    list_head_t *pos, *tmp;
+    list_for_each_safe(pos, tmp, &current->files) {
+        fd_entry_t *fde = list_entry(pos, fd_entry_t, node);
+        if (fde->fd >= (int)first && fde->fd <= (int)last) {
+            fs_close(fde->fd);
+            closed++;
+        }
+    }
+    return closed;
 }

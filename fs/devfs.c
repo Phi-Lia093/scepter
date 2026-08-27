@@ -136,9 +136,10 @@ static int devfs_unmount(void *fs_private)
 /* ---- open ---- */
 
 static int devfs_open(void *fs_private, const char *path, int flags,
-                      void **file_private)
+                      uint32_t mode, void **file_private)
 {
     (void)fs_private;
+    (void)mode;
 
     const char *name = strip_leading_slash(path);
 

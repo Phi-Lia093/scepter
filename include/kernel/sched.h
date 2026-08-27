@@ -58,6 +58,31 @@ typedef struct mm_struct {
 } mm_struct_t;
 
 /* =========================================================================
+ * Resource limits (Linux RLIMIT_* numbers, 32-bit)
+ * ========================================================================= */
+
+#define RLIMIT_CPU      0
+#define RLIMIT_FSIZE    1
+#define RLIMIT_DATA     2
+#define RLIMIT_STACK    3
+#define RLIMIT_CORE     4
+#define RLIMIT_RSS      5
+#define RLIMIT_NPROC    6
+#define RLIMIT_NOFILE   7
+#define RLIMIT_MEMLOCK  8
+#define RLIMIT_AS       9
+#define RLIMIT_LOCKS   10
+#define RLIM_NLIMITS   11
+
+#define RLIM_INFINITY  0xFFFFFFFFU
+
+/* Default limits applied to every task. */
+#define RLIM_DEFAULT_STACK   0x00100000U   /* 1 MB user stack    */
+#define RLIM_DEFAULT_AS      0x40000000U   /* 1 GB address space */
+#define RLIM_DEFAULT_NOFILE  1024
+#define RLIM_DEFAULT_NPROC   64
+
+/* =========================================================================
  * Task Structure
  * ========================================================================= */
 
@@ -69,12 +94,22 @@ typedef struct task_struct {
     uint32_t      sid;           /* session id (0 = none yet)        */
     uint32_t      uid;           /* real user id                     */
     uint32_t      euid;          /* effective user id                */
+    uint32_t      suid;          /* saved user id                    */
     uint32_t      gid;           /* real group id                    */
     uint32_t      egid;          /* effective group id               */
+    uint32_t      sgid;          /* saved group id                   */
+    uint32_t      fsuid;         /* filesystem user id               */
+    uint32_t      fsgid;         /* filesystem group id              */
+    uint32_t      ngroups;       /* number of supplementary groups   */
+    uint32_t      groups[16];    /* supplementary group list         */
     uint32_t      umask;         /* file creation mask               */
-    task_state_t  state;
+    uint32_t      personality;   /* execution domain (PER_LINUX=0)   */
+    uint32_t      rlimit_cur[RLIM_NLIMITS];   /* soft limits         */
+    uint32_t      rlimit_max[RLIM_NLIMITS];   /* hard limits         */
+    uint32_t      cleartid;      /* set_tid_address pointer (0=none) */
     char          name[32];
     int           priority;        /* nice value; lower = higher priority */
+    task_state_t  state;
     
     /* ---- Scheduler Links ---- */
     list_head_t   task_list;     /* Node in global task list */

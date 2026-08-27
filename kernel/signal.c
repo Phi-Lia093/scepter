@@ -316,6 +316,12 @@ int send_signal_all(int signum)
  */
 int sys_kill(int pid, int signum)
 {
+    if (signum == 0) {
+        /* kill(pid, 0) is an existence check: signal 0 never delivered. */
+        if (pid > 0)
+            return find_task_by_pid((uint32_t)pid) ? 0 : -ESRCH;
+        return 0;
+    }
     if (signum < 1 || signum >= NSIG)
         return -EINVAL;
 

@@ -81,7 +81,14 @@ int spawn_init(const char *path)
     
     /* Init is root and the leader of its own session + process group. */
     task->uid  = task->euid = 0;
+    task->suid = 0;
     task->gid  = task->egid = 0;
+    task->sgid = 0;
+    task->fsuid = 0;
+    task->fsgid = 0;
+    task->ngroups = 0;
+    task->personality = 0;
+    task->cleartid = 0;
     task->pgid = task->pid;
     task->sid  = task->pid;
     task->umask = 0;
@@ -89,9 +96,25 @@ int spawn_init(const char *path)
     task->itimer_interval  = 0;
     task->uticks = 0;
     task->sticks = 0;
+
+    /* Default resource limits. */
+    for (int i = 0; i < RLIM_NLIMITS; i++) {
+        task->rlimit_cur[i] = RLIM_INFINITY;
+        task->rlimit_max[i] = RLIM_INFINITY;
+    }
+    task->rlimit_cur[RLIMIT_STACK]  = RLIM_DEFAULT_STACK;
+    task->rlimit_max[RLIMIT_STACK]  = RLIM_DEFAULT_STACK;
+    task->rlimit_cur[RLIMIT_AS]     = RLIM_DEFAULT_AS;
+    task->rlimit_max[RLIMIT_AS]     = RLIM_DEFAULT_AS;
+    task->rlimit_cur[RLIMIT_NOFILE] = RLIM_DEFAULT_NOFILE;
+    task->rlimit_max[RLIMIT_NOFILE] = RLIM_DEFAULT_NOFILE;
+    task->rlimit_cur[RLIMIT_NPROC]  = RLIM_DEFAULT_NPROC;
+    task->rlimit_max[RLIMIT_NPROC]  = RLIM_DEFAULT_NPROC;
+    task->rlimit_cur[RLIMIT_MEMLOCK] = 0;
+    task->rlimit_max[RLIMIT_MEMLOCK] = 0;
     
     /* Open binary file */
-    int fd = fs_open(path, O_RDONLY);
+    int fd = fs_open(path, O_RDONLY, 0);
     if (fd < 0) {
         printk("[SPAWN] Failed to open file: %s\n", path);
         free_task(task);

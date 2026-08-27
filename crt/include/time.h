@@ -54,3 +54,8 @@ double difftime(time_t time1, time_t time0);
 size_t strftime(char *s, size_t max, const char *format, const struct tm *tm);
 
 #endif /* _TIME_H */
+
+
+int clock_nanosleep(clockid_t clockid, int flags,
+                    const struct timespec *rqtp, struct timespec *rmtp);
+int utimes(const char *path, const struct timeval times[2]);

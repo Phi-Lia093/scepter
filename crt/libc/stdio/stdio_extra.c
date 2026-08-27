@@ -75,7 +75,7 @@ FILE fopen(const char *path, const char *mode)
     case 'a': flags = (plus ? O_RDWR : O_WRONLY) | O_CREAT | O_APPEND; break;
     default:  return -1;
     }
-    return open(path, flags);
+    return open(path, flags, 0666);
 }
 
 int fclose(FILE stream)

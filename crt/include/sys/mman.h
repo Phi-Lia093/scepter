@@ -19,3 +19,13 @@ int munmap(void *addr, size_t length);
 int mprotect(void *addr, size_t length, int prot);
 
 #endif /* _SYS_MMAN_H */
+
+
+/* ---- memory locking (no-op: no swap) ---- */
+#define MCL_CURRENT 1
+#define MCL_FUTURE  2
+
+int mlock(const void *addr, size_t len);
+int munlock(const void *addr, size_t len);
+int mlockall(int flags);
+int munlockall(void);

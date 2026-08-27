@@ -91,3 +91,6 @@ static inline int sigismember(const sigset_t *set, int s) {
 }
 
 #endif /* _SIGNAL_H */
+
+
+int tgkill(int tgid, int tid, int sig);

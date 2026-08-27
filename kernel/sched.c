@@ -95,6 +95,23 @@ task_struct_t *alloc_task(void)
     
     /* Zero the entire structure */
     memset(task, 0, sizeof(task_struct_t));
+
+    /* Default resource limits for every task (including PID 0, which runs
+     * kernel-internal fs_open during spawn). */
+    for (int i = 0; i < RLIM_NLIMITS; i++) {
+        task->rlimit_cur[i] = RLIM_INFINITY;
+        task->rlimit_max[i] = RLIM_INFINITY;
+    }
+    task->rlimit_cur[RLIMIT_STACK]  = RLIM_DEFAULT_STACK;
+    task->rlimit_max[RLIMIT_STACK]  = RLIM_DEFAULT_STACK;
+    task->rlimit_cur[RLIMIT_AS]     = RLIM_DEFAULT_AS;
+    task->rlimit_max[RLIMIT_AS]     = RLIM_DEFAULT_AS;
+    task->rlimit_cur[RLIMIT_NOFILE] = RLIM_DEFAULT_NOFILE;
+    task->rlimit_max[RLIMIT_NOFILE] = RLIM_DEFAULT_NOFILE;
+    task->rlimit_cur[RLIMIT_NPROC]  = RLIM_DEFAULT_NPROC;
+    task->rlimit_max[RLIMIT_NPROC]  = RLIM_DEFAULT_NPROC;
+    task->rlimit_cur[RLIMIT_MEMLOCK] = 0;
+    task->rlimit_max[RLIMIT_MEMLOCK] = 0;
     
     /* Initialize lists */
     INIT_LIST_HEAD(&task->task_list);
@@ -439,6 +456,23 @@ void sched_init(void)
     kernel_task.next_fd = 3;
     kernel_task.cwd[0] = '/';
     kernel_task.cwd[1] = '\0';
+    
+    /* Default resource limits (memset zeroed them; PID 0 runs kernel-internal
+     * fs_open during spawn and must not be rejected by RLIMIT_NOFILE). */
+    for (int i = 0; i < RLIM_NLIMITS; i++) {
+        kernel_task.rlimit_cur[i] = RLIM_INFINITY;
+        kernel_task.rlimit_max[i] = RLIM_INFINITY;
+    }
+    kernel_task.rlimit_cur[RLIMIT_STACK]  = RLIM_DEFAULT_STACK;
+    kernel_task.rlimit_max[RLIMIT_STACK]  = RLIM_DEFAULT_STACK;
+    kernel_task.rlimit_cur[RLIMIT_AS]     = RLIM_DEFAULT_AS;
+    kernel_task.rlimit_max[RLIMIT_AS]     = RLIM_DEFAULT_AS;
+    kernel_task.rlimit_cur[RLIMIT_NOFILE] = RLIM_DEFAULT_NOFILE;
+    kernel_task.rlimit_max[RLIMIT_NOFILE] = RLIM_DEFAULT_NOFILE;
+    kernel_task.rlimit_cur[RLIMIT_NPROC]  = RLIM_DEFAULT_NPROC;
+    kernel_task.rlimit_max[RLIMIT_NPROC]  = RLIM_DEFAULT_NPROC;
+    kernel_task.rlimit_cur[RLIMIT_MEMLOCK] = 0;
+    kernel_task.rlimit_max[RLIMIT_MEMLOCK] = 0;
     
     /* Kernel task doesn't need user memory management */
     /* Its CR3 is already kernel_page_table */

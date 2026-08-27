@@ -41,3 +41,6 @@
 int fcntl(int fd, int cmd, ...);
 
 #endif /* _FCNTL_H */
+
+
+int pipe2(int pipefd[2], int flags);

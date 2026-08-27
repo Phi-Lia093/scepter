@@ -384,7 +384,7 @@ static int setup_redirection(command_t *c)
     }
     if (c->out_file) {
         int flags = O_WRONLY | O_CREAT | (c->append ? O_APPEND : O_TRUNC);
-        int fd = open(c->out_file, flags);
+        int fd = open(c->out_file, flags, 0644);
         if (fd < 0) {
             fprintf(stderr, "sh: %s: cannot create\n", c->out_file);
             return -1;

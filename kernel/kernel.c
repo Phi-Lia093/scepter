@@ -98,7 +98,7 @@ void kernel_main(void)
     devfs_init();   /* register devfs type (init mounts it at /dev) */
     minix3_init();  /* register minix3 filesystem driver */
 
-    printk("[KERNEL] Initialization complete\n\n");
+    printk("[KERNEL] Initialization complete (v2-syscalls)\n\n");
 
     /* ------------------------------------------------------------------
      * Mount root filesystem

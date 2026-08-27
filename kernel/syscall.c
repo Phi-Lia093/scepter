@@ -3,6 +3,7 @@
  * ============================================================================ */
 
 #include "kernel/syscall.h"
+#include "kernel/syscall_new.h"
 #include "kernel/sched.h"
 #include "kernel/process.h"
 #include "mm/vma.h"
@@ -134,7 +135,7 @@ int copy_to_user(void *user_dst, const void *kernel_src, size_t n)
  * @param flags Open flags (O_RDONLY, O_WRONLY, etc.)
  * @return File descriptor on success, -1 on error
  */
-static int sys_open(const char *user_path, int flags)
+static int sys_open(const char *user_path, int flags, uint32_t mode)
 {
     char kernel_path[256];
     
@@ -164,8 +165,11 @@ static int sys_open(const char *user_path, int flags)
     if (r < 0 && r != -ENOENT)
         return r;
     
+    /* Apply the umask to the creation mode (Linux masks in the kernel). */
+    mode &= ~current->umask;
+
     /* Call kernel VFS */
-    int fd = fs_open(kernel_path, flags);
+    int fd = fs_open(kernel_path, flags, mode);
     if (fd < 0)
         return -ENOENT;
     return fd;
@@ -483,6 +487,11 @@ static int sys_brk(uint32_t addr)
         return -ENOMEM;
     }
     
+    /* Enforce RLIMIT_AS (address space limit). */
+    if (task->rlimit_cur[RLIMIT_AS] != RLIM_INFINITY &&
+        addr - USER_TEXT_START > task->rlimit_cur[RLIMIT_AS])
+        return -ENOMEM;
+    
     /* Find or create heap VMA */
     vma_t *heap_vma = NULL;
     list_head_t *pos;
@@ -762,7 +771,7 @@ static int sys_pipe(int *user_fds)
  * ============================================================================ */
 
 /* Copy a NUL-terminated path from userspace into kernel buffer. */
-static int copy_path_from_user(const char *user_path, char *kernel_path,
+int copy_path_from_user(const char *user_path, char *kernel_path,
                                size_t size)
 {
     if (!valid_user_pointer(user_path, 1))
@@ -849,7 +858,7 @@ static int sys_truncate(const char *user_path, uint32_t length)
     if (r < 0)
         return r;
 
-    int fd = fs_open(kernel_path, O_WRONLY);
+    int fd = fs_open(kernel_path, O_WRONLY, 0);
     if (fd < 0)
         return -ENOENT;
     int ret = fs_truncate(fd, length);
@@ -881,13 +890,14 @@ static int sys_access(const char *user_path, int mode)
     return fs_access_perm(kernel_path, mode & 7);
 }
 
-/* Kernel utsname (must match the user struct in crt/include/sys/utsname.h) */
-struct utsname {
-    char sysname[65];
-    char nodename[65];
-    char release[65];
-    char version[65];
-    char machine[65];
+/* Kernel utsname type is declared in kernel/syscall.h; the mutable global
+ * system identity lives here (sethostname/setdomainname update it). */
+struct utsname sys_utsname = {
+    .sysname  = "Scepter",
+    .nodename = "scepter",
+    .release  = "0.1",
+    .version  = "Scepter OS 0.1",
+    .machine  = "i386",
 };
 
 /**
@@ -900,14 +910,7 @@ static int sys_uname(struct utsname *user_buf)
     if (!valid_user_pointer(user_buf, sizeof(struct utsname)))
         return -EFAULT;
 
-    struct utsname u;
-    strcpy(u.sysname,  "Scepter");
-    strcpy(u.nodename, "scepter");
-    strcpy(u.release,  "0.1");
-    strcpy(u.version,  "Scepter OS 0.1");
-    strcpy(u.machine,  "i386");
-
-    if (copy_to_user(user_buf, &u, sizeof(u)) < 0)
+    if (copy_to_user(user_buf, &sys_utsname, sizeof(sys_utsname)) < 0)
         return -EFAULT;
     return 0;
 }
@@ -1543,7 +1546,7 @@ static int sys_mount(const char *user_source, const char *user_target,
     return 0;
 }
 
-static int sys_umount(const char *user_target)
+int sys_umount(const char *user_target)
 {
     if (current->euid != 0)
         return -EPERM;
@@ -1557,7 +1560,7 @@ static int sys_umount(const char *user_target)
     return 0;
 }
 
-static int sys_sync(void)
+int sys_sync(void)
 {
     extern int cache_flush(void);
     cache_flush();
@@ -1660,248 +1663,62 @@ static int sys_utime(const char *user_path, struct utimbuf_k *user_times)
  * Main syscall dispatcher - called from isr128 (int 0x80)
  */
 int syscall_handler(registers_t *regs, int num, uint32_t arg1, uint32_t arg2,
-                    uint32_t arg3, uint32_t arg4, uint32_t arg5)
+                    uint32_t arg3, uint32_t arg4, uint32_t arg5, uint32_t arg6)
 {
-    (void)arg4;  /* Unused */
-    (void)arg5;  /* Unused */
+    (void)arg6;
 
     switch (num) {
         case SYS_EXIT:
             sys_exit((int)arg1);
-            /* Never returns */
-            return 0;
-        
+            return 0;   /* never returns */
+
         case SYS_FORK:
             return sys_fork(regs);
-        
+
         case SYS_READ:
             return sys_read((int)arg1, (char *)arg2, (size_t)arg3);
-        
+
         case SYS_WRITE:
             return sys_write((int)arg1, (const char *)arg2, (size_t)arg3);
-        
+
         case SYS_OPEN:
-            return sys_open((const char *)arg1, (int)arg2);
-        
+            return sys_open((const char *)arg1, (int)arg2, (uint32_t)arg3);
+
         case SYS_CLOSE:
             return sys_close((int)arg1);
-        
-        case SYS_LSEEK:
-            return sys_lseek((int)arg1, (int32_t)arg2, (int)arg3);
-        
-        case SYS_GETPID:
-            return sys_getpid();
-        
-        case SYS_DUP:
-            return sys_dup((int)arg1);
-        
-        case SYS_BRK:
-            return sys_brk(arg1);
-        
-        case SYS_IOCTL:
-            return sys_ioctl((int)arg1, arg2, arg3);
-        
-        case SYS_DUP2:
-            return sys_dup2((int)arg1, (int)arg2);
 
-        case SYS_DUP3:
-            return sys_dup3((int)arg1, (int)arg2, (int)arg3);
-        
-        case SYS_GETPPID:
-            return sys_getppid();
-        
-        case SYS_NANOSLEEP:
-            return sys_nanosleep((timespec_t *)arg1, (timespec_t *)arg2);
-        
-        case SYS_WAIT4:
-            return sys_wait4((int)arg1, (int *)arg2, (int)arg3, (void *)arg4);
-        
-        case SYS_PIPE:
-            return sys_pipe((int *)arg1);
-        
-        case SYS_MKDIR:
-            return sys_mkdir((const char *)arg1, (uint32_t)arg2);
-        
-        case SYS_RMDIR:
-            return sys_rmdir((const char *)arg1);
-        
-        case SYS_UNLINK:
-            return sys_unlink((const char *)arg1);
-        
-        case SYS_RENAME:
-            return sys_rename((const char *)arg1, (const char *)arg2);
-        
-        case SYS_TRUNCATE:
-            return sys_truncate((const char *)arg1, (uint32_t)arg2);
-        
-        case SYS_GETTIMEOFDAY:
-            return sys_gettimeofday((struct timeval *)arg1, (void *)arg2);
-        
-        case SYS_EXEC:
-            return sys_exec((const char *)arg1);
-        
-        case SYS_EXECV:
-            return sys_execv((const char *)arg1, (char **)arg2);
-        
-        case SYS_EXECVE:
-            return sys_execve((const char *)arg1, (char **)arg2, (char **)arg3);
-        
-        case SYS_CHDIR:
-            return sys_chdir((const char *)arg1);
-        
-        case SYS_GETDENTS:
-            return sys_getdents((int)arg1, (dirent_t *)arg2, (unsigned int)arg3);
-        
-        case SYS_MMAP:
-            return sys_mmap(arg1, (size_t)arg2, (int)arg3,
-                            (int)arg4, (int)arg5, 0);
-
-        case SYS_MPROTECT:
-            return sys_mprotect(arg1, (size_t)arg2, (int)arg3);
-
-        case SYS_MUNMAP:
-            return sys_munmap(arg1, (size_t)arg2);
-        
-        case SYS_STAT:
-            return sys_stat((const char *)arg1, (stat_t *)arg2);
-        
-        case SYS_FSTAT:
-            return sys_fstat((int)arg1, (stat_t *)arg2);
-        
-        case SYS_GETCWD:
-            return sys_getcwd((char *)arg1, (size_t)arg2);
-        
-        case SYS_SIGNAL:
-            return sys_signal((int)arg1, (uint32_t)arg2);
-        
-        case SYS_KILL:
-            return sys_kill((int)arg1, (int)arg2);
-        
-        case SYS_SIGRETURN:
-            return sys_sigreturn(regs);
-        
-        case SYS_NICE:
-            return sys_nice((int)arg1);
-
-        case SYS_ACCESS:
-            return sys_access((const char *)arg1, (int)arg2);
-
-        case SYS_UNAME:
-            return sys_uname((struct utsname *)arg1);
-        
-        case SYS_SETUID:
-            return sys_setuid(arg1);
-
-        case SYS_GETUID:
-            return sys_getuid();
-
-        case SYS_SETGID:
-            return sys_setgid(arg1);
-
-        case SYS_GETGID:
-            return sys_getgid();
-
-        case SYS_GETEUID:
-            return sys_geteuid();
-
-        case SYS_GETEGID:
-            return sys_getegid();
-
-        case SYS_SETPGID:
-            return sys_setpgid((int)arg1, (int)arg2);
-
-        case SYS_GETPGRP:
-            return sys_getpgrp();
-
-        case SYS_SETSID:
-            return sys_setsid();
-
-        case SYS_GETPGID:
-            return sys_getpgid((int)arg1);
-
-        case SYS_GETSID:
-            return sys_getsid((int)arg1);
-
-        case SYS_SIGACTION:
-            return sys_sigaction((int)arg1, (sigaction_t *)arg2,
-                                 (sigaction_t *)arg3);
-
-        case SYS_SIGPROCMASK:
-            return sys_sigprocmask((int)arg1, (sigset_t *)arg2,
-                                   (sigset_t *)arg3);
-
-        case SYS_SIGPENDING:
-            return sys_sigpending((sigset_t *)arg1);
-
-        case SYS_SIGSUSPEND:
-            return sys_sigsuspend((sigset_t *)arg1);
-
-        case SYS_FCNTL:
-            return sys_fcntl((int)arg1, (int)arg2, arg3);
-
-        case SYS_SELECT:
-            return sys_select((int)arg1, (void *)arg2, (void *)arg3,
-                              (void *)arg4, (void *)arg5);
-
-        case SYS_POLL:
-            return sys_poll((struct pollfd_k *)arg1, (int)arg2, (int)arg3);
-
-        case SYS_READV:
-            return sys_readv((int)arg1, (struct iovec_k *)arg2, (int)arg3);
-
-        case SYS_WRITEV:
-            return sys_writev((int)arg1, (struct iovec_k *)arg2, (int)arg3);
-
-        case SYS_PREAD:
-            return sys_pread((int)arg1, (void *)arg2, (size_t)arg3, arg4);
-
-        case SYS_PWRITE:
-            return sys_pwrite((int)arg1, (const void *)arg2, (size_t)arg3, arg4);
-
-        case SYS_FTRUNCATE:
-            return sys_ftruncate((int)arg1, arg2);
-
-        case SYS_FSYNC:
-            return sys_fsync((int)arg1);
-
-        case SYS_FDATASYNC:
-            return sys_fdatasync((int)arg1);
+        case SYS_WAITPID:
+            return sys_wait4((int)arg1, (int *)arg2, (int)arg3, NULL);
 
         case SYS_LINK:
             return sys_link((const char *)arg1, (const char *)arg2);
 
-        case SYS_SYMLINK:
-            return sys_symlink((const char *)arg1, (const char *)arg2);
+        case SYS_UNLINK:
+            return sys_unlink((const char *)arg1);
 
-        case SYS_READLINK:
-            return sys_readlink((const char *)arg1, (char *)arg2, (size_t)arg3);
+        case SYS_EXECVE:
+            return sys_execve((const char *)arg1, (char **)arg2, (char **)arg3);
 
-        case SYS_LSTAT:
-            return sys_lstat((const char *)arg1, (stat_t *)arg2);
+        case SYS_CHDIR:
+            return sys_chdir((const char *)arg1);
 
-        case SYS_CHMOD:
-            return sys_chmod((const char *)arg1, arg2);
-
-        case SYS_FCHMOD:
-            return sys_fchmod((int)arg1, arg2);
+        case SYS_TIME:
+            return sys_time((int *)arg1);
 
         case SYS_MKNOD:
             return sys_mknod((const char *)arg1, arg2, arg3);
 
-        case SYS_UMASK:
-            return sys_umask(arg1);
+        case SYS_CHMOD:
+            return sys_chmod((const char *)arg1, arg2);
 
-        case SYS_CLOCK_GETTIME:
-            return sys_clock_gettime((int)arg1, (timespec_t *)arg2);
+        case SYS_LCHOWN:
+            return sys_lchown((const char *)arg1, arg2, arg3);
 
-        case SYS_CLOCK_GETRES:
-            return sys_clock_getres((int)arg1, (timespec_t *)arg2);
+        case SYS_LSEEK:
+            return sys_lseek((int)arg1, (int32_t)arg2, (int)arg3);
 
-        case SYS_TIMES:
-            return sys_times((struct tms_k *)arg1);
-
-        case SYS_ALARM:
-            return sys_alarm(arg1);
+        case SYS_GETPID:
+            return sys_getpid();
 
         case SYS_MOUNT:
             return sys_mount((const char *)arg1, (const char *)arg2,
@@ -1911,8 +1728,176 @@ int syscall_handler(registers_t *regs, int num, uint32_t arg1, uint32_t arg2,
         case SYS_UMOUNT:
             return sys_umount((const char *)arg1);
 
+        case SYS_SETUID:
+            return sys_setuid(arg1);
+
+        case SYS_GETUID:
+            return sys_getuid();
+
+        case SYS_ALARM:
+            return sys_alarm(arg1);
+
+        case SYS_ACCESS:
+            return sys_access((const char *)arg1, (int)arg2);
+
+        case SYS_NICE:
+            return sys_nice((int)arg1);
+
+        case SYS_NANOSLEEP:
+            return sys_nanosleep((timespec_t *)arg1, (timespec_t *)arg2);
+
         case SYS_SYNC:
             return sys_sync();
+
+        case SYS_KILL:
+            return sys_kill((int)arg1, (int)arg2);
+
+        case SYS_RENAME:
+            return sys_rename((const char *)arg1, (const char *)arg2);
+
+        case SYS_MKDIR:
+            return sys_mkdir((const char *)arg1, (uint32_t)arg2);
+
+        case SYS_RMDIR:
+            return sys_rmdir((const char *)arg1);
+
+        case SYS_DUP:
+            return sys_dup((int)arg1);
+
+        case SYS_PIPE:
+            return sys_pipe((int *)arg1);
+
+        case SYS_TIMES:
+            return sys_times((struct tms_k *)arg1);
+
+        case SYS_BRK:
+            return sys_brk(arg1);
+
+        case SYS_SETGID:
+            return sys_setgid(arg1);
+
+        case SYS_GETGID:
+            return sys_getgid();
+
+        case SYS_SIGNAL:
+            return sys_signal((int)arg1, (uint32_t)arg2);
+
+        case SYS_GETEUID:
+            return sys_geteuid();
+
+        case SYS_GETEGID:
+            return sys_getegid();
+
+        case SYS_UMOUNT2:
+            return sys_umount2((const char *)arg1, (int)arg2);
+
+        case SYS_IOCTL:
+            return sys_ioctl((int)arg1, arg2, arg3);
+
+        case SYS_FCNTL:
+            return sys_fcntl((int)arg1, (int)arg2, arg3);
+
+        case SYS_SETPGID:
+            return sys_setpgid((int)arg1, (int)arg2);
+
+        case SYS_UMASK:
+            return sys_umask(arg1);
+
+        case SYS_DUP2:
+            return sys_dup2((int)arg1, (int)arg2);
+
+        case SYS_GETPPID:
+            return sys_getppid();
+
+        case SYS_GETPGRP:
+            return sys_getpgrp();
+
+        case SYS_SETSID:
+            return sys_setsid();
+
+        case SYS_SIGACTION:
+            return sys_sigaction((int)arg1, (sigaction_t *)arg2,
+                                 (sigaction_t *)arg3);
+
+        case SYS_SETREUID:
+            return sys_setreuid(arg1, arg2);
+
+        case SYS_SETREGID:
+            return sys_setregid(arg1, arg2);
+
+        case SYS_SIGSUSPEND:
+            return sys_sigsuspend((sigset_t *)arg1);
+
+        case SYS_SIGPENDING:
+            return sys_sigpending((sigset_t *)arg1);
+
+        case SYS_SETHOSTNAME:
+            return sys_sethostname((const char *)arg1, (int)arg2);
+
+        case SYS_SETRLIMIT:
+            return sys_setrlimit((int)arg1, (void *)arg2);
+
+        case SYS_GETRLIMIT:
+            return sys_getrlimit((int)arg1, (void *)arg2);
+
+        case SYS_GETRUSAGE:
+            return sys_getrusage((int)arg1, (void *)arg2);
+
+        case SYS_GETTIMEOFDAY:
+            return sys_gettimeofday((struct timeval *)arg1, (void *)arg2);
+
+        case SYS_SYSINFO:
+            return sys_sysinfo((void *)arg1);
+
+        case SYS_GETGROUPS:
+            return sys_getgroups((int)arg1, (void *)arg2);
+
+        case SYS_SETGROUPS:
+            return sys_setgroups((int)arg1, (void *)arg2);
+
+        case SYS_SELECT:
+            return sys_select((int)arg1, (void *)arg2, (void *)arg3,
+                              (void *)arg4, (void *)arg5);
+
+        case SYS_SYMLINK:
+            return sys_symlink((const char *)arg1, (const char *)arg2);
+
+        case SYS_READLINK:
+            return sys_readlink((const char *)arg1, (char *)arg2, (size_t)arg3);
+
+        case SYS_REBOOT:
+            return sys_reboot(arg1, arg2, arg3, (void *)arg4);
+
+        case SYS_MMAP:
+            return sys_mmap(arg1, (size_t)arg2, (int)arg3,
+                            (int)arg4, (int)arg5, arg6);
+
+        case SYS_MUNMAP:
+            return sys_munmap(arg1, (size_t)arg2);
+
+        case SYS_TRUNCATE:
+            return sys_truncate((const char *)arg1, (uint32_t)arg2);
+
+        case SYS_FTRUNCATE:
+            return sys_ftruncate((int)arg1, arg2);
+
+        case SYS_FCHMOD:
+            return sys_fchmod((int)arg1, arg2);
+
+        case SYS_FCHOWN:
+            return sys_fchown((int)arg1, arg2, arg3);
+
+        case SYS_GETPRIORITY:
+            return sys_getpriority((int)arg1, (int)arg2);
+
+        case SYS_SETPRIORITY:
+            return sys_setpriority((int)arg1, (int)arg2, (int)arg3);
+
+        case SYS_STATFS:
+            return sys_statfs((const char *)arg1, (void *)arg2);
+
+        case SYS_FSTATFS:
+            return sys_fstatfs((int)arg1, (void *)arg2);
 
         case SYS_SETITIMER:
             return sys_setitimer((int)arg1, (struct itimerval_k *)arg2,
@@ -1921,11 +1906,181 @@ int syscall_handler(registers_t *regs, int num, uint32_t arg1, uint32_t arg2,
         case SYS_GETITIMER:
             return sys_getitimer((int)arg1, (struct itimerval_k *)arg2);
 
+        case SYS_STAT:
+            return sys_stat((const char *)arg1, (stat_t *)arg2);
+
+        case SYS_LSTAT:
+            return sys_lstat((const char *)arg1, (stat_t *)arg2);
+
+        case SYS_FSTAT:
+            return sys_fstat((int)arg1, (stat_t *)arg2);
+
+        case SYS_WAIT4:
+            return sys_wait4((int)arg1, (int *)arg2, (int)arg3, (void *)arg4);
+
+        case SYS_FSYNC:
+            return sys_fsync((int)arg1);
+
+        case SYS_SIGRETURN:
+            return sys_sigreturn(regs);
+
+        case SYS_SETDOMAINNAME:
+            return sys_setdomainname((const char *)arg1, (int)arg2);
+
+        case SYS_UNAME:
+            return sys_uname((struct utsname *)arg1);
+
+        case SYS_MPROTECT:
+            return sys_mprotect(arg1, (size_t)arg2, (int)arg3);
+
+        case SYS_SIGPROCMASK:
+            return sys_sigprocmask((int)arg1, (sigset_t *)arg2,
+                                   (sigset_t *)arg3);
+
+        case SYS_GETPGID:
+            return sys_getpgid((int)arg1);
+
+        case SYS_FCHDIR:
+            return sys_fchdir((int)arg1);
+
+        case SYS_PERSONALITY:
+            return sys_personality(arg1);
+
         case SYS_UTIME:
             return sys_utime((const char *)arg1, (struct utimbuf_k *)arg2);
 
+        case SYS_SETFSUID:
+            return sys_setfsuid(arg1);
+
+        case SYS_SETFSGID:
+            return sys_setfsgid(arg1);
+
+        case SYS_GETDENTS:
+            return sys_getdents((int)arg1, (dirent_t *)arg2, (unsigned int)arg3);
+
+        case SYS_READV:
+            return sys_readv((int)arg1, (struct iovec_k *)arg2, (int)arg3);
+
+        case SYS_WRITEV:
+            return sys_writev((int)arg1, (struct iovec_k *)arg2, (int)arg3);
+
+        case SYS_GETSID:
+            return sys_getsid((int)arg1);
+
+        case SYS_FDATASYNC:
+            return sys_fdatasync((int)arg1);
+
+        case SYS_MLOCK:
+            return sys_mlock(arg1, (size_t)arg2);
+
+        case SYS_MUNLOCK:
+            return sys_munlock(arg1, (size_t)arg2);
+
+        case SYS_MLOCKALL:
+            return sys_mlockall((int)arg1);
+
+        case SYS_MUNLOCKALL:
+            return sys_munlockall();
+
+        case SYS_SCHED_SETPARAM:
+            return sys_sched_setparam((int)arg1, (void *)arg2);
+
+        case SYS_SCHED_GETPARAM:
+            return sys_sched_getparam((int)arg1, (void *)arg2);
+
+        case SYS_SCHED_GETSCHEDULER:
+            return sys_sched_getscheduler((int)arg1);
+
+        case SYS_SCHED_YIELD:
+            return sys_sched_yield();
+
+        case SYS_SCHED_GET_PRIORITY_MAX:
+            return sys_sched_get_priority_max((int)arg1);
+
+        case SYS_SCHED_GET_PRIORITY_MIN:
+            return sys_sched_get_priority_min((int)arg1);
+
+        case SYS_SCHED_RR_GET_INTERVAL:
+            return sys_sched_rr_get_interval((int)arg1, (void *)arg2);
+
+        case SYS_POLL:
+            return sys_poll((struct pollfd_k *)arg1, (int)arg2, (int)arg3);
+
+        case SYS_PRCTL:
+            return sys_prctl((int)arg1, arg2, arg3, arg4, arg5);
+
+        case SYS_PREAD:
+            return sys_pread((int)arg1, (void *)arg2, (size_t)arg3, arg4);
+
+        case SYS_PWRITE:
+            return sys_pwrite((int)arg1, (const void *)arg2, (size_t)arg3, arg4);
+
+        case SYS_GETCWD:
+            return sys_getcwd((char *)arg1, (size_t)arg2);
+
+        case SYS_SENDFILE:
+            return sys_sendfile((int)arg1, (int)arg2, (void *)arg3, (size_t)arg4);
+
+        case SYS_FADVISE64:
+            return sys_fadvise64((int)arg1, arg2, arg3, (int)arg4);
+
+        case SYS_EXIT_GROUP:
+            return sys_exit_group((int)arg1);
+
+        case SYS_SET_TID_ADDRESS:
+            return sys_set_tid_address((void *)arg1);
+
+        case SYS_CLOCK_GETTIME:
+            return sys_clock_gettime((int)arg1, (timespec_t *)arg2);
+
+        case SYS_CLOCK_GETRES:
+            return sys_clock_getres((int)arg1, (timespec_t *)arg2);
+
+        case SYS_CLOCK_NANOSLEEP:
+            return sys_clock_nanosleep((int)arg1, (int)arg2,
+                                       (void *)arg3, (void *)arg4);
+
+        case SYS_TGKILL:
+            return sys_tgkill((int)arg1, (int)arg2, (int)arg3);
+
+        case SYS_UTIMES:
+            return sys_utimes((const char *)arg1, (void *)arg2);
+
+        case SYS_SYNCFS:
+            return sys_syncfs((int)arg1);
+
+        case SYS_GETCPU:
+            return sys_getcpu((void *)arg1, (void *)arg2, (void *)arg3);
+
+        case SYS_DUP3:
+            return sys_dup3((int)arg1, (int)arg2, (int)arg3);
+
+        case SYS_PIPE2:
+            return sys_pipe2((int *)arg1, (int)arg2);
+
+        case SYS_MEMBARRIER:
+            return sys_membarrier((int)arg1, (int)arg2);
+
+        case SYS_CLOSE_RANGE:
+            return sys_close_range(arg1, arg2, (int)arg3);
+
+        case SYS_SETRESUID:
+            return sys_setresuid(arg1, arg2, arg3);
+
+        case SYS_GETRESUID:
+            return sys_getresuid((void *)arg1, (void *)arg2, (void *)arg3);
+
+        case SYS_SETRESGID:
+            return sys_setresgid(arg1, arg2, arg3);
+
+        case SYS_GETRESGID:
+            return sys_getresgid((void *)arg1, (void *)arg2, (void *)arg3);
+
+        case SYS_CHOWN:
+            return sys_chown((const char *)arg1, arg2, arg3);
+
         default:
             printk("[SYSCALL] Unknown syscall number: %d\n", num);
-            return -1;
+            return -ENOSYS;
     }
 }

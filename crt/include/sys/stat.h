@@ -64,3 +64,9 @@ int fchmod(int fd, mode_t mode);
 mode_t umask(mode_t mask);
 
 #endif /* _SYS_STAT_H */
+
+
+/* ---- ownership ---- */
+int chown(const char *path, uid_t owner, gid_t group);
+int lchown(const char *path, uid_t owner, gid_t group);
+int fchown(int fd, uid_t owner, gid_t group);

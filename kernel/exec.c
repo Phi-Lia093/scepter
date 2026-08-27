@@ -25,7 +25,7 @@ int exec_flat(const char *path)
     printk("\n[EXEC] Loading binary: %s\n", path);
     
     /* Open the file */
-    int fd = fs_open(path, 0);
+    int fd = fs_open(path, 0, 0);
     if (fd < 0) {
         printk("[EXEC] Failed to open file\n");
         return -1;

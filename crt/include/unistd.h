@@ -34,7 +34,7 @@ pid_t setsid(void);
 pid_t getsid(pid_t pid);
 
 /* File operations */
-int open(const char *path, int flags);
+int open(const char *path, int flags, ...);
 ssize_t read(int fd, void *buf, size_t count);
 ssize_t write(int fd, const void *buf, size_t count);
 int close(int fd);
@@ -124,3 +124,36 @@ extern int optopt;
 int getopt(int argc, char *const argv[], const char *optstring);
 
 #endif /* _UNISTD_H */
+
+/* ---- extra POSIX / Linux functions ---- */
+int fchdir(int fd);
+int close_range(unsigned int first, unsigned int last, int flags);
+int syncfs(int fd);
+int set_tid_address(int *tidptr);
+int getcpu(unsigned *cpu, unsigned *node);
+int personality(unsigned long persona);
+int getgroups(int size, gid_t list[]);
+int setgroups(int size, const gid_t list[]);
+void exit_group(int status);
+
+/* ---- owners ---- */
+int chown(const char *path, uid_t owner, gid_t group);
+int lchown(const char *path, uid_t owner, gid_t group);
+int fchown(int fd, uid_t owner, gid_t group);
+
+/* ---- hostname ---- */
+int gethostname(char *name, size_t len);
+int sethostname(const char *name, size_t len);
+int setdomainname(const char *name, size_t len);
+
+int setreuid(uid_t ruid, uid_t euid);
+int setregid(gid_t rgid, gid_t egid);
+int getresuid(uid_t *ruid, uid_t *euid, uid_t *suid);
+int setresuid(uid_t ruid, uid_t euid, uid_t suid);
+int getresgid(gid_t *rgid, gid_t *egid, gid_t *sgid);
+int setresgid(gid_t rgid, gid_t egid, gid_t sgid);
+int setfsuid(uid_t fsuid);
+int setfsgid(gid_t fsgid);
+ssize_t sendfile(int out_fd, int in_fd, off_t *offset, size_t count);
+int membarrier(int cmd, int flags);
+int fadvise64(int fd, off_t offset, off_t len, int advice);

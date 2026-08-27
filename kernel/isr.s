@@ -161,20 +161,23 @@ isr128:
     movl 20(%esp), %edx            /* arg3  (EDX) */
     movl 4(%esp), %esi             /* arg4  (ESI) */
     movl 0(%esp), %edi             /* arg5  (EDI) */
+    movl 8(%esp), %ebp             /* arg6  (EBP from the saved frame) */
 
-    /* syscall_handler(regs, num, arg1, arg2, arg3, arg4, arg5) */
+    /* syscall_handler(regs, num, arg1, arg2, arg3, arg4, arg5, arg6)
+     * cdecl: push the args right-to-left, so arg6 goes first. */
+    pushl %ebp                     /* arg6 */
     pushl %edi                     /* arg5 */
     pushl %esi                     /* arg4 */
     pushl %edx                     /* arg3 */
     pushl %ecx                     /* arg2 */
     pushl %ebx                     /* arg1 */
     pushl %eax                     /* num */
-    lea 24(%esp), %eax             /* regs = base (ESP+24 after 6 pushes) */
+    lea 28(%esp), %eax             /* regs = base (ESP+28 after 7 pushes) */
     pushl %eax                     /* regs */
 
     call syscall_handler
 
-    addl $28, %esp                 /* clean 7 args; ESP = base again */
+    addl $32, %esp                 /* clean 8 args; ESP = base again */
 
     /* Store return value into the EAX slot of the frame */
     movl %eax, 28(%esp)

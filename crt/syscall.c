@@ -7,6 +7,7 @@
  * error sentinel).
  * ============================================================================ */
 
+#include <stdarg.h>
 #include "syscall.h"
 #include "errno.h"
 #include "signal.h"
@@ -24,6 +25,11 @@
 #include "termios.h"
 #include "sys/mount.h"
 #include "poll.h"
+#include "sched.h"
+#include "sys/vfs.h"
+#include "sys/sysinfo.h"
+#include "sys/prctl.h"
+#include "sys/reboot.h"
 #include "dirent.h"
 #include "fcntl.h"
 
@@ -106,6 +112,22 @@ INLINE int syscall5(int num, int arg1, int arg2, int arg3, int arg4, int arg5)
     return ret;
 }
 
+/* 6-arg syscalls pass the 6th argument in EBP (Linux i386 convention). */
+INLINE int syscall6(int num, int arg1, int arg2, int arg3, int arg4,
+                    int arg5, int arg6)
+{
+    int ret;
+    __asm__ volatile(
+        "movl %7, %%ebp\n\t"
+        "int $0x80"
+        : "=a"(ret)
+        : "a"(num), "b"(arg1), "c"(arg2), "d"(arg3), "S"(arg4), "D"(arg5),
+          "m"(arg6)
+        : "memory", "ebp"
+    );
+    return ret;
+}
+
 /* ============================================================================
  * Process control
  * ============================================================================ */
@@ -133,7 +155,15 @@ pid_t fork(void)
 
 pid_t waitpid(pid_t pid, int *status, int options)
 {
-    long ret = syscall4(SYS_WAIT4, (int)pid, (int)status, options, 0);
+    long ret = syscall3(SYS_WAITPID, (int)pid, (int)status, options);
+    if (ret < 0) { errno = -ret; return -1; }
+    return (pid_t)ret;
+}
+
+pid_t wait4(pid_t pid, int *status, int options, struct rusage *rusage)
+{
+    long ret = syscall4(SYS_WAIT4, (int)pid, (int)status, options,
+                        (int)rusage);
     if (ret < 0) { errno = -ret; return -1; }
     return (pid_t)ret;
 }
@@ -145,16 +175,16 @@ pid_t wait(int *status)
 
 int exec(const char *path)
 {
-    long ret = syscall1(SYS_EXEC, (int)path);
-    if (ret < 0) { errno = -ret; return -1; }
-    return 0;   /* never reached on success */
+    /* exec(path) == execve(path, [path, NULL], environ) */
+    char *argv[] = { (char *)path, NULL };
+    extern char **environ;
+    return execve(path, argv, environ);
 }
 
 int execv(const char *path, char *const argv[])
 {
-    long ret = syscall2(SYS_EXECV, (int)path, (int)argv);
-    if (ret < 0) { errno = -ret; return -1; }
-    return 0;
+    extern char **environ;
+    return execve(path, argv, environ);
 }
 
 int execve(const char *path, char *const argv[], char *const envp[])
@@ -270,11 +300,24 @@ pid_t getsid(pid_t pid)
  * File I/O
  * ============================================================================ */
 
-int open(const char *path, int flags)
+int open_mode(const char *path, int flags, unsigned int mode)
 {
-    long ret = syscall2(SYS_OPEN, (int)path, flags);
+    long ret = syscall3(SYS_OPEN, (int)path, flags, (int)mode);
     if (ret < 0) { errno = -ret; return -1; }
     return (int)ret;
+}
+
+/* POSIX open() is variadic: the mode is only meaningful with O_CREAT. */
+int open(const char *path, int flags, ...)
+{
+    unsigned int mode = 0;
+    if (flags & O_CREAT) {
+        va_list ap;
+        va_start(ap, flags);
+        mode = va_arg(ap, unsigned int);
+        va_end(ap);
+    }
+    return open_mode(path, flags, mode);
 }
 
 ssize_t read(int fd, void *buf, size_t count)
@@ -599,8 +642,8 @@ int brk(void *addr)
 
 void *mmap(void *addr, size_t length, int prot, int flags, int fd, long offset)
 {
-    (void)offset;   /* the kernel always uses offset 0 */
-    long ret = syscall5(SYS_MMAP, (int)addr, (int)length, prot, flags, fd);
+    long ret = syscall6(SYS_MMAP, (int)addr, (int)length, prot, flags, fd,
+                        (int)offset);
     if (ret < 0) { errno = -ret; return MAP_FAILED; }
     return (void *)ret;
 }
@@ -873,4 +916,377 @@ int pause(void)
 int sigreturn(void)
 {
     return syscall0(SYS_SIGRETURN);
+}
+
+/* ============================================================================
+ * Tier 1-3 syscall wrappers (added with the Linux-number alignment)
+ * ============================================================================ */
+
+/* ---- Scheduling ---- */
+
+int sched_yield(void)
+{
+    return (int)syscall0(SYS_SCHED_YIELD);
+}
+
+int sched_getparam(pid_t pid, struct sched_param *param)
+{
+    long ret = syscall2(SYS_SCHED_GETPARAM, (int)pid, (int)param);
+    if (ret < 0) { errno = -ret; return -1; }
+    return 0;
+}
+
+int sched_setparam(pid_t pid, const struct sched_param *param)
+{
+    long ret = syscall2(SYS_SCHED_SETPARAM, (int)pid, (int)param);
+    if (ret < 0) { errno = -ret; return -1; }
+    return 0;
+}
+
+int sched_getscheduler(pid_t pid)
+{
+    long ret = syscall1(SYS_SCHED_GETSCHEDULER, (int)pid);
+    if (ret < 0) { errno = -ret; return -1; }
+    return (int)ret;
+}
+
+int sched_get_priority_max(int policy)
+{
+    long ret = syscall1(SYS_SCHED_GET_PRIORITY_MAX, policy);
+    if (ret < 0) { errno = -ret; return -1; }
+    return (int)ret;
+}
+
+int sched_get_priority_min(int policy)
+{
+    long ret = syscall1(SYS_SCHED_GET_PRIORITY_MIN, policy);
+    if (ret < 0) { errno = -ret; return -1; }
+    return (int)ret;
+}
+
+int sched_rr_get_interval(pid_t pid, struct timespec *tp)
+{
+    long ret = syscall2(SYS_SCHED_RR_GET_INTERVAL, (int)pid, (int)tp);
+    if (ret < 0) { errno = -ret; return -1; }
+    return 0;
+}
+
+int getpriority(int which, int who)
+{
+    long ret = syscall2(SYS_GETPRIORITY, which, who);
+    if (ret < 0) { errno = -ret; return -1; }
+    return (int)ret;
+}
+
+int setpriority(int which, int who, int niceval)
+{
+    long ret = syscall3(SYS_SETPRIORITY, which, who, niceval);
+    if (ret < 0) { errno = -ret; return -1; }
+    return 0;
+}
+
+/* ---- Process ---- */
+
+void exit_group(int status)
+{
+    syscall1(SYS_EXIT_GROUP, status);
+    for (;;) __asm__ volatile("hlt");
+}
+
+int tgkill(int tgid, int tid, int sig)
+{
+    long ret = syscall3(SYS_TGKILL, tgid, tid, sig);
+    if (ret < 0) { errno = -ret; return -1; }
+    return 0;
+}
+
+int set_tid_address(int *tidptr)
+{
+    return (int)syscall1(SYS_SET_TID_ADDRESS, (int)tidptr);
+}
+
+int prctl(int option, unsigned long arg2, unsigned long arg3,
+          unsigned long arg4, unsigned long arg5)
+{
+    long ret = syscall5(SYS_PRCTL, option, (int)arg2, (int)arg3,
+                        (int)arg4, (int)arg5);
+    if (ret < 0) { errno = -ret; return -1; }
+    return (int)ret;
+}
+
+int personality(unsigned long persona)
+{
+    long ret = syscall1(SYS_PERSONALITY, (int)persona);
+    if (ret < 0) { errno = -ret; return -1; }
+    return (int)ret;
+}
+
+/* ---- File descriptors ---- */
+
+int pipe2(int pipefd[2], int flags)
+{
+    long ret = syscall2(SYS_PIPE2, (int)pipefd, flags);
+    if (ret < 0) { errno = -ret; return -1; }
+    return 0;
+}
+
+int close_range(unsigned int first, unsigned int last, int flags)
+{
+    long ret = syscall3(SYS_CLOSE_RANGE, (int)first, (int)last, flags);
+    if (ret < 0) { errno = -ret; return -1; }
+    return 0;
+}
+
+int fchdir(int fd)
+{
+    long ret = syscall1(SYS_FCHDIR, fd);
+    if (ret < 0) { errno = -ret; return -1; }
+    return 0;
+}
+
+ssize_t sendfile(int out_fd, int in_fd, off_t *offset, size_t count)
+{
+    long ret = syscall4(SYS_SENDFILE, out_fd, in_fd, (int)offset,
+                        (int)count);
+    if (ret < 0) { errno = -ret; return -1; }
+    return (ssize_t)ret;
+}
+
+/* ---- Filesystem ---- */
+
+int statfs(const char *path, struct statfs *buf)
+{
+    long ret = syscall2(SYS_STATFS, (int)path, (int)buf);
+    if (ret < 0) { errno = -ret; return -1; }
+    return 0;
+}
+
+int fstatfs(int fd, struct statfs *buf)
+{
+    long ret = syscall2(SYS_FSTATFS, fd, (int)buf);
+    if (ret < 0) { errno = -ret; return -1; }
+    return 0;
+}
+
+int syncfs(int fd)
+{
+    long ret = syscall1(SYS_SYNCFS, fd);
+    if (ret < 0) { errno = -ret; return -1; }
+    return 0;
+}
+
+int fadvise64(int fd, off_t offset, off_t len, int advice)
+{
+    long ret = syscall4(SYS_FADVISE64, fd, (int)offset, (int)len, advice);
+    if (ret < 0) { errno = -ret; return -1; }
+    return 0;
+}
+
+int posix_fadvise(int fd, off_t offset, off_t len, int advice)
+{
+    return fadvise64(fd, offset, len, advice);
+}
+
+/* ---- System info / resources ---- */
+
+int sysinfo(struct sysinfo *info)
+{
+    long ret = syscall1(SYS_SYSINFO, (int)info);
+    if (ret < 0) { errno = -ret; return -1; }
+    return 0;
+}
+
+int getrusage(int who, struct rusage *usage)
+{
+    long ret = syscall2(SYS_GETRUSAGE, who, (int)usage);
+    if (ret < 0) { errno = -ret; return -1; }
+    return 0;
+}
+
+int getrlimit(int resource, struct rlimit *rlim)
+{
+    long ret = syscall2(SYS_GETRLIMIT, resource, (int)rlim);
+    if (ret < 0) { errno = -ret; return -1; }
+    return 0;
+}
+
+int setrlimit(int resource, const struct rlimit *rlim)
+{
+    long ret = syscall2(SYS_SETRLIMIT, resource, (int)rlim);
+    if (ret < 0) { errno = -ret; return -1; }
+    return 0;
+}
+
+/* ---- Hostname / reboot ---- */
+
+int sethostname(const char *name, size_t len)
+{
+    long ret = syscall2(SYS_SETHOSTNAME, (int)name, (int)len);
+    if (ret < 0) { errno = -ret; return -1; }
+    return 0;
+}
+
+int setdomainname(const char *name, size_t len)
+{
+    long ret = syscall2(SYS_SETDOMAINNAME, (int)name, (int)len);
+    if (ret < 0) { errno = -ret; return -1; }
+    return 0;
+}
+
+int reboot(int magic1, int magic2, int cmd, void *arg)
+{
+    long ret = syscall4(SYS_REBOOT, magic1, magic2, cmd, (int)arg);
+    if (ret < 0) { errno = -ret; return -1; }
+    return 0;
+}
+
+/* ---- Credentials ---- */
+
+int setreuid(uid_t ruid, uid_t euid)
+{
+    long ret = syscall2(SYS_SETREUID, (int)ruid, (int)euid);
+    if (ret < 0) { errno = -ret; return -1; }
+    return 0;
+}
+
+int setregid(gid_t rgid, gid_t egid)
+{
+    long ret = syscall2(SYS_SETREGID, (int)rgid, (int)egid);
+    if (ret < 0) { errno = -ret; return -1; }
+    return 0;
+}
+
+int setresuid(uid_t ruid, uid_t euid, uid_t suid)
+{
+    long ret = syscall3(SYS_SETRESUID, (int)ruid, (int)euid, (int)suid);
+    if (ret < 0) { errno = -ret; return -1; }
+    return 0;
+}
+
+int getresuid(uid_t *ruid, uid_t *euid, uid_t *suid)
+{
+    long ret = syscall3(SYS_GETRESUID, (int)ruid, (int)euid, (int)suid);
+    if (ret < 0) { errno = -ret; return -1; }
+    return 0;
+}
+
+int setresgid(gid_t rgid, gid_t egid, gid_t sgid)
+{
+    long ret = syscall3(SYS_SETRESGID, (int)rgid, (int)egid, (int)sgid);
+    if (ret < 0) { errno = -ret; return -1; }
+    return 0;
+}
+
+int getresgid(gid_t *rgid, gid_t *egid, gid_t *sgid)
+{
+    long ret = syscall3(SYS_GETRESGID, (int)rgid, (int)egid, (int)sgid);
+    if (ret < 0) { errno = -ret; return -1; }
+    return 0;
+}
+
+int setfsuid(uid_t fsuid)
+{
+    return (int)syscall1(SYS_SETFSUID, (int)fsuid);
+}
+
+int setfsgid(gid_t fsgid)
+{
+    return (int)syscall1(SYS_SETFSGID, (int)fsgid);
+}
+
+int getgroups(int size, gid_t list[])
+{
+    long ret = syscall2(SYS_GETGROUPS, size, (int)list);
+    if (ret < 0) { errno = -ret; return -1; }
+    return (int)ret;
+}
+
+int setgroups(int size, const gid_t list[])
+{
+    long ret = syscall2(SYS_SETGROUPS, size, (int)list);
+    if (ret < 0) { errno = -ret; return -1; }
+    return 0;
+}
+
+int chown(const char *path, uid_t owner, gid_t group)
+{
+    long ret = syscall3(SYS_CHOWN, (int)path, (int)owner, (int)group);
+    if (ret < 0) { errno = -ret; return -1; }
+    return 0;
+}
+
+int lchown(const char *path, uid_t owner, gid_t group)
+{
+    long ret = syscall3(SYS_LCHOWN, (int)path, (int)owner, (int)group);
+    if (ret < 0) { errno = -ret; return -1; }
+    return 0;
+}
+
+int fchown(int fd, uid_t owner, gid_t group)
+{
+    long ret = syscall3(SYS_FCHOWN, fd, (int)owner, (int)group);
+    if (ret < 0) { errno = -ret; return -1; }
+    return 0;
+}
+
+/* ---- Memory locking / barriers / cpu ---- */
+
+int mlock(const void *addr, size_t len)
+{
+    long ret = syscall2(SYS_MLOCK, (int)addr, (int)len);
+    if (ret < 0) { errno = -ret; return -1; }
+    return 0;
+}
+
+int munlock(const void *addr, size_t len)
+{
+    long ret = syscall2(SYS_MUNLOCK, (int)addr, (int)len);
+    if (ret < 0) { errno = -ret; return -1; }
+    return 0;
+}
+
+int mlockall(int flags)
+{
+    long ret = syscall1(SYS_MLOCKALL, flags);
+    if (ret < 0) { errno = -ret; return -1; }
+    return 0;
+}
+
+int munlockall(void)
+{
+    long ret = syscall0(SYS_MUNLOCKALL);
+    if (ret < 0) { errno = -ret; return -1; }
+    return 0;
+}
+
+int membarrier(int cmd, int flags)
+{
+    long ret = syscall2(SYS_MEMBARRIER, cmd, flags);
+    if (ret < 0) { errno = -ret; return -1; }
+    return (int)ret;
+}
+
+int getcpu(unsigned *cpu, unsigned *node)
+{
+    long ret = syscall3(SYS_GETCPU, (int)cpu, (int)node, 0);
+    if (ret < 0) { errno = -ret; return -1; }
+    return 0;
+}
+
+/* ---- Time ---- */
+
+int clock_nanosleep(clockid_t clockid, int flags,
+                    const struct timespec *rqtp, struct timespec *rmtp)
+{
+    long ret = syscall4(SYS_CLOCK_NANOSLEEP, (int)clockid, flags,
+                        (int)rqtp, (int)rmtp);
+    if (ret < 0) { errno = -ret; return -1; }
+    return 0;
+}
+
+int utimes(const char *path, const struct timeval times[2])
+{
+    long ret = syscall2(SYS_UTIMES, (int)path, (int)times);
+    if (ret < 0) { errno = -ret; return -1; }
+    return 0;
 }

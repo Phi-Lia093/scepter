@@ -21,7 +21,7 @@ static int lookup_directory_by_path(minix3_fs_info_t *fs, const char *path,
  * ============================================================================ */
 
 static int minix3_vfs_open(void *fs_private, const char *path, int flags,
-                           void **file_private)
+                           uint32_t mode, void **file_private)
 {
     minix3_fs_info_t *fs = (minix3_fs_info_t *)fs_private;
     if (!fs || !path || !file_private) return -1;
@@ -91,12 +91,13 @@ static int minix3_vfs_open(void *fs_private, const char *path, int flags,
         if (minix3_lookup(fs, &dir_inode, token, &next_ino) < 0) {
             /* Component not found */
             if (is_last && (flags & O_CREAT)) {
-                /* Create new file */
-                uint16_t mode = MINIX3_S_IFREG | MINIX3_S_IRUSR | MINIX3_S_IWUSR | 
-                               MINIX3_S_IRGRP | MINIX3_S_IROTH;  /* 0644 */
+                /* Create new file.  The mode comes from open(path, flags,
+                 * mode); the umask is applied by the syscall layer. */
+                uint16_t perm = (mode & 0777) ? (mode & 0777) : 0644;
+                uint16_t mode_bits = MINIX3_S_IFREG | perm;
                 
                 /* Allocate new inode */
-                if (minix3_alloc_inode(fs, mode, &next_ino) < 0) {
+                if (minix3_alloc_inode(fs, mode_bits, &next_ino) < 0) {
                     printk("[minix3] Failed to allocate inode\n");
                     kfree(file);
                     return -1;
@@ -1019,7 +1020,7 @@ static int minix3_vfs_stat(void *fs_private, const char *path, stat_t *st)
     
     /* Open the file to get its inode */
     void *file_private = NULL;
-    if (minix3_vfs_open(fs_private, path, O_RDONLY, &file_private) < 0) {
+    if (minix3_vfs_open(fs_private, path, O_RDONLY, 0, &file_private) < 0) {
         return -1;
     }
     
@@ -1108,7 +1109,7 @@ static int minix3_vfs_link(void *fs_private, const char *old_path,
 
     /* Resolve the source inode via a normal (non-following) open. */
     void *file_private = NULL;
-    if (minix3_vfs_open(fs, old_path, O_RDONLY, &file_private) < 0)
+    if (minix3_vfs_open(fs, old_path, O_RDONLY, 0, &file_private) < 0)
         return -1;
     minix3_file_info_t *file = (minix3_file_info_t *)file_private;
 
@@ -1246,7 +1247,7 @@ static int minix3_vfs_readlink(void *fs_private, const char *path,
     if (!fs || !path || !buf || bufsize == 0) return -1;
 
     void *file_private = NULL;
-    if (minix3_vfs_open(fs, path, O_RDONLY, &file_private) < 0)
+    if (minix3_vfs_open(fs, path, O_RDONLY, 0, &file_private) < 0)
         return -1;
     minix3_file_info_t *file = (minix3_file_info_t *)file_private;
 
@@ -1278,7 +1279,7 @@ static int minix3_vfs_chmod(void *fs_private, const char *path, uint32_t mode)
     if (!fs || !path) return -1;
 
     void *file_private = NULL;
-    if (minix3_vfs_open(fs, path, O_RDONLY, &file_private) < 0)
+    if (minix3_vfs_open(fs, path, O_RDONLY, 0, &file_private) < 0)
         return -1;
     minix3_file_info_t *file = (minix3_file_info_t *)file_private;
 
@@ -1376,7 +1377,7 @@ static int minix3_vfs_utime(void *fs_private, const char *path,
     if (!fs || !path) return -1;
 
     void *file_private = NULL;
-    if (minix3_vfs_open(fs, path, O_RDONLY, &file_private) < 0)
+    if (minix3_vfs_open(fs, path, O_RDONLY, 0, &file_private) < 0)
         return -1;
     minix3_file_info_t *file = (minix3_file_info_t *)file_private;
 
@@ -1389,6 +1390,155 @@ static int minix3_vfs_utime(void *fs_private, const char *path,
     }
 
     minix3_vfs_close(file_private);
+    return 0;
+}
+
+/* ---- chown / fchown ---- */
+
+static int minix3_vfs_chown(void *fs_private, const char *path, int uid, int gid)
+{
+    minix3_fs_info_t *fs = (minix3_fs_info_t *)fs_private;
+    if (!fs || !path) return -1;
+
+    void *file_private = NULL;
+    if (minix3_vfs_open(fs, path, O_RDONLY, 0, &file_private) < 0)
+        return -1;
+    minix3_file_info_t *file = (minix3_file_info_t *)file_private;
+
+    if (uid >= 0) file->inode.i_uid = (uint16_t)uid;
+    if (gid >= 0) file->inode.i_gid = (uint16_t)gid;
+    file->dirty = 1;
+    if (minix3_write_inode(fs, file->inode_num, &file->inode) < 0) {
+        minix3_vfs_close(file_private);
+        return -1;
+    }
+    minix3_vfs_close(file_private);
+    return 0;
+}
+
+static int minix3_vfs_fchown(void *file_private, int uid, int gid)
+{
+    minix3_file_info_t *file = (minix3_file_info_t *)file_private;
+    if (!file) return -1;
+
+    if (uid >= 0) file->inode.i_uid = (uint16_t)uid;
+    if (gid >= 0) file->inode.i_gid = (uint16_t)gid;
+    file->dirty = 1;
+    return minix3_write_inode(file->fs, file->inode_num, &file->inode);
+}
+
+/* ---- statfs ---- */
+
+static int minix3_vfs_statfs(void *fs_private, fs_statfs_t *st)
+{
+    minix3_fs_info_t *fs = (minix3_fs_info_t *)fs_private;
+    if (!fs || !st) return -1;
+
+    memset(st, 0, sizeof(*st));
+    st->f_type    = fs->sb.s_magic;
+    st->f_bsize   = fs->block_size;
+    st->f_frsize  = fs->block_size;
+    st->f_blocks  = fs->sb.s_zones;
+    st->f_files   = fs->sb.s_ninodes;
+    st->f_namelen = MINIX3_NAME_LEN;
+    st->f_fsid    = (uint32_t)((fs->device_id << 16) | fs->partition_id);
+
+    /* Count free bits (bit = 1 means in use). */
+    uint32_t free_inodes = 0;
+    for (uint32_t i = 0; i < fs->sb.s_ninodes; i++) {
+        uint32_t byte = i / 8, bit = i % 8;
+        if (!(fs->inode_bitmap[byte] & (1 << bit)))
+            free_inodes++;
+    }
+    uint32_t free_zones = 0;
+    for (uint32_t i = 0; i < fs->sb.s_zones; i++) {
+        uint32_t byte = i / 8, bit = i % 8;
+        if (!(fs->zone_bitmap[byte] & (1 << bit)))
+            free_zones++;
+    }
+    st->f_ffree  = free_inodes;
+    st->f_bfree  = free_zones;
+    st->f_bavail = free_zones;
+    return 0;
+}
+
+/* ---- getpath (for fchdir) ---- */
+
+static int minix3_vfs_getpath(void *file_private, char *buf, size_t bufsize)
+{
+    minix3_file_info_t *file = (minix3_file_info_t *)file_private;
+    if (!file || !buf) return -1;
+    minix3_fs_info_t *fs = file->fs;
+    uint32_t ino = file->inode_num;
+
+    if (ino == MINIX3_ROOT_INO) {
+        if (bufsize < 2) return -1;
+        strcpy(buf, "/");
+        return 0;
+    }
+
+    /* Walk up: find a directory containing an entry with inode == ino. */
+    char rev[256];
+    int revlen = 0;
+
+    while (ino != MINIX3_ROOT_INO) {
+        uint32_t parent_ino = 0;
+        char child_name[MINIX3_NAME_LEN + 1];
+        child_name[0] = 0;
+
+        for (uint32_t d = 1; d <= fs->sb.s_ninodes; d++) {
+            if (d == ino) continue;
+            struct minix3_inode di;
+            if (minix3_read_inode(fs, d, &di) < 0) continue;
+            if (!MINIX3_ISDIR(di.i_mode)) continue;
+
+            uint32_t nblocks = (di.i_size + fs->block_size - 1) / fs->block_size;
+            int eppb = fs->block_size / MINIX3_DIRENT_SIZE;
+            uint8_t blk[4096];
+
+            for (uint32_t b = 0; b < nblocks; b++) {
+                uint32_t zone;
+                if (minix3_bmap(fs, &di, b, &zone) < 0) break;
+                if (zone == 0) continue;
+
+                uint32_t sector = zone * (fs->block_size / 512);
+                if (bread(fs->device_id, fs->partition_id, blk, sector,
+                          fs->block_size / 512) < 0) break;
+
+                for (int i = 0; i < eppb; i++) {
+                    struct minix3_dirent *e =
+                        (struct minix3_dirent *)(blk + i * MINIX3_DIRENT_SIZE);
+                    if (e->inode == ino) {
+                        parent_ino = d;
+                        strncpy(child_name, e->name, MINIX3_NAME_LEN);
+                        child_name[MINIX3_NAME_LEN] = 0;
+                        goto found;
+                    }
+                }
+            }
+        }
+        if (!parent_ino)
+            return -1;   /* orphaned entry */
+found:
+        {
+            size_t nlen = strlen(child_name);
+            if (nlen == 0 || revlen + nlen + 1 >= (int)sizeof(rev))
+                return -1;
+            memmove(rev + nlen + 1, rev, (size_t)revlen);
+            rev[0] = '/';
+            memcpy(rev + 1, child_name, nlen);
+            revlen += (int)nlen + 1;
+        }
+        ino = parent_ino;
+    }
+
+    if (revlen == 0) {
+        strcpy(buf, "/");
+        return 0;
+    }
+    if ((size_t)revlen + 1 > bufsize)
+        return -1;
+    memcpy(buf, rev, (size_t)revlen + 1);
     return 0;
 }
 
@@ -1415,6 +1565,10 @@ static fs_ops_t minix3_ops = {
     .fchmod   = minix3_vfs_fchmod,
     .mknod    = minix3_vfs_mknod,
     .utime    = minix3_vfs_utime,
+    .chown    = minix3_vfs_chown,
+    .fchown   = minix3_vfs_fchown,
+    .statfs   = minix3_vfs_statfs,
+    .getpath  = minix3_vfs_getpath,
 };
 
 /* ============================================================================

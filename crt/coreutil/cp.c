@@ -14,7 +14,7 @@ int main(int argc, char *argv[])
         fprintf(stderr, "cp: %s: no such file\n", argv[1]);
         return 1;
     }
-    int out = open(argv[2], O_WRONLY | O_CREAT | O_TRUNC);
+    int out = open(argv[2], O_WRONLY | O_CREAT | O_TRUNC, 0666);
     if (out < 0) {
         fprintf(stderr, "cp: %s: cannot create\n", argv[2]);
         return 1;

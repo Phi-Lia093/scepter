@@ -130,6 +130,13 @@ void do_exit(int status)
     /* Transition to ZOMBIE state */
     task->state = TASK_ZOMBIE;
     
+    /* Clear the thread ID if set_tid_address() was called (Linux CLONE_*
+     * semantics; lets userland detect thread death). */
+    if (task->cleartid) {
+        uint32_t zero = 0;
+        copy_to_user((void *)(uint32_t)task->cleartid, &zero, sizeof(zero));
+    }
+    
     /* Wake up parent if it's waiting in wait() and notify it (SIGCHLD). */
     {
         task_struct_t *parent = find_task_by_pid(task->ppid);
@@ -203,9 +210,19 @@ int sys_fork(registers_t *regs)
     child->sid  = parent->sid;
     child->uid  = parent->uid;
     child->euid = parent->euid;
+    child->suid = parent->suid;
     child->gid  = parent->gid;
     child->egid = parent->egid;
+    child->sgid = parent->sgid;
+    child->fsuid = parent->fsuid;
+    child->fsgid = parent->fsgid;
+    child->ngroups = parent->ngroups;
+    memcpy(child->groups, parent->groups, sizeof(child->groups));
     child->umask = parent->umask;
+    child->personality = parent->personality;
+    memcpy(child->rlimit_cur, parent->rlimit_cur, sizeof(child->rlimit_cur));
+    memcpy(child->rlimit_max, parent->rlimit_max, sizeof(child->rlimit_max));
+    child->cleartid = 0;
     child->itimer_remaining = 0;
     child->itimer_interval  = 0;
     child->uticks = 0;
@@ -782,7 +799,7 @@ static int do_exec(const char *user_path, char **user_argv, char **user_envp)
     }
     
     /* Open the executable file */
-    int fd = fs_open(kernel_path, O_RDONLY);
+    int fd = fs_open(kernel_path, O_RDONLY, 0);
     if (fd < 0) {
         printk("[EXEC] Failed to open file\n");
         return -ENOENT;
