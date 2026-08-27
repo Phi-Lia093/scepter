@@ -80,9 +80,10 @@ static void set_term_raw(void)
     struct termios t;
     if (tcgetattr(STDIN_FILENO, &t) == 0) {
         /* Capture the pristine cooked termios exactly once, at the first
-         * prompt.  Never overwrite it: a child (e.g. tertest) may have
-         * left the tty in raw mode, and we must not treat that as the
-         * "cooked" state we restore for the next foreground job. */
+         * prompt.  Never overwrite it: a child (e.g. a termios
+         * experiment) may have left the tty in raw mode, and we must
+         * not treat that as the "cooked" state we restore for the next
+         * foreground job. */
         if (!shell_tio_saved) {
             shell_saved_tio = t;
             shell_tio_saved = 1;
