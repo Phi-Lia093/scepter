@@ -65,7 +65,7 @@ ALL_LIB_OBJECTS = $(LIBC_OBJECTS) $(SYSCALL_OBJECTS)
 # Core utilities (init goes to /, the rest to /bin)
 # ============================================================================
 
-COREUTILS = sh ls cat echo mkdir rm rmdir mv cp pwd clear uname
+COREUTILS = sh ls cat echo mkdir rm rmdir mv cp pwd clear uname posix2
 INIT_BIN  = $(ROOT_DIR)/init
 CORE_BINS = $(addprefix $(BIN_DIR)/, $(COREUTILS))
 

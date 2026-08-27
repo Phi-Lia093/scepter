@@ -202,6 +202,7 @@ int sys_fork(registers_t *regs)
     child->ppid = parent->pid;
     strncpy(child->name, parent->name, sizeof(child->name));
     strncpy(child->cwd, parent->cwd, sizeof(child->cwd));
+    strncpy(child->root, parent->root, sizeof(child->root));
     child->next_fd = parent->next_fd;
     
     /* Process identity: children inherit the parent's process group,
@@ -489,6 +490,11 @@ int sys_wait4(int pid, int *status_ptr, int options, void *rusage)
             /* Remove from scheduler and free task */
             remove_task(child);
             free_task(child);
+
+            /* A reaped child's SIGCHLD is now satisfied; clear it so a
+             * later blocking syscall doesn't see a stale pending SIGCHLD
+             * and spuriously return -EINTR. */
+            parent->pending &= ~(1u << SIGCHLD);
 
             return cpid;
         }

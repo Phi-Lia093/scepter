@@ -330,6 +330,7 @@ static int do_builtin(command_t *c)
     if (strcmp(cmd, "exit") == 0) {
         int st = 0;
         if (c->argv[1]) st = atoi(c->argv[1]);
+        set_term_cooked();   /* restore cooked mode before exiting */
         exit(st);
     }
 
@@ -622,6 +623,7 @@ int main(int argc, char *argv[], char *envp[])
         int r = read_line(line, sizeof line);
         if (r < 0) {
             write(STDOUT_FILENO, "\n", 1);
+            set_term_cooked();   /* leave the tty in a sane state */
             break;
         }
         if (r == 0)

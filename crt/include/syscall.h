@@ -54,6 +54,7 @@
 #define SYS_IOCTL   54
 #define SYS_FCNTL   55
 #define SYS_SETPGID 57
+#define SYS_CHROOT  61
 #define SYS_UMASK   60
 #define SYS_DUP2    63
 #define SYS_GETPPID 64
@@ -69,6 +70,7 @@
 #define SYS_GETRLIMIT 76
 #define SYS_GETRUSAGE 77
 #define SYS_GETTIMEOFDAY 78
+#define SYS_SETTIMEOFDAY 79
 #define SYS_SYSINFO  116
 #define SYS_GETGROUPS 80
 #define SYS_SETGROUPS 81
@@ -100,6 +102,7 @@
 #define SYS_SIGPROCMASK 126
 #define SYS_GETPGID 132
 #define SYS_FCHDIR  133
+#define SYS_FLOCK   143
 #define SYS_PERSONALITY 136
 #define SYS_SETFSUID 138
 #define SYS_SETFSGID 139

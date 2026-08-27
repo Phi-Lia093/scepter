@@ -78,6 +78,8 @@ int spawn_init(const char *path)
     strncpy(task->name, "init", sizeof(task->name) - 1);
     task->cwd[0] = '/';
     task->cwd[1] = '\0';
+    task->root[0] = '/';
+    task->root[1] = '\0';
     
     /* Init is root and the leader of its own session + process group. */
     task->uid  = task->euid = 0;

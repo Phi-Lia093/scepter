@@ -12,6 +12,7 @@
 
 /* ---- Time ---- */
 int sys_time(int *user_tloc);
+int sys_settimeofday(struct timeval *user_tv, void *user_tz);
 int sys_utimes(const char *user_path, void *user_times);
 int sys_clock_nanosleep(int clockid, int flags, void *user_rqtp, void *user_rmtp);
 
@@ -33,6 +34,8 @@ int sys_set_tid_address(void *cleartid_ptr);
 int sys_prctl(int option, uint32_t arg2, uint32_t arg3,
               uint32_t arg4, uint32_t arg5);
 int sys_personality(uint32_t persona);
+int sys_chroot(const char *user_path);
+int sys_flock(int fd, int op);
 
 /* ---- File descriptors ---- */
 int sys_pipe2(int *user_fds, int flags);

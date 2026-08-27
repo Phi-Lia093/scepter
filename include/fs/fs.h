@@ -46,6 +46,7 @@
 #define DT_CHRDEV   3   /* character device */
 #define DT_BLKDEV   4   /* block device    */
 #define DT_SYMLINK  5   /* symbolic link   */
+#define DT_FIFO     6   /* named pipe      */
 
 /* poll() event/revents bits (Linux/POSIX values) */
 #define POLLIN     0x0001
@@ -178,6 +179,12 @@ typedef struct fs_ops {
  * file descriptors (potentially across different processes).
  * ------------------------------------------------------------------------- */
 
+/* Simple advisory lock held on this open file description (flock(2)). */
+#define LOCK_SH 1   /* shared lock  */
+#define LOCK_EX 2   /* exclusive lock */
+#define LOCK_NB 4   /* don't block when locking */
+#define LOCK_UN 8   /* remove lock  */
+
 typedef struct open_file {
     int          fs_id;         /* index into fs_drivers[]                 */
     void        *fs_private;    /* filesystem-level mount data             */
@@ -187,6 +194,10 @@ typedef struct open_file {
     int          owner;         /* F_SETOWN owner pid (SIGIO not yet sent) */
     int          refcount;      /* number of fd_entry's referencing this   */
     struct pipe *pipe;          /* non-NULL if this is a pipe end          */
+    int          flock_type;    /* LOCK_SH / LOCK_EX / 0 if not held       */
+    uint32_t     flock_owner;   /* pid that holds the flock lock           */
+    list_head_t  locks;         /* fcntl record locks (list of flock_rec)  */
+    int          is_fifo;       /* non-zero if this is a named-pipe end    */
 } open_file_t;
 
 /* -------------------------------------------------------------------------
@@ -388,6 +399,9 @@ int fs_statfs(const char *path, fs_statfs_t *buf);
 /** Get filesystem statistics for an open fd. */
 int fs_fstatfs(int fd, fs_statfs_t *buf);
 
+/** Return the ops struct for a registered filesystem driver (or NULL). */
+fs_ops_t *fs_get_ops(int fs_id);
+
 /** Change working directory to an open directory fd. */
 int fs_fchdir(int fd);
 
@@ -416,6 +430,47 @@ int fs_chdir(const char *path);
  * Returns buf on success, NULL on error (buffer too small, etc.).
  */
 char *fs_getcwd(char *buf, size_t size);
+
+/**
+ * Change the calling process's root directory (chroot).
+ * The path must resolve to an existing directory.
+ * Returns 0 on success, or a negative errno.
+ */
+int fs_chroot(const char *path);
+
+/* -------------------------------------------------------------------------
+ * Advisory Locks (fs/locks.c)
+ * ------------------------------------------------------------------------- */
+
+/* Kernel-side struct flock (must match crt/include/fcntl.h struct flock). */
+struct flock_k {
+    short  l_type;    /* F_RDLCK / F_WRLCK / F_UNLCK          */
+    short  l_whence;  /* SEEK_SET / SEEK_CUR / SEEK_END       */
+    int32_t l_start;  /* starting offset                       */
+    int32_t l_len;    /* length (0 = to EOF)                   */
+    int32_t l_pid;    /* owning pid                            */
+};
+
+/** flock(2): whole-file advisory lock on the open file description. */
+int fs_flock(int fd, int op);
+
+/** fcntl(2) F_GETLK / F_SETLK / F_SETLKW record-lock handling. */
+int fs_fcntl_lock(int fd, int cmd, struct flock_k *user_flk);
+
+/** Initialize the lock subsystem (called at boot). */
+void locks_init(void);
+
+/** Initialize the FIFO (named pipe) subsystem (called at boot). */
+void fifo_init(void);
+
+/**
+ * Attach a FIFO pipe to a freshly opened open_file, applying POSIX open
+ * side semantics (block until the matching side opens; O_NONBLOCK rules).
+ * Returns 0 on success or a negative errno (caller closes file_private on
+ * failure).
+ */
+int fifo_open_end(int fs_id, void *fs_private, uint32_t inode,
+                  int flags, open_file_t *file);
 
 /* -------------------------------------------------------------------------
  * Initialisation

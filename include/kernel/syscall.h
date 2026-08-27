@@ -81,6 +81,7 @@ typedef struct registers {
 #define SYS_IOCTL   54   /* I/O control */
 #define SYS_FCNTL   55   /* File control (fcntl) */
 #define SYS_SETPGID 57   /* Set process group */
+#define SYS_CHROOT  61   /* Change root directory (root only) */
 #define SYS_UMASK   60   /* Set file creation mask */
 
 /* ---- Duplicate fds / process groups (63..73) ---- */
@@ -94,12 +95,13 @@ typedef struct registers {
 #define SYS_SIGSUSPEND 72 /* Wait for a signal */
 #define SYS_SIGPENDING 73 /* Examine pending signals */
 
-/* ---- Hostname / rlimits / time (74..78) ---- */
+/* ---- Hostname / rlimits / time (74..79) ---- */
 #define SYS_SETHOSTNAME 74   /* Set the hostname */
 #define SYS_SETRLIMIT 75     /* Set resource limits */
 #define SYS_GETRLIMIT 76     /* Get resource limits */
 #define SYS_GETRUSAGE 77     /* Get resource usage */
 #define SYS_GETTIMEOFDAY 78  /* Get wall-clock time */
+#define SYS_SETTIMEOFDAY 79  /* Set wall-clock time (root only) */
 #define SYS_SYSINFO   116    /* Get system information */
 
 /* ---- Groups / select / links (80..88) ---- */
@@ -143,6 +145,9 @@ typedef struct registers {
 /* ---- getpgid / fchdir (132..133) ---- */
 #define SYS_GETPGID  132    /* Get process group id */
 #define SYS_FCHDIR   133    /* Change working directory by fd */
+
+/* ---- flock (143) ---- */
+#define SYS_FLOCK    143    /* Apply/release an advisory lock on an open file */
 
 /* ---- utime (30) ---- */
 #define SYS_UTIME    30     /* Set file access/modification time */

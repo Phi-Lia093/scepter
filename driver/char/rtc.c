@@ -17,6 +17,9 @@
 /* Wall-clock timestamp captured at rtc_init(); gettimeofday adds PIT uptime. */
 static uint32_t rtc_boot_time = 1;
 
+/* settimeofday() adjustment applied on top of (boot_time + PIT uptime). */
+static int32_t rtc_time_offset = 0;
+
 /* =========================================================================
  * CMOS/RTC Hardware Interface
  * ========================================================================= */
@@ -143,7 +146,21 @@ uint32_t rtc_get_unix_time(void)
 
 uint32_t rtc_get_boot_unix_time(void)
 {
+    /* Include the settimeofday() offset so every wall-clock consumer
+     * (gettimeofday, clock_gettime(REALTIME), time(), utimes default)
+     * sees the adjusted time automatically. */
+    return (uint32_t)((int64_t)rtc_boot_time + rtc_time_offset);
+}
+
+/* The unadjusted boot timestamp (used to compute settimeofday deltas). */
+uint32_t rtc_get_real_boot_unix_time(void)
+{
     return rtc_boot_time;
+}
+
+void rtc_set_time_offset(int32_t delta)
+{
+    rtc_time_offset = delta;
 }
 
 /* =========================================================================

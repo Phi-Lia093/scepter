@@ -26,6 +26,10 @@ pipe_t *pipe_create(void)
     p->writers = 1;
     init_waitqueue_head(&p->read_wq);
     init_waitqueue_head(&p->write_wq);
+    init_waitqueue_head(&p->open_wq);
+    p->waiting_readers = 0;
+    p->waiting_writers = 0;
+    p->on_destroy = NULL;
     return p;
 }
 
@@ -109,8 +113,11 @@ void pipe_read_release(pipe_t *p)
         p->readers--;
     if (p->readers == 0)
         wake_up(&p->write_wq);
-    if (p->readers == 0 && p->writers == 0)
+    wake_up(&p->open_wq);   /* blocked FIFO opens re-check */
+    if (p->readers == 0 && p->writers == 0) {
+        if (p->on_destroy) p->on_destroy(p);
         kfree(p);
+    }
 }
 
 /* One write end closed. Wake readers (they see EOF). */
@@ -122,8 +129,11 @@ void pipe_write_release(pipe_t *p)
         p->writers--;
     if (p->writers == 0)
         wake_up(&p->read_wq);
-    if (p->readers == 0 && p->writers == 0)
+    wake_up(&p->open_wq);   /* blocked FIFO opens re-check */
+    if (p->readers == 0 && p->writers == 0) {
+        if (p->on_destroy) p->on_destroy(p);
         kfree(p);
+    }
 }
 
 /* =========================================================================

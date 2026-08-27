@@ -1074,6 +1074,8 @@ static void minix3_fill_stat(const struct minix3_inode *inode, uint32_t ino,
         st->type = DT_BLKDEV;
     } else if (MINIX3_ISLNK(inode->i_mode)) {
         st->type = DT_SYMLINK;
+    } else if (MINIX3_ISFIFO(inode->i_mode)) {
+        st->type = DT_FIFO;
     } else {
         st->type = DT_UNKNOWN;
     }
@@ -1318,8 +1320,9 @@ static int minix3_vfs_mknod(void *fs_private, const char *path,
     if (!fs || !path) return -1;
 
     uint32_t type = mode & 0xF000;
-    if (type != MINIX3_S_IFCHR && type != MINIX3_S_IFBLK)
-        return -1;   /* only device nodes via mknod */
+    if (type != MINIX3_S_IFCHR && type != MINIX3_S_IFBLK &&
+        type != MINIX3_S_IFIFO)
+        return -1;   /* only device nodes + FIFOs via mknod */
 
     char parent_path[256];
     char name[MINIX3_NAME_LEN];
@@ -1348,8 +1351,9 @@ static int minix3_vfs_mknod(void *fs_private, const char *path,
         return -1;
     }
 
-    /* Store the device number in zone[0] (a common minix convention). */
-    inode.i_zone[0] = dev;
+    /* Store the device number in zone[0] (a common minix convention).
+     * FIFOs have no device number. */
+    inode.i_zone[0] = (type == MINIX3_S_IFIFO) ? 0 : dev;
     if (minix3_write_inode(fs, ino, &inode) < 0) {
         minix3_free_inode(fs, ino);
         return -1;

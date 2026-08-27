@@ -126,6 +126,7 @@ int getopt(int argc, char *const argv[], const char *optstring);
 #endif /* _UNISTD_H */
 
 /* ---- extra POSIX / Linux functions ---- */
+int chroot(const char *path);
 int fchdir(int fd);
 int close_range(unsigned int first, unsigned int last, int flags);
 int syncfs(int fd);

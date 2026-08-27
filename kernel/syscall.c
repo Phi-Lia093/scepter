@@ -170,8 +170,12 @@ static int sys_open(const char *user_path, int flags, uint32_t mode)
 
     /* Call kernel VFS */
     int fd = fs_open(kernel_path, flags, mode);
-    if (fd < 0)
+    if (fd < 0) {
+        /* Propagate a specific errno (e.g. FIFO ENXIO); default to ENOENT. */
+        if (fd < -1 && fd >= -4095)
+            return fd;
         return -ENOENT;
+    }
     return fd;
 }
 
@@ -924,6 +928,9 @@ static int sys_uname(struct utsname *user_buf)
 #define F_SETFD  2
 #define F_GETFL  3
 #define F_SETFL  4
+#define F_GETLK  5
+#define F_SETLK  6
+#define F_SETLKW 7
 #define F_SETOWN 8
 #define F_GETOWN 9
 #define FD_CLOEXEC 1
@@ -962,6 +969,11 @@ static int sys_fcntl(int fd, int cmd, uint32_t arg)
                 return -EBADF;
             return (cmd == F_GETFL) ? file->flags : file->owner;
         }
+        case F_GETLK:
+        case F_SETLK:
+        case F_SETLKW:
+            return fs_fcntl_lock(fd, cmd, (struct flock_k *)arg);
+
         case F_SETFL:
         case F_SETOWN: {
             open_file_t *file = NULL;
@@ -1845,6 +1857,15 @@ int syscall_handler(registers_t *regs, int num, uint32_t arg1, uint32_t arg2,
 
         case SYS_GETTIMEOFDAY:
             return sys_gettimeofday((struct timeval *)arg1, (void *)arg2);
+
+        case SYS_SETTIMEOFDAY:
+            return sys_settimeofday((struct timeval *)arg1, (void *)arg2);
+
+        case SYS_CHROOT:
+            return sys_chroot((const char *)arg1);
+
+        case SYS_FLOCK:
+            return sys_flock((int)arg1, (int)arg2);
 
         case SYS_SYSINFO:
             return sys_sysinfo((void *)arg1);

@@ -22,4 +22,17 @@ uint32_t rtc_get_unix_time(void);
  */
 uint32_t rtc_get_boot_unix_time(void);
 
+/**
+ * Get the unadjusted boot timestamp (without the settimeofday() offset).
+ * Used to compute absolute time offsets in settimeofday().
+ */
+uint32_t rtc_get_real_boot_unix_time(void);
+
+/**
+ * Set the wall-clock adjustment applied by settimeofday().
+ * The returned boot time is (real boot time + this offset).
+ * @param delta Offset in seconds added to the real boot time.
+ */
+void rtc_set_time_offset(int32_t delta);
+
 #endif /* RTC_H */

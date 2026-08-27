@@ -55,12 +55,29 @@ static int resolve_path(const char *input, char *out, size_t size)
     char tmp[MAX_PATH_LEN];
     int  tlen = 0;
 
+    /* The current process's chroot root (default "/"). */
+    const char *root = current->root;
+    if (root[0] == '\0') root = "/";
+    int rootlen = (int)strlen(root);
+
     /* Build raw absolute path in tmp */
     if (input[0] == '/') {
-        /* Already absolute */
-        tlen = strlen(input);
-        if (tlen >= MAX_PATH_LEN) return -1;
-        strcpy(tmp, input);
+        /* Absolute: prefix with the chroot root. */
+        if (rootlen > 1) {
+            /* e.g. root="/jail", input="/etc" -> "/jail/etc" */
+            if (strcmp(input, "/") == 0) {
+                strcpy(tmp, root);
+            } else {
+                strcpy(tmp, root);
+                strcat(tmp, input);
+            }
+            if ((int)strlen(tmp) >= MAX_PATH_LEN) return -1;
+        } else {
+            tlen = strlen(input);
+            if (tlen >= MAX_PATH_LEN) return -1;
+            strcpy(tmp, input);
+        }
+        tlen = (int)strlen(tmp);
     } else {
         /* Relative – prepend cwd */
         int cwdlen = strlen(current->cwd);
@@ -88,6 +105,14 @@ static int resolve_path(const char *input, char *out, size_t size)
     if (dst >= end) return -1;
     *dst++ = '/';
 
+    /* ".." may not escape the chroot root.  The root is a prefix of the
+     * resolved path only when the path is under it (paths referring to a
+     * cwd left outside a chroot keep "/" as their clamp, matching Linux's
+     * "confused cwd" behaviour). */
+    int boundary = 1;   /* at minimum the real "/" */
+    if (strncmp(tmp, root, (size_t)rootlen) == 0)
+        boundary = rootlen;
+
     /* Track output stack (each component starts at a saved position) */
     /* Simple in-place approach: scan components, handle . and .. */
     while (*p) {
@@ -106,12 +131,12 @@ static int resolve_path(const char *input, char *out, size_t size)
         }
 
         if (comp_len == 2 && comp_start[0] == '.' && comp_start[1] == '.') {
-            /* Parent dir – remove last component from out */
-            /* Walk back past any trailing slash */
-            if (dst > out + 1) {
+            /* Parent dir – remove last component from out, but never
+             * above the chroot boundary. */
+            if (dst > out + boundary) {
                 dst--;  /* step over the '/' we added */
                 /* Find start of previous component */
-                while (dst > out + 1 && *(dst - 1) != '/')
+                while (dst > out + boundary && *(dst - 1) != '/')
                     dst--;
             }
             continue;
@@ -161,6 +186,9 @@ static open_file_t *alloc_open_file(int fs_id, void *fs_priv,
     file->owner        = 0;
     file->refcount     = 1;
     file->pipe         = NULL;   /* not a pipe end unless fs_pipe sets it */
+    file->flock_type   = 0;
+    file->flock_owner  = 0;
+    INIT_LIST_HEAD(&file->locks);
 
     return file;
 }
@@ -172,13 +200,24 @@ static void open_file_put(open_file_t *file)
     file->refcount--;
     if (file->refcount == 0) {
         /* Last reference - actually close the file */
+        extern void locks_release_file(open_file_t *file);
+        locks_release_file(file);
         if (file->pipe) {
             /* Pipe end: release our side; pipe frees itself when both
-             * ends are gone. */
-            if (file->flags & O_WRONLY)
+             * ends are gone.  FIFO ends may be O_RDWR (both). */
+            int accmode = file->flags & O_ACCMODE;
+            if (accmode == O_RDWR) {
                 pipe_write_release(file->pipe);
-            else
                 pipe_read_release(file->pipe);
+            } else if (accmode == O_WRONLY) {
+                pipe_write_release(file->pipe);
+            } else {
+                pipe_read_release(file->pipe);
+            }
+            /* FIFO ends still hold the on-disk inode handle. */
+            if (file->is_fifo && fs_drivers[file->fs_id].ops.close) {
+                fs_drivers[file->fs_id].ops.close(file->file_private);
+            }
         } else if (fs_drivers[file->fs_id].ops.close) {
             fs_drivers[file->fs_id].ops.close(file->file_private);
         }
@@ -446,6 +485,21 @@ int fs_open(const char *path, int flags, uint32_t mode)
         return -1;
     }
 
+    /* Named pipe?  If the just-opened inode is a FIFO, route its I/O
+     * through a shared in-memory pipe instead of the filesystem. */
+    fs_ops_t *ops = fs_get_ops(fs_id);
+    if (ops && ops->fstat) {
+        stat_t st;
+        if (ops->fstat(file_private, &st) == 0 && st.type == DT_FIFO) {
+            int r = fifo_open_end(fs_id, mp->fs_private, st.inode,
+                                  flags & ~O_CLOEXEC, file);
+            if (r < 0) {
+                open_file_put(file);   /* closes file_private */
+                return r;
+            }
+        }
+    }
+
     /* Create fd_entry pointing to the open_file */
     fd_entry_t *fde = alloc_fd_entry(file);
     if (!fde) {
@@ -469,6 +523,14 @@ int fs_close(int fd)
     /* Free the fd_entry */
     free_fd_entry(fd);
     return 0;
+}
+
+/* Accessor for fs_driver_t.ops (fs_drivers[] is static to this file). */
+fs_ops_t *fs_get_ops(int fs_id)
+{
+    if (fs_id < 0 || fs_id >= MAX_MOUNT_POINTS || !fs_drivers[fs_id].in_use)
+        return NULL;
+    return &fs_drivers[fs_id].ops;
 }
 
 int fs_pipe(int fds[2])
@@ -761,7 +823,7 @@ int fs_fstat(int fd, stat_t *st)
     if (!fde || !fde->file) return -1;
 
     open_file_t *file = fde->file;
-    if (file->pipe) {
+    if (file->pipe && !file->is_fifo) {
         /* Pipes have no real inode: synthesize a small stat */
         st->size   = 0;
         st->inode  = 0;
@@ -772,6 +834,7 @@ int fs_fstat(int fd, stat_t *st)
         return 0;
     }
 
+    /* FIFO ends still have their real on-disk inode. */
     if (!fs_drivers[file->fs_id].ops.fstat)
         return -1;
     return fs_drivers[file->fs_id].ops.fstat(file->file_private, st);
@@ -852,11 +915,50 @@ char *fs_getcwd(char *buf, size_t size)
 {
     if (!buf || size == 0) return NULL;
 
-    int len = strlen(current->cwd);
+    /* Report cwd relative to the chroot root. */
+    const char *root = current->root;
+    if (root[0] == '\0') root = "/";
+    size_t rootlen = strlen(root);
+
+    const char *cwd = current->cwd;
+    if (rootlen > 1 && strncmp(cwd, root, rootlen) == 0) {
+        cwd += rootlen;
+        if (cwd[0] == '\0') cwd = "/";
+    }
+
+    int len = strlen(cwd);
     if ((size_t)(len + 1) > size) return NULL;
 
-    strcpy(buf, current->cwd);
+    strcpy(buf, cwd);
     return buf;
+}
+
+/* fs_chroot - Set the calling process's root directory.
+ * Returns 0 on success, or a negative errno. */
+int fs_chroot(const char *path)
+{
+    if (!path) return -ENOENT;
+
+    char abs[MAX_PATH_LEN];
+    if (resolve_path(path, abs, sizeof(abs)) != 0) return -ENOENT;
+
+    /* Verify the target exists and is a directory. */
+    const char *rel;
+    mount_point_t *mp = resolve_mount(abs, &rel);
+    if (!mp) return -ENOENT;
+
+    int fs_id = mp->fs_id;
+    if (fs_drivers[fs_id].ops.stat) {
+        stat_t st;
+        if (fs_drivers[fs_id].ops.stat(mp->fs_private, rel, &st) != 0)
+            return -ENOENT;
+        if (st.type != DT_DIR)
+            return -ENOTDIR;
+    }
+
+    strncpy(current->root, abs, MAX_PATH_LEN - 1);
+    current->root[MAX_PATH_LEN - 1] = '\0';
+    return 0;
 }
 
 /* =========================================================================
@@ -873,6 +975,8 @@ void vfs_init(void)
         fs_drivers[i].in_use = 0;
 
     init_waitqueue_head(&select_wq);
+    locks_init();
+    fifo_init();
 
     printk("[VFS] Virtual filesystem initialized\n");
 }

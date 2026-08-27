@@ -27,6 +27,10 @@ typedef struct pipe {
     uint32_t         writers;   /* number of open write ends */
     wait_queue_head_t read_wq;  /* readers sleeping here    */
     wait_queue_head_t write_wq; /* writers sleeping here    */
+    wait_queue_head_t open_wq;  /* FIFO open-side blocking   */
+    uint32_t         waiting_readers;  /* FIFO read-opens blocked */
+    uint32_t         waiting_writers;  /* FIFO write-opens blocked */
+    void            (*on_destroy)(struct pipe *p); /* FIFO cleanup hook */
 } pipe_t;
 
 pipe_t *pipe_create(void);

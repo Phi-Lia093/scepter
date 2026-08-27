@@ -1290,3 +1290,24 @@ int utimes(const char *path, const struct timeval times[2])
     if (ret < 0) { errno = -ret; return -1; }
     return 0;
 }
+
+int settimeofday(const struct timeval *tv, const void *tz)
+{
+    long ret = syscall2(SYS_SETTIMEOFDAY, (int)tv, (int)tz);
+    if (ret < 0) { errno = -ret; return -1; }
+    return 0;
+}
+
+int chroot(const char *path)
+{
+    long ret = syscall1(SYS_CHROOT, (int)path);
+    if (ret < 0) { errno = -ret; return -1; }
+    return 0;
+}
+
+int flock(int fd, int operation)
+{
+    long ret = syscall2(SYS_FLOCK, fd, operation);
+    if (ret < 0) { errno = -ret; return -1; }
+    return 0;
+}

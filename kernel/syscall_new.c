@@ -92,6 +92,36 @@ int sys_time(int *user_tloc)
     return (int)now;
 }
 
+/* sys_settimeofday - Set the wall clock (root only).
+ *
+ * Only the time value is honoured; the timezone pointer is ignored
+ * (consistent with modern Linux where tz is deprecated and usually NULL).
+ * The kernel stores a fixed offset applied on top of (RTC boot time +
+ * PIT uptime) so CLOCK_REALTIME/gettimeofday/time() all see the change.
+ */
+int sys_settimeofday(struct timeval *user_tv, void *user_tz)
+{
+    if (current->euid != 0)
+        return -EPERM;
+
+    if (!user_tv || !valid_user_pointer(user_tv, sizeof(struct timeval)))
+        return -EFAULT;
+
+    struct timeval tv;
+    if (copy_from_user(&tv, user_tv, sizeof(tv)) < 0)
+        return -EFAULT;
+
+    if (tv.tv_usec < 0 || tv.tv_usec >= 1000000)
+        return -EINVAL;
+
+    uint32_t now = rtc_get_real_boot_unix_time() + pit_get_ticks() / 100;
+    int32_t  delta = tv.tv_sec - (int32_t)now;
+    rtc_set_time_offset(delta);
+
+    (void)user_tz;
+    return 0;
+}
+
 /* sys_utimes - Set atime/mtime with a pair of timevals (NULL = now). */
 int sys_utimes(const char *user_path, void *user_times)
 {
@@ -945,4 +975,27 @@ int sys_getcpu(void *user_cpu, void *user_node, void *cache)
     if (user_cpu && copy_to_user(user_cpu, &zero, 4) < 0) return -EFAULT;
     if (user_node && copy_to_user(user_node, &zero, 4) < 0) return -EFAULT;
     return 0;
+}
+
+/* sys_chroot - Change the calling process's root directory (root only). */
+int sys_chroot(const char *user_path)
+{
+    if (current->euid != 0)
+        return -EPERM;
+
+    if (!valid_user_pointer(user_path, 1))
+        return -EFAULT;
+
+    char path[MAX_PATH_LEN];
+    extern int copy_path_from_user(const char *user, char *kern, size_t n);
+    if (copy_path_from_user(user_path, path, sizeof(path)) < 0)
+        return -EFAULT;
+
+    return fs_chroot(path);
+}
+
+/* sys_flock - Apply/remove an advisory lock on an open file. */
+int sys_flock(int fd, int op)
+{
+    return fs_flock(fd, op);
 }

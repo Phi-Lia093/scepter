@@ -62,6 +62,12 @@ int fstat(int fd, struct stat *buf);
 int lstat(const char *path, struct stat *buf);
 int fchmod(int fd, mode_t mode);
 mode_t umask(mode_t mask);
+int mknod(const char *path, mode_t mode, int dev);
+
+static inline int mkfifo(const char *path, mode_t mode)
+{
+    return mknod(path, S_IFIFO | mode, 0);
+}
 
 #endif /* _SYS_STAT_H */
 

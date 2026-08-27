@@ -133,6 +133,7 @@ typedef struct task_struct {
     list_head_t   files;
     int           next_fd;
     char          cwd[MAX_PATH_LEN];
+    char          root[MAX_PATH_LEN];   /* chroot() root dir (default "/") */
     
     /* ---- Exit Status ---- */
     int           exit_code;

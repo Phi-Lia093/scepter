@@ -33,10 +33,27 @@
 #define F_SETFD   2
 #define F_GETFL   3
 #define F_SETFL   4
+#define F_GETLK   5
+#define F_SETLK   6
+#define F_SETLKW 7
 #define F_SETOWN  8
 #define F_GETOWN  9
 
 #define FD_CLOEXEC 1
+
+/* fcntl record-lock types */
+#define F_RDLCK 0
+#define F_WRLCK 1
+#define F_UNLCK 2
+
+/* Advisory record lock (must match kernel struct flock_k) */
+struct flock {
+    short  l_type;    /* F_RDLCK / F_WRLCK / F_UNLCK          */
+    short  l_whence;  /* SEEK_SET / SEEK_CUR / SEEK_END       */
+    off_t  l_start;   /* starting offset                       */
+    off_t  l_len;     /* length (0 = to EOF)                   */
+    pid_t  l_pid;     /* owning pid                            */
+};
 
 int fcntl(int fd, int cmd, ...);
 
