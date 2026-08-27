@@ -211,18 +211,18 @@ list_head_t *task_list_head(void)
 /* ============================================================================
  * timer_tick - Per-tick housekeeping, called from the PIT interrupt.
  *
- *   - decrements ITIMER_REAL counters, firing SIGALRM on expiry
- *   - charges one tick of CPU time to the currently running task
+ *   - decrements ITIMER_REAL counters (all tasks), firing SIGALRM on expiry
+ *   - decrements the current task's ITIMER_VIRTUAL (only when the tick hit
+ *     user mode) and ITIMER_PROF (any CPU tick), firing SIGVTALRM/SIGPROF
  *
  * Safe from interrupt context: single-CPU, interrupts disabled while the
  * task list is walked (schedule() also runs inside pit_isr).
  * ============================================================================ */
-void timer_tick(void)
+void timer_tick(int in_user)
 {
-    if (current && current != &kernel_task)
-        current->uticks++;
-
     list_head_t *pos;
+
+    /* ITIMER_REAL: counts for every task, every tick. */
     list_for_each(pos, &task_list) {
         task_struct_t *t = list_entry(pos, task_struct_t, task_list);
 
@@ -234,6 +234,30 @@ void timer_tick(void)
                 if (t->itimer_interval > 0)
                     t->itimer_remaining = t->itimer_interval;
             }
+        }
+    }
+
+    /* ITIMER_VIRTUAL / ITIMER_PROF: only the running task accumulates
+     * CPU time, and only while it is actually executing. */
+    if (!current || current->pid == 0)
+        return;
+
+    if (in_user) {
+        if (current->vtimer_remaining > 0) {
+            current->vtimer_remaining--;
+            if (current->vtimer_remaining == 0) {
+                send_signal(current->pid, SIGVTALRM);
+                if (current->vtimer_interval > 0)
+                    current->vtimer_remaining = current->vtimer_interval;
+            }
+        }
+    }
+    if (current->ptimer_remaining > 0) {
+        current->ptimer_remaining--;
+        if (current->ptimer_remaining == 0) {
+            send_signal(current->pid, SIGPROF);
+            if (current->ptimer_interval > 0)
+                current->ptimer_remaining = current->ptimer_interval;
         }
     }
 }

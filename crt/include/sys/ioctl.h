@@ -9,6 +9,10 @@
 /* ioctl commands for /dev/rtc0 (must match driver/char/rtc.c) */
 #define IOCTL_RTC_GET_TIME 1  /* return current Unix time (int) */
 
+/* ioctl commands for /dev/pcspk (must match driver/char/pcspk.h) */
+#define IOCTL_PCSPK_BEEP 1   /* arg = frequency in Hz; 0 = silence */
+#define IOCTL_PCSPK_GET  2   /* return current frequency */
+
 int ioctl(int fd, unsigned int cmd, unsigned int arg);
 
 #endif /* _SYS_IOCTL_H */

@@ -273,6 +273,80 @@ Device Mapping:
   12 = serial2 (third detected port, typically COM3)
   13 = serial3 (fourth detected port, typically COM4)
 
+--------------------------------------------------------------------------------
+Devices 7-8: /dev/random and /dev/urandom
+--------------------------------------------------------------------------------
+Type: Character Device
+File: driver/char/random.c
+Registration: random_init()
+
+Description:
+  Random number generator backed by a 128-bit xorshift PRNG (xorshift128),
+  seeded at boot from the PIT tick counter, the RTC, and kernel-layout jitter.
+  The pool is continuously mixed with interrupt timing jitter (PIT tick phase
+  and keyboard IRQ timing) via random_add_entropy().  Both devices draw from
+  the same generator; reads never block.
+
+Operations:
+  read(scnd_id)
+    - Bulk fills the caller's buffer with random bytes.  The devfs read
+      path special-cases these devices so 0x00 bytes are not mistaken for
+      "no data".
+    - Returns: number of bytes filled
+
+  write(scnd_id, char)
+    - Seeds the pool with the written byte (entropy injection).
+
+  poll(scnd_id)
+    - Always 1 (never blocks).
+
+  ioctl(prim_id, scnd_id, command)
+    - RNDGETENTCNT (0x80045200): returns the pool's entropy-bit count.
+
+API Functions:
+  - random_get_bytes(buf, n)      - fill a kernel buffer
+  - random_get_u32()              - one 32-bit value
+  - random_add_entropy(bits)      - mix entropy (safe from IRQ context)
+  - random_entropy_count()        - reported entropy in bits
+
+Notes:
+  - Not cryptographically strong (no real entropy hardware); adequate for
+    salts, test vectors, games and tools.
+  - The syscall getrandom(2) (#355) draws from the same pool.
+  - Registered as /dev/random and /dev/urandom in devfs.
+
+--------------------------------------------------------------------------------
+Device 9: /dev/pcspk (PC Speaker)
+--------------------------------------------------------------------------------
+Type: Character Device
+File: driver/char/pcspk.c
+Registration: pcspk_init()
+
+Description:
+  Drives the PIT channel 2 / speaker interface (ports 0x42/0x43/0x61) to
+  produce square-wave tones.
+
+Operations:
+  read(scnd_id)
+    - Returns the low byte of the current frequency.
+
+  write(scnd_id, char)
+    - Triggers a short ~20 ms 880 Hz beep (like ^G), auto-silenced by the
+      PIT tick handler.
+
+  ioctl(prim_id, scnd_id, command, arg)
+    - IOCTL_PCSPK_BEEP (1): arg = frequency in Hz; 0 = silence.
+    - IOCTL_PCSPK_GET  (2): returns the current frequency.
+
+API Functions:
+  - pcspk_beep(freq)  - start a tone (0 = silence)
+  - pcspk_off()       - silence the speaker
+
+Notes:
+  - Hardcoded legacy ports (standard PC speaker location).
+  - Registered as /dev/pcspk in devfs.
+
+
 Operations:
   read(scnd_id)
     - Reads a byte from serial port if available

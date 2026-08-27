@@ -26,24 +26,47 @@ uint32_t pit_get_ticks(void)
 
 /* =========================================================================
  * IRQ0 handler – called from the irq0 stub in isr.s
+ * The stub passes the interrupted CS as the single argument, so we can
+ * tell user mode (0x1B) from kernel mode (0x08).
  * ========================================================================= */
 
-void pit_isr(void)
+#define USER_CS_SEL 0x1B
+
+void pit_isr(uint32_t cs)
 {
     pit_ticks++;
     interrupt_eoi(IRQ0);
-    
-    /* Interval timers + CPU-time accounting (SIGALRM, times()) */
-    extern void timer_tick(void);
-    timer_tick();
-    
+
+    /* Mix timer-phase jitter into the entropy pool. */
+    extern void random_add_entropy(uint32_t bits);
+    random_add_entropy(pit_ticks);
+
+    /* CPU-time accounting: charge this tick to the current task.  A tick
+     * that hit user code is user time, a tick inside a syscall/IRQ is
+     * system time (ITIMER_VIRTUAL/PROF + times()/getrusage depend on it). */
+    int in_user = (cs == USER_CS_SEL);
+    if (current && current->pid != 0) {
+        if (in_user)
+            current->uticks++;
+        else
+            current->sticks++;
+    }
+
+    /* Interval timers + CPU-time accounting (SIGALRM/SIGVTALRM/SIGPROF) */
+    extern void timer_tick(int in_user);
+    timer_tick(in_user);
+
+    /* Auto-silence the PC speaker after a short beep (write() path). */
+    extern void pcspk_tick(void);
+    pcspk_tick();
+
     /* Wake nanosleep() waiters every tick (100 Hz) */
     wake_up(&timer_wq);
-    
+
     /* Wake select()/poll() waiters every tick so their timeouts fire. */
     extern void vfs_poll_wakeup(void);
     vfs_poll_wakeup();
-    
+
     /* Call scheduler every 10 ticks (100ms at 100Hz) */
     if (pit_ticks % 10 == 0) {
         schedule();

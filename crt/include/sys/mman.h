@@ -15,6 +15,9 @@
 #define MAP_FAILED ((void *)-1)
 
 void *mmap(void *addr, size_t length, int prot, int flags, int fd, long offset);
+/* Linux i386 mmap2: offset is in units of 4096-byte pages. */
+void *mmap2(void *addr, size_t length, int prot, int flags, int fd,
+            size_t pgoffset);
 int munmap(void *addr, size_t length);
 int mprotect(void *addr, size_t length, int prot);
 

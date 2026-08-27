@@ -8,6 +8,8 @@
 #include "driver/char/serial.h"
 #include "driver/char/rtc.h"
 #include "driver/char/char.h"
+#include "driver/char/random.h"
+#include "driver/char/pcspk.h"
 #include "driver/pci/pci.h"
 #include "driver/block/block.h"
 #include "driver/block/ide.h"
@@ -22,6 +24,8 @@
 #include "fs/fs.h"
 #include "fs/devfs.h"
 #include "fs/minix3.h"
+#include "fs/procfs.h"
+#include "fs/tmpfs.h"
 #include "driver/acpi/acpi.h"
 #include "kernel/exec.h"
 
@@ -67,6 +71,8 @@ void kernel_main(void)
     kbd_init();
     rtc_init();  /* RTC prints system time automatically */
     miscdev_init(); /* /dev/null, /dev/zero */
+    random_init();  /* /dev/random, /dev/urandom */
+    pcspk_init();   /* /dev/pcspk */
 
     printk("[KERNEL] Early initialization complete\n\n");
 
@@ -97,6 +103,8 @@ void kernel_main(void)
     vfs_init();
     devfs_init();   /* register devfs type (init mounts it at /dev) */
     minix3_init();  /* register minix3 filesystem driver */
+    procfs_init();  /* register procfs type (init mounts it at /proc) */
+    tmpfs_init();   /* register tmpfs type (init mounts it at /tmp) */
 
     printk("[KERNEL] Initialization complete (v2-syscalls)\n\n");
 

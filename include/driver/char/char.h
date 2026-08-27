@@ -23,6 +23,9 @@ typedef int (*ioctl_fn)(int prim_id, int scnd_id, unsigned int command, uint32_t
 #define CHAR_DEV_RTC    4
 #define CHAR_DEV_NULL   5
 #define CHAR_DEV_ZERO   6
+#define CHAR_DEV_RANDOM 7
+#define CHAR_DEV_URANDOM 8
+#define CHAR_DEV_PCSPK  9
 
 /* =========================================================================
  * Character device callback types

@@ -17,6 +17,7 @@
 #define SYS_OPEN    5
 #define SYS_CLOSE   6
 #define SYS_WAITPID 7
+#define SYS_CREAT   8
 #define SYS_LINK    9
 #define SYS_UNLINK  10
 #define SYS_EXECVE  11
@@ -129,6 +130,7 @@
 #define SYS_CHOWN   182
 #define SYS_GETCWD  183
 #define SYS_SENDFILE 187
+#define SYS_MMAP2   192
 #define SYS_FADVISE64 221
 #define SYS_EXIT_GROUP 252
 #define SYS_SET_TID_ADDRESS 258
@@ -139,6 +141,7 @@
 #define SYS_UTIMES  271
 #define SYS_SYNCFS  306
 #define SYS_GETCPU  318
+#define SYS_GETRANDOM 355
 #define SYS_DUP3    330
 #define SYS_PIPE2   331
 #define SYS_MEMBARRIER 375

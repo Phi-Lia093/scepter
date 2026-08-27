@@ -1378,6 +1378,8 @@ static int sys_mknod(const char *user_path, uint32_t mode, uint32_t dev)
 #define CLOCK_PROCESS_CPUTIME_ID 2
 
 #define ITIMER_REAL 0
+#define ITIMER_VIRTUAL 1
+#define ITIMER_PROF 2
 
 /* POSIX tms (must match crt/include/sys/times.h) */
 struct tms_k {
@@ -1579,20 +1581,43 @@ int sys_sync(void)
     return 0;
 }
 
+/* Accessors for the per-timer kernel fields. */
+static uint32_t *timer_remaining_ptr(int which)
+{
+    switch (which) {
+        case ITIMER_REAL:    return &current->itimer_remaining;
+        case ITIMER_VIRTUAL: return &current->vtimer_remaining;
+        case ITIMER_PROF:    return &current->ptimer_remaining;
+        default:             return NULL;
+    }
+}
+
+static uint32_t *timer_interval_ptr(int which)
+{
+    switch (which) {
+        case ITIMER_REAL:    return &current->itimer_interval;
+        case ITIMER_VIRTUAL: return &current->vtimer_interval;
+        case ITIMER_PROF:    return &current->ptimer_interval;
+        default:             return NULL;
+    }
+}
+
 static int sys_setitimer(int which, struct itimerval_k *user_new,
                          struct itimerval_k *user_old)
 {
-    if (which != ITIMER_REAL)
+    uint32_t *rem = timer_remaining_ptr(which);
+    uint32_t *ivl = timer_interval_ptr(which);
+    if (!rem || !ivl)
         return -EINVAL;
 
     if (user_old) {
         if (!valid_user_pointer(user_old, sizeof(struct itimerval_k)))
             return -EFAULT;
         struct itimerval_k old;
-        old.it_value.tv_sec  = (int32_t)(current->itimer_remaining / 100);
-        old.it_value.tv_usec = (int32_t)((current->itimer_remaining % 100) * 10000);
-        old.it_interval.tv_sec  = (int32_t)(current->itimer_interval / 100);
-        old.it_interval.tv_usec = (int32_t)((current->itimer_interval % 100) * 10000);
+        old.it_value.tv_sec  = (int32_t)(*rem / 100);
+        old.it_value.tv_usec = (int32_t)((*rem % 100) * 10000);
+        old.it_interval.tv_sec  = (int32_t)(*ivl / 100);
+        old.it_interval.tv_usec = (int32_t)((*ivl % 100) * 10000);
         if (copy_to_user(user_old, &old, sizeof(struct itimerval_k)) < 0)
             return -EFAULT;
     }
@@ -1606,16 +1631,14 @@ static int sys_setitimer(int which, struct itimerval_k *user_new,
 
         if (nv.it_value.tv_sec == 0 && nv.it_value.tv_usec == 0) {
             /* Disarm the timer. */
-            current->itimer_remaining = 0;
+            *rem = 0;
         } else {
-            current->itimer_remaining =
-                timespec_to_ticks(nv.it_value.tv_sec, nv.it_value.tv_usec);
+            *rem = timespec_to_ticks(nv.it_value.tv_sec, nv.it_value.tv_usec);
         }
         if (nv.it_interval.tv_sec == 0 && nv.it_interval.tv_usec == 0)
-            current->itimer_interval = 0;
+            *ivl = 0;
         else
-            current->itimer_interval =
-                timespec_to_ticks(nv.it_interval.tv_sec, nv.it_interval.tv_usec);
+            *ivl = timespec_to_ticks(nv.it_interval.tv_sec, nv.it_interval.tv_usec);
     }
 
     return 0;
@@ -1623,16 +1646,18 @@ static int sys_setitimer(int which, struct itimerval_k *user_new,
 
 static int sys_getitimer(int which, struct itimerval_k *user_old)
 {
-    if (which != ITIMER_REAL)
+    uint32_t *rem = timer_remaining_ptr(which);
+    uint32_t *ivl = timer_interval_ptr(which);
+    if (!rem || !ivl)
         return -EINVAL;
     if (!valid_user_pointer(user_old, sizeof(struct itimerval_k)))
         return -EFAULT;
 
     struct itimerval_k old;
-    old.it_value.tv_sec  = (int32_t)(current->itimer_remaining / 100);
-    old.it_value.tv_usec = (int32_t)((current->itimer_remaining % 100) * 10000);
-    old.it_interval.tv_sec  = (int32_t)(current->itimer_interval / 100);
-    old.it_interval.tv_usec = (int32_t)((current->itimer_interval % 100) * 10000);
+    old.it_value.tv_sec  = (int32_t)(*rem / 100);
+    old.it_value.tv_usec = (int32_t)((*rem % 100) * 10000);
+    old.it_interval.tv_sec  = (int32_t)(*ivl / 100);
+    old.it_interval.tv_usec = (int32_t)((*ivl % 100) * 10000);
 
     if (copy_to_user(user_old, &old, sizeof(struct itimerval_k)) < 0)
         return -EFAULT;
@@ -1701,6 +1726,10 @@ int syscall_handler(registers_t *regs, int num, uint32_t arg1, uint32_t arg2,
 
         case SYS_WAITPID:
             return sys_wait4((int)arg1, (int *)arg2, (int)arg3, NULL);
+
+        case SYS_CREAT:
+            return sys_open((const char *)arg1, O_CREAT | O_WRONLY | O_TRUNC,
+                            (uint32_t)arg2);
 
         case SYS_LINK:
             return sys_link((const char *)arg1, (const char *)arg2);
@@ -1893,6 +1922,11 @@ int syscall_handler(registers_t *regs, int num, uint32_t arg1, uint32_t arg2,
             return sys_mmap(arg1, (size_t)arg2, (int)arg3,
                             (int)arg4, (int)arg5, arg6);
 
+        /* Linux i386 mmap2: the 6th argument is a page-granular offset. */
+        case SYS_MMAP2:
+            return sys_mmap(arg1, (size_t)arg2, (int)arg3,
+                            (int)arg4, (int)arg5, arg6 * 4096U);
+
         case SYS_MUNMAP:
             return sys_munmap(arg1, (size_t)arg2);
 
@@ -2081,6 +2115,9 @@ int syscall_handler(registers_t *regs, int num, uint32_t arg1, uint32_t arg2,
 
         case SYS_MEMBARRIER:
             return sys_membarrier((int)arg1, (int)arg2);
+
+        case SYS_GETRANDOM:
+            return sys_getrandom((void *)arg1, (size_t)arg2, (unsigned int)arg3);
 
         case SYS_CLOSE_RANGE:
             return sys_close_range(arg1, arg2, (int)arg3);

@@ -33,6 +33,18 @@ int main(int argc, char *argv[], char *envp[])
             printf("init: devfs mount failed (errno=%d)\n", errno);
     }
 
+    /* ---- Automount procfs at /proc and tmpfs at /tmp ---------------- */
+    mkdir("/proc", 0755);
+    if (mount("procfs", "/proc", "procfs", 0, NULL) < 0) {
+        if (errno != EBUSY)
+            printf("init: procfs mount failed (errno=%d)\n", errno);
+    }
+    mkdir("/tmp", 01777);
+    if (mount("tmpfs", "/tmp", "tmpfs", 0, NULL) < 0) {
+        if (errno != EBUSY)
+            printf("init: tmpfs mount failed (errno=%d)\n", errno);
+    }
+
     /* Set up the console as fd 0/1/2 */
     if (open("/dev/tty0", O_RDWR) < 0) {
         printf("init: cannot open /dev/tty0\n");

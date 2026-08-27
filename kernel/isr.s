@@ -72,7 +72,14 @@ irq\num:
     movw  %ax, %es
     movw  %ax, %fs
     movw  %ax, %gs
+    /* Push the interrupted CS (saved by the CPU in the iret frame) as
+     * the single argument to the C handler, so it can tell user mode
+     * (0x1B) from kernel mode (0x08).  Layout here (top of stack):
+     *   [esp+0]=cr3 [esp+4..16]=gs fs es ds [esp+20..48]=pusha regs
+     *   [esp+52]=eip [esp+56]=cs [esp+60]=eflags [esp+64..]=user esp/ss */
+    pushl 56(%esp)
     call  \handler
+    addl  $4, %esp          /* pop the CS argument */
 
     popl  %eax
     movl  %eax, %cr3

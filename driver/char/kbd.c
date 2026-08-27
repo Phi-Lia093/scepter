@@ -98,11 +98,18 @@ static char kbd_buffer_pop(void)
 
 /* =========================================================================
  * IRQ1 Handler
+ * The IRQ stub passes the interrupted CS; we don't need it here.
  * ========================================================================= */
 
-void kbd_isr(void)
+void kbd_isr(uint32_t cs)
 {
+    (void)cs;
     uint8_t scancode = inb(KBD_DATA_PORT);
+
+    /* Keyboard timing/scan code is a decent entropy source. */
+    extern void random_add_entropy(uint32_t bits);
+    extern uint32_t pit_get_ticks(void);
+    random_add_entropy((uint32_t)scancode ^ pit_get_ticks());
 
     if (scancode == SC_LSHIFT || scancode == SC_RSHIFT) {
         kbd_state.shift_pressed = 1;

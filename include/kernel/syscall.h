@@ -188,6 +188,9 @@ typedef struct registers {
 #define SYS_PWRITE   181    /* Write at explicit offset */
 #define SYS_GETCWD   183    /* Get current working directory */
 
+/* ---- mmap2 (192): mmap with page-granular offset (Linux i386 ABI) ---- */
+#define SYS_MMAP2    192
+
 /* ---- sendfile (187) ---- */
 #define SYS_SENDFILE 187    /* Copy data between file descriptors */
 
@@ -219,6 +222,9 @@ typedef struct registers {
 
 /* ---- getcpu (318) ---- */
 #define SYS_GETCPU   318
+
+/* ---- getrandom (355) ---- */
+#define SYS_GETRANDOM 355   /* getrandom(buf, buflen, flags) */
 
 /* ---- dup3 / pipe2 (330..331) ---- */
 #define SYS_DUP3     330    /* dup2 with O_CLOEXEC support */

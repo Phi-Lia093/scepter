@@ -85,5 +85,6 @@ int sys_mlockall(int flags);
 int sys_munlockall(void);
 int sys_membarrier(int cmd, int flags);
 int sys_getcpu(void *user_cpu, void *user_node, void *cache);
+int sys_getrandom(void *user_buf, size_t buflen, unsigned int flags);
 
 #endif /* KERNEL_SYSCALL_NEW_H */

@@ -206,6 +206,14 @@ static int devfs_read(void *file_private, void *buf, size_t count)
                 cbuf[i] = 0;
             return (int)count;
         }
+        /* /dev/random and /dev/urandom: bulk fill (single bytes can be
+         * 0x00, which the one-byte-at-a-time path would treat as "empty"). */
+        if (node->dev_id == CHAR_DEV_RANDOM ||
+            node->dev_id == CHAR_DEV_URANDOM) {
+            extern void random_get_bytes(void *buf, size_t n);
+            random_get_bytes(buf, count);
+            return (int)count;
+        }
         /* Read count characters one at a time.
          * Blocking devices (the keyboard) sleep until input arrives;
          * with O_NONBLOCK we poll first and return -EAGAIN when empty.

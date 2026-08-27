@@ -977,6 +977,39 @@ int sys_getcpu(void *user_cpu, void *user_node, void *cache)
     return 0;
 }
 
+/* getrandom(2) flags (Linux) */
+#define GRND_NONBLOCK 0x0001
+#define GRND_RANDOM   0x0002
+
+/* sys_getrandom - Fill a user buffer with random bytes.
+ *
+ * With no real entropy hardware this kernel treats /dev/urandom semantics
+ * as the only source; GRND_RANDOM is accepted (it never blocks here, so
+ * GRND_NONBLOCK is irrelevant), and flags are otherwise validated. */
+int sys_getrandom(void *user_buf, size_t buflen, unsigned int flags)
+{
+    if (flags & ~(GRND_NONBLOCK | GRND_RANDOM))
+        return -EINVAL;
+    if (buflen == 0)
+        return 0;
+    if (!valid_user_pointer(user_buf, buflen))
+        return -EFAULT;
+
+    extern void random_get_bytes(void *buf, size_t n);
+    /* Generate into kernel memory first (copy_to_user validates + writes). */
+    uint8_t tmp[64];
+    size_t done = 0;
+    while (done < buflen) {
+        size_t chunk = buflen - done;
+        if (chunk > sizeof(tmp)) chunk = sizeof(tmp);
+        random_get_bytes(tmp, chunk);
+        if (copy_to_user((uint8_t *)user_buf + done, tmp, chunk) < 0)
+            return (done > 0) ? (int)done : -EFAULT;
+        done += chunk;
+    }
+    return (int)done;
+}
+
 /* sys_chroot - Change the calling process's root directory (root only). */
 int sys_chroot(const char *user_path)
 {

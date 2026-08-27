@@ -320,6 +320,14 @@ int open(const char *path, int flags, ...)
     return open_mode(path, flags, mode);
 }
 
+/* creat(path, mode) == open(path, O_CREAT | O_WRONLY | O_TRUNC, mode) */
+int creat(const char *path, unsigned int mode)
+{
+    long ret = syscall2(SYS_CREAT, (int)path, (int)mode);
+    if (ret < 0) { errno = -ret; return -1; }
+    return (int)ret;
+}
+
 ssize_t read(int fd, void *buf, size_t count)
 {
     long ret = syscall3(SYS_READ, fd, (int)buf, (int)count);
@@ -648,6 +656,16 @@ void *mmap(void *addr, size_t length, int prot, int flags, int fd, long offset)
     return (void *)ret;
 }
 
+/* Linux i386 mmap2: the offset is in units of 4096-byte pages. */
+void *mmap2(void *addr, size_t length, int prot, int flags, int fd,
+            size_t pgoffset)
+{
+    long ret = syscall6(SYS_MMAP2, (int)addr, (int)length, prot, flags, fd,
+                        (int)pgoffset);
+    if (ret < 0) { errno = -ret; return MAP_FAILED; }
+    return (void *)ret;
+}
+
 int munmap(void *addr, size_t length)
 {
     long ret = syscall2(SYS_MUNMAP, (int)addr, (int)length);
@@ -687,6 +705,12 @@ unsigned int sleep(unsigned int seconds)
     if (nanosleep(&req, &rem) < 0)
         return (unsigned int)rem.tv_sec;
     return 0;
+}
+
+int usleep(unsigned int usec)
+{
+    struct timespec req = { (long)(usec / 1000000), (long)((usec % 1000000) * 1000) };
+    return nanosleep(&req, NULL);
 }
 
 time_t time(time_t *tloc)
@@ -1094,6 +1118,14 @@ int sysinfo(struct sysinfo *info)
     long ret = syscall1(SYS_SYSINFO, (int)info);
     if (ret < 0) { errno = -ret; return -1; }
     return 0;
+}
+
+/* getrandom(2): fill buf with random bytes.  Never blocks in Scepter. */
+ssize_t getrandom(void *buf, size_t buflen, unsigned int flags)
+{
+    long ret = syscall3(SYS_GETRANDOM, (int)buf, (int)buflen, (int)flags);
+    if (ret < 0) { errno = -ret; return -1; }
+    return (ssize_t)ret;
 }
 
 int getrusage(int who, struct rusage *usage)

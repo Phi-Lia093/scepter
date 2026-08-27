@@ -226,6 +226,10 @@ int sys_fork(registers_t *regs)
     child->cleartid = 0;
     child->itimer_remaining = 0;
     child->itimer_interval  = 0;
+    child->vtimer_remaining = 0;
+    child->vtimer_interval  = 0;
+    child->ptimer_remaining = 0;
+    child->ptimer_interval  = 0;
     child->uticks = 0;
     child->sticks = 0;
     
