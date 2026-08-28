@@ -46,10 +46,10 @@ $(TARGET): modules
 # ===========================================================================
 # Root Disk Management
 #
-# One AHCI disk image (root.img) holds everything: GRUB in the MBR and a
-# single minix v3 partition (sda1) that is both the boot partition
+# One IDE disk image (root.img) holds everything: GRUB in the MBR and a
+# single ext2 partition (hda1) that is both the boot partition
 # (/boot/kernel.elf) and the root filesystem (/init, /bin; /dev is devfs
-# automounted by init).  'make run' attaches it to an ICH9 AHCI controller.
+# automounted by init).  'make run' boots it as the first IDE disk.
 # ===========================================================================
 MOUNT_DIR = mnt
 
@@ -86,9 +86,8 @@ umount:
 # ===========================================================================
 # Run and Debug
 #
-# The whole system now boots and runs in AHCI mode: root.img is attached to
-# an emulated ICH9 AHCI controller (SeaBIOS + GRUB boot from SATA; the
-# kernel mounts the root filesystem from sda1).  No IDE drives are used.
+# The system boots from an IDE disk (root.img): SeaBIOS + GRUB boot from the
+# first IDE drive and the kernel mounts the ext2 root filesystem from hda1.
 # ===========================================================================
 run: $(TARGET)
 	@if [ ! -f root.img ]; then \
@@ -104,14 +103,11 @@ run: $(TARGET)
 	@sync
 	@echo "Unmounting disk..."
 	@$(MAKE) umount
-	@echo "Starting QEMU (AHCI root disk)..."
+	@echo "Starting QEMU (IDE root disk)..."
 	@rm -f kernel.log
 	@qemu-system-i386 -m 128 \
-		-drive file=root.img,format=raw,if=none,id=sata0 \
-		-device ich9-ahci,id=ahci \
-		-device ide-hd,drive=sata0,bus=ahci.0 \
+		-drive file=root.img,format=raw,if=ide,index=0 \
 		-serial file:kernel.log
-		-accel kvm
 
 
 

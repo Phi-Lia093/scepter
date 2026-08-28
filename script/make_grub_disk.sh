@@ -4,7 +4,7 @@
 # root filesystem into one (root.img):
 #
 #   - GRUB bootloader in the MBR
-#   - one minix v3 partition (hda1) that serves BOTH as the boot partition
+#   - one ext2 partition (hda1) that serves BOTH as the boot partition
 #     (GRUB reads /boot/kernel.elf from it) and as the root filesystem
 #     (the kernel mounts it at /, containing /init and /bin)
 #   - /dev is populated at runtime by init (devfs automount)
@@ -31,7 +31,7 @@ fi
 echo "[1/7] Creating ${DISK_SIZE_MB}MB disk image..."
 dd if=/dev/zero of="$DISK_IMG" bs=1M count=$DISK_SIZE_MB status=progress
 
-# Step 2: Create partition table with fdisk (one bootable minix partition)
+# Step 2: Create partition table with fdisk (one bootable Linux/ext2 partition)
 echo "[2/7] Creating MBR partition table..."
 fdisk "$DISK_IMG" << EOF > /dev/null 2>&1
 o
@@ -41,7 +41,7 @@ p
 2048
 
 t
-81
+83
 a
 w
 EOF
@@ -55,10 +55,10 @@ echo "    Loop device: $LOOP_DEV"
 # Wait for partition to appear
 sleep 1
 
-# Step 4: Format partition as minix v3 (the kernel's minix3 driver + GRUB's
-# minix3 module both understand this format)
-echo "[4/7] Formatting partition as minix v3..."
-mkfs.minix -3 "${LOOP_DEV}p1" > /dev/null 2>&1
+# Step 4: Format partition as ext2 (the kernel's ext2 driver + GRUB's
+# ext2 module both understand this format)
+echo "[4/7] Formatting partition as ext2..."
+mkfs.ext2 -F "${LOOP_DEV}p1" > /dev/null 2>&1
 
 # Step 5: Mount partition temporarily
 echo "[5/7] Mounting partition..."
@@ -66,10 +66,10 @@ TEMP_MOUNT=$(mktemp -d)
 mount "${LOOP_DEV}p1" "$TEMP_MOUNT"
 
 # Step 6: Install GRUB.
-# The minix3 module is embedded in the core image so GRUB can read the v3
+# The ext2 module is embedded in the core image so GRUB can read the
 # root partition to find grub.cfg and load /boot/kernel.elf.
 echo "[6/7] Installing GRUB bootloader..."
-grub-install --target=i386-pc --boot-directory="$TEMP_MOUNT/boot" --install-modules="minix3 normal multiboot" "$LOOP_DEV" 2>&1 | grep -v "Installing"
+grub-install --target=i386-pc --boot-directory="$TEMP_MOUNT/boot" --install-modules="ext2 normal multiboot" "$LOOP_DEV" 2>&1 | grep -v "Installing"
 
 # Step 7: Create grub.cfg
 echo "[7/7] Creating GRUB configuration..."
@@ -99,7 +99,7 @@ echo ""
 echo "=============================================="
 echo "SUCCESS! Bootable root disk created: $DISK_IMG"
 echo "=============================================="
-echo "  Partition 1: minix v3 filesystem (type 0x81, bootable)"
+echo "  Partition 1: ext2 filesystem (type 0x83, bootable)"
 echo "  /boot  -> GRUB + kernel.elf"
 echo "  /bin   -> core utilities (installed by 'make app')"
 echo "  /init  -> init process (installed by 'make app')"

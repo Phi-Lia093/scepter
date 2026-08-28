@@ -41,13 +41,13 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    /* Without -t, guess from the device (devfs -> devfs, else minix3). */
+    /* Without -t, guess from the device (devfs -> devfs, else ext2). */
     if (!fstype) {
         if (strstr(argv[a], "devfs") || strcmp(argv[a], "/dev") == 0 ||
             strcmp(argv[a], "none") == 0)
             fstype = "devfs";
         else
-            fstype = "minix3";
+            fstype = "ext2";
     }
 
     if (mount(argv[a], argv[a + 1], fstype, 0, NULL) < 0) {

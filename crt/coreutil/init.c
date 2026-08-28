@@ -57,7 +57,7 @@ int main(int argc, char *argv[], char *envp[])
     printf("Scepter OS - init running\n");
 
     /* ---- /etc: hostname + optional boot script ------------------------
-     * Create /etc on the (minix) root filesystem, seed a default
+     * Create /etc on the root filesystem, seed a default
      * /etc/hostname, apply it to the kernel, and run /etc/rc if present. */
     mkdir("/etc", 0755);
 

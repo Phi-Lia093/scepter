@@ -1,28 +1,19 @@
 # ============================================================================
-# Filesystem Module Makefile
+# ext2 Filesystem Module Makefile
 # ============================================================================
 
-# Subdirectories
-SUBDIRS = minix3 ext2
-
-# Source files in fs/
-SRCS = vfs.c devfs.c pipe.c locks.c fifo.c procfs.c tmpfs.c
+# Source files
+SRCS = ext2.c ext2_super.c ext2_inode.c ext2_dir.c ext2_file.c
 
 # Object files (in build directory)
 OBJS = $(addprefix $(BUILD_DIR)/, $(SRCS:.c=.o))
 
 # Build all objects
-all: $(OBJS) subdirs
-
-# Build subdirectories
-subdirs:
-	@for dir in $(SUBDIRS); do \
-		$(MAKE) -C $$dir || exit 1; \
-	done
+all: $(OBJS)
 
 # Compilation rule
 $(BUILD_DIR)/%.o: %.c
-	@echo "  CC      fs/$<"
+	@echo "  CC      fs/ext2/$<"
 	@$(CC) $(CFLAGS) $(INCLUDE) $< -o $@
 
-.PHONY: all subdirs
+.PHONY: all

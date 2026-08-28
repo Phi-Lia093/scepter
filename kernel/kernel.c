@@ -27,6 +27,7 @@
 #include "fs/fs.h"
 #include "fs/devfs.h"
 #include "fs/minix3.h"
+#include "fs/ext2.h"
 #include "fs/procfs.h"
 #include "fs/tmpfs.h"
 #include "driver/acpi/acpi.h"
@@ -111,6 +112,7 @@ void kernel_main(void)
     vfs_init();
     devfs_init();   /* register devfs type (init mounts it at /dev) */
     minix3_init();  /* register minix3 filesystem driver */
+    ext2_init();    /* register ext2 filesystem driver */
     procfs_init();  /* register procfs type (init mounts it at /proc) */
     tmpfs_init();   /* register tmpfs type (init mounts it at /tmp) */
 
@@ -119,15 +121,19 @@ void kernel_main(void)
     /* ------------------------------------------------------------------
      * Mount root filesystem
      * ------------------------------------------------------------------ */
-    /* The merged boot+root disk (holding /init, /bin and /boot) is the
-     * first AHCI disk by default: sda1 = block device 12, partition 1.
-     * Systems without an AHCI controller fall back to the first IDE disk
-     * (hda1 = block device 4, partition 1). */
+    /* The merged boot+root disk is the first IDE disk by default:
+     * hda1 = block device 4, partition 1.  The root filesystem is ext2.
+     * If ext2 mounting fails (e.g. a stale disk), fall back to minix3. */
     int root_dev = (ahci_disk_count() > 0) ? 12 : 4;
-    if (fs_mount(root_dev, 1, "minix3", "/") != 0) {
-        printk("[KERNEL] Failed to mount root filesystem (dev %d)\n", root_dev);
-        sti();
-        while (1);
+    if (fs_mount(root_dev, 1, "ext2", "/") != 0) {
+        printk("[KERNEL] ext2 root mount failed (dev %d), trying minix3...\n",
+               root_dev);
+        if (fs_mount(root_dev, 1, "minix3", "/") != 0) {
+            printk("[KERNEL] Failed to mount root filesystem (dev %d)\n",
+                   root_dev);
+            sti();
+            while (1);
+        }
     }
     
     /* ------------------------------------------------------------------
