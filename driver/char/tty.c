@@ -13,8 +13,6 @@
  * TTY Constants
  * ========================================================================= */
 
-#define TTY_WIDTH   80
-#define TTY_HEIGHT  25
 #define TAB_WIDTH   8
 
 #define TTY_LINE_MAX 256   /* canonical line buffer / raw read-ahead */
@@ -33,6 +31,8 @@ typedef enum {
 static struct {
     uint8_t col;
     uint8_t row;
+    int cols;
+    int rows;
     tty_color_t fg;
     tty_color_t bg;
     tty_state_t state;
@@ -41,6 +41,11 @@ static struct {
     int current_param;
     uint8_t bold;
 } tty;
+
+/* Output backend (VGA text mode by default; the graphics console replaces it
+ * when video_init() finds a VBE display). */
+static tty_backend_t tty_be;
+static int tty_be_ready = 0;
 
 /* PID of the process group that owns the terminal (receives Ctrl-C etc.).
  * 0 = no owner yet; the shell sets it around each foreground child. */
@@ -89,23 +94,19 @@ extern int copy_from_user(void *kernel_dst, const void *user_src, size_t n);
 extern int copy_to_user(void *user_dst, const void *kernel_src, size_t n);
 
 /* =========================================================================
- * VGA Backend Functions
+ * Output Backend Helpers
  * ========================================================================= */
 
-static void tty_write_cell(uint8_t col, uint8_t row, char c, uint8_t color)
+static void tty_write_cell(int col, int row, char c, uint8_t fg, uint8_t bg)
 {
-    volatile uint16_t *vga = (volatile uint16_t *)0xC00B8000;
-    vga[row * TTY_WIDTH + col] = (uint16_t)(uint8_t)c | ((uint16_t)color << 8);
+    if (tty_be_ready)
+        tty_be.write_cell(col, row, c, fg, bg);
 }
 
 static void tty_update_hw_cursor(void)
 {
-    vga_set_cursor(tty.col, tty.row);
-}
-
-static uint8_t tty_make_color(tty_color_t fg, tty_color_t bg)
-{
-    return (uint8_t)(fg | (bg << 4));
+    if (tty_be_ready)
+        tty_be.set_cursor(tty.col, tty.row);
 }
 
 /* =========================================================================
@@ -119,10 +120,8 @@ void tty_clear(void)
     extern int kernel_vga_enabled;
     kernel_vga_enabled = 0;
 
-    uint8_t color = tty_make_color(tty.fg, tty.bg);
-    for (int row = 0; row < TTY_HEIGHT; row++)
-        for (int col = 0; col < TTY_WIDTH; col++)
-            tty_write_cell(col, row, ' ', color);
+    if (tty_be_ready)
+        tty_be.clear();
     tty.col = 0;
     tty.row = 0;
     tty_update_hw_cursor();
@@ -140,36 +139,26 @@ void tty_get_cursor(uint8_t *col, uint8_t *row)
     if (row) *row = tty.row;
 }
 
-void tty_set_cursor(uint8_t col, uint8_t row)
+void tty_set_cursor(int col, int row)
 {
-    if (col >= TTY_WIDTH)  col = TTY_WIDTH  - 1;
-    if (row >= TTY_HEIGHT) row = TTY_HEIGHT - 1;
-    tty.col = col;
-    tty.row = row;
+    if (col < 0) col = 0;
+    if (row < 0) row = 0;
+    if (col >= tty.cols) col = tty.cols - 1;
+    if (row >= tty.rows) row = tty.rows - 1;
+    tty.col = (uint8_t)col;
+    tty.row = (uint8_t)row;
     tty_update_hw_cursor();
-}
-
-static void tty_scroll(void)
-{
-    uint8_t color = tty_make_color(tty.fg, tty.bg);
-    volatile uint16_t *vga = (volatile uint16_t *)0xC00B8000;
-
-    for (int row = 1; row < TTY_HEIGHT; row++)
-        for (int col = 0; col < TTY_WIDTH; col++)
-            vga[(row - 1) * TTY_WIDTH + col] = vga[row * TTY_WIDTH + col];
-
-    for (int col = 0; col < TTY_WIDTH; col++)
-        tty_write_cell(col, TTY_HEIGHT - 1, ' ', color);
-
-    if (tty.row > 0) tty.row--;
 }
 
 static void tty_newline(void)
 {
     tty.col = 0;
     tty.row++;
-    if (tty.row >= TTY_HEIGHT)
-        tty_scroll();
+    if (tty.row >= tty.rows) {
+        if (tty_be_ready)
+            tty_be.scroll();
+        tty.row = tty.rows - 1;
+    }
 }
 
 /* =========================================================================
@@ -188,12 +177,12 @@ static void tty_execute_csi(char command)
     case 'B':
         n = (tty.param_count > 0 && tty.params[0] > 0) ? tty.params[0] : 1;
         tty.row += n;
-        if (tty.row >= TTY_HEIGHT) tty.row = TTY_HEIGHT - 1;
+        if (tty.row >= tty.rows) tty.row = tty.rows - 1;
         break;
     case 'C':
         n = (tty.param_count > 0 && tty.params[0] > 0) ? tty.params[0] : 1;
         tty.col += n;
-        if (tty.col >= TTY_WIDTH) tty.col = TTY_WIDTH - 1;
+        if (tty.col >= tty.cols) tty.col = tty.cols - 1;
         break;
     case 'D':
         n = (tty.param_count > 0 && tty.params[0] > 0) ? tty.params[0] : 1;
@@ -210,11 +199,8 @@ static void tty_execute_csi(char command)
         if (n == 2) { tty_clear(); return; }
         break;
     case 'K':
-        {
-            uint8_t color = tty_make_color(tty.fg, tty.bg);
-            for (int col = tty.col; col < TTY_WIDTH; col++)
-                tty_write_cell(col, tty.row, ' ', color);
-        }
+        for (int col = tty.col; col < tty.cols; col++)
+            tty_write_cell(col, tty.row, ' ', tty.fg, tty.bg);
         break;
     case 'm':
         for (int i = 0; i < tty.param_count; i++) {
@@ -243,8 +229,6 @@ static void tty_execute_csi(char command)
 
 void tty_putchar(char c)
 {
-    uint8_t color = tty_make_color(tty.fg, tty.bg);
-
     switch (tty.state) {
     case TTY_STATE_NORMAL:
         if (c == '\033') { tty.state = TTY_STATE_ESC; return; }
@@ -252,16 +236,16 @@ void tty_putchar(char c)
         case '\n': tty_newline(); break;
         case '\r': tty.col = 0; break;
         case '\b':
-            if (tty.col > 0) { tty.col--; tty_write_cell(tty.col, tty.row, ' ', color); }
+            if (tty.col > 0) { tty.col--; tty_write_cell(tty.col, tty.row, ' ', tty.fg, tty.bg); }
             break;
         case '\t':
             {
                 int next_tab = ((tty.col / TAB_WIDTH) + 1) * TAB_WIDTH;
-                if (next_tab >= TTY_WIDTH) {
+                if (next_tab >= tty.cols) {
                     tty_newline();
                 } else {
                     while (tty.col < next_tab) {
-                        tty_write_cell(tty.col, tty.row, ' ', color);
+                        tty_write_cell(tty.col, tty.row, ' ', tty.fg, tty.bg);
                         tty.col++;
                     }
                 }
@@ -270,9 +254,9 @@ void tty_putchar(char c)
         case '\a': break;
         default:
             if (c >= 32 && c <= 126) {
-                tty_write_cell(tty.col, tty.row, c, color);
+                tty_write_cell(tty.col, tty.row, c, tty.fg, tty.bg);
                 tty.col++;
-                if (tty.col >= TTY_WIDTH) tty_newline();
+                if (tty.col >= tty.cols) tty_newline();
             }
             break;
         }
@@ -634,7 +618,7 @@ static int tty_ioctl(int prim_id, int scnd_id, unsigned int command, uint32_t ar
         tty_reset_input();
         return 0;
     case TIOCGWINSZ: {
-        struct kernel_winsize ws = { TTY_HEIGHT, TTY_WIDTH, 0, 0 };
+        struct kernel_winsize ws = { tty.rows, tty.cols, 0, 0 };
         if (copy_to_user((void *)arg, &ws, sizeof(ws)) < 0)
             return -1;
         return 0;
@@ -653,16 +637,39 @@ static int tty_ioctl(int prim_id, int scnd_id, unsigned int command, uint32_t ar
  * Initialisation – state reset + driver registration + devfs node
  * ========================================================================= */
 
+void tty_attach_backend(tty_backend_t *be)
+{
+    if (!be)
+        return;
+    tty_be = *be;
+    if (tty_be.cols <= 0) tty_be.cols = 80;
+    if (tty_be.rows <= 0) tty_be.rows = 25;
+    tty.cols = tty_be.cols;
+    tty.rows = tty_be.rows;
+    tty_be_ready = 1;
+}
+
 void tty_init(void)
 {
     tty.col          = 0;
     tty.row          = 0;
+    tty.cols         = 80;
+    tty.rows         = 25;
     tty.fg           = TTY_WHITE;
     tty.bg           = TTY_BLACK;
     tty.state        = TTY_STATE_NORMAL;
     tty.param_count  = 0;
     tty.current_param = 0;
     tty.bold         = 0;
+
+    /* Default output backend: the legacy VGA text console.  video_init()
+     * swaps in the graphics console when a VBE display is available. */
+    if (!tty_be_ready) {
+        vga_fill_tty_backend(&tty_be);
+        tty.cols = tty_be.cols;
+        tty.rows = tty_be.rows;
+        tty_be_ready = 1;
+    }
 
     tty_reset_input();
 

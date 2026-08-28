@@ -2,6 +2,7 @@
 #define VGA_H
 
 #include <stdint.h>
+#include "driver/char/tty.h"
 
 /* =========================================================================
  * VGA colour definitions
@@ -46,7 +47,14 @@ void vga_init(void);
 void vga_clear(void);
 void vga_set_color(uint8_t color);
 void vga_putchar(char c);
-void vga_set_cursor(uint8_t col, uint8_t row);
+void vga_set_cursor(int col, int row);
 void vga_get_cursor(uint8_t *col, uint8_t *row);
+
+/* Route kernel-console output (printk / vga_putchar) to a different console,
+ * e.g. the graphics console once a VBE mode is active. */
+void console_set_putchar(void (*fn)(char));
+
+/* Fill the tty output backend for the legacy VGA text console (80x25). */
+void vga_fill_tty_backend(tty_backend_t *be);
 
 #endif /* VGA_H */

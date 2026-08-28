@@ -27,6 +27,7 @@
 #include "fs/procfs.h"
 #include "fs/tmpfs.h"
 #include "driver/acpi/acpi.h"
+#include "driver/video/video.h"
 #include "kernel/exec.h"
 
 
@@ -67,6 +68,7 @@ void kernel_main(void)
      * Character drivers  (each registers itself + devfs node internally)
      * ------------------------------------------------------------------ */
     tty_init();
+    video_init();  /* switch to VBE graphics + graphics console if available */
     pit_init(100);
     kbd_init();
     rtc_init();  /* RTC prints system time automatically */

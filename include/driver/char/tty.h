@@ -12,6 +12,27 @@
  * - State machine for parsing escape sequences
  * ========================================================================= */
 
+/* =========================================================================
+ * TTY output backend
+ *
+ * The terminal emulator renders through an abstract "text screen" so it can
+ * drive either the legacy VGA text console (80x25 hardware cells) or the
+ * graphics console (arbitrary resolution, software cursor).
+ * ========================================================================= */
+
+typedef struct {
+    int cols, rows;                                  /* grid size            */
+    void (*clear)(void);                             /* blank the screen     */
+    void (*scroll)(void);                            /* scroll up one line   */
+    void (*write_cell)(int col, int row, char c,
+                       uint8_t fg, uint8_t bg);      /* draw one cell        */
+    void (*set_cursor)(int col, int row);            /* position the cursor  */
+} tty_backend_t;
+
+/* Attach an output backend (replaces any previous one).  Grid dimensions are
+ * taken from the backend. */
+void tty_attach_backend(tty_backend_t *be);
+
 /* VGA hardware color codes */
 typedef enum {
     TTY_BLACK = 0,
@@ -67,7 +88,7 @@ void tty_get_cursor(uint8_t *col, uint8_t *row);
 /**
  * Set cursor position (0-based)
  */
-void tty_set_cursor(uint8_t col, uint8_t row);
+void tty_set_cursor(int col, int row);
 
 /**
  * Set the foreground process PID (receives Ctrl-C / terminal signals).

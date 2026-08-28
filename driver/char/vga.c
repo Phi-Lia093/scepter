@@ -29,15 +29,15 @@ static uint8_t vga_color = 0;  /* set by vga_init */
  * Hardware cursor
  * ========================================================================= */
 
-void vga_set_cursor(uint8_t col, uint8_t row)
+void vga_set_cursor(int col, int row)
 {
     uint16_t pos = (uint16_t)row * VGA_WIDTH + col;
     outb(VGA_CTRL_REG, VGA_CURSOR_HI);
     outb(VGA_DATA_REG, (uint8_t)(pos >> 8));
     outb(VGA_CTRL_REG, VGA_CURSOR_LO);
     outb(VGA_DATA_REG, (uint8_t)(pos & 0xFF));
-    vga_col = col;
-    vga_row = row;
+    vga_col = (uint8_t)col;
+    vga_row = (uint8_t)row;
 }
 
 void vga_get_cursor(uint8_t *col, uint8_t *row)
@@ -86,11 +86,59 @@ static void vga_scroll(void)
 }
 
 /* =========================================================================
+ * tty output backend (80x25 text cells)
+ * ========================================================================= */
+
+static void vga_text_write_cell(int col, int row, char c, uint8_t fg, uint8_t bg)
+{
+    uint8_t color = vga_entry_color((vga_color_t)(fg & 0x0F),
+                                    (vga_color_t)(bg & 0x0F));
+    VGA_BUFFER[row * VGA_WIDTH + col] = vga_entry(c, color);
+}
+
+/* Scroll the text buffer only; cursor bookkeeping belongs to the tty. */
+static void vga_text_scroll(void)
+{
+    for (int row = 1; row < VGA_HEIGHT; row++)
+        for (int col = 0; col < VGA_WIDTH; col++)
+            VGA_BUFFER[(row - 1) * VGA_WIDTH + col] =
+                VGA_BUFFER[row * VGA_WIDTH + col];
+
+    uint16_t blank = vga_entry(' ', vga_color);
+    for (int col = 0; col < VGA_WIDTH; col++)
+        VGA_BUFFER[(VGA_HEIGHT - 1) * VGA_WIDTH + col] = blank;
+}
+
+void vga_fill_tty_backend(tty_backend_t *be)
+{
+    be->cols = VGA_WIDTH;
+    be->rows = VGA_HEIGHT;
+    be->clear = vga_clear;
+    be->scroll = vga_text_scroll;
+    be->write_cell = vga_text_write_cell;
+    be->set_cursor = vga_set_cursor;
+}
+
+/* =========================================================================
  * Character output
  * ========================================================================= */
 
+/* Kernel console indirection: printk and /dev/vga0 route through this so the
+ * kernel console follows the active display (text vs graphics). */
+static void (*console_putchar)(char) = NULL;
+
+void console_set_putchar(void (*fn)(char))
+{
+    console_putchar = fn;
+}
+
 void vga_putchar(char c)
 {
+    if (console_putchar) {
+        console_putchar(c);
+        return;
+    }
+
     switch (c) {
     case '\n':
         vga_col = 0;
