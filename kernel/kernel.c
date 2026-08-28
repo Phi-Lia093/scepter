@@ -10,6 +10,7 @@
 #include "driver/char/char.h"
 #include "driver/char/random.h"
 #include "driver/char/pcspk.h"
+#include "driver/char/mouse.h"
 #include "driver/pci/pci.h"
 #include "driver/block/block.h"
 #include "driver/block/ide.h"
@@ -71,6 +72,7 @@ void kernel_main(void)
     video_init();  /* switch to VBE graphics + graphics console if available */
     pit_init(100);
     kbd_init();
+    mouse_init();  /* PS/2 mouse: /dev/mouse */
     rtc_init();  /* RTC prints system time automatically */
     miscdev_init(); /* /dev/null, /dev/zero */
     random_init();  /* /dev/random, /dev/urandom */

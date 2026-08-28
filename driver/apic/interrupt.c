@@ -143,6 +143,13 @@ static int init_apic_from_madt(void)
     ioapic_map_irq(gsi_kbd, 0x21, lapic_get_id(),
                    IOAPIC_DELMODE_FIXED | IOAPIC_DESTMODE_PHYSICAL);
     printk("[INT] Enabled keyboard: IRQ 1 -> GSI %u -> Vector 0x21\n", gsi_kbd);
+
+    /* Enable PS/2 mouse (IRQ12 -> GSI 12, vector 0x2c = 0x20 + 12) */
+    uint8_t gsi_mouse = irq_to_gsi(12);
+    ioapic_map_irq(gsi_mouse, 0x20 + 12, lapic_get_id(),
+                   IOAPIC_DELMODE_FIXED | IOAPIC_DESTMODE_PHYSICAL);
+    printk("[INT] Enabled mouse: IRQ 12 -> GSI %u -> Vector 0x2c\n",
+           gsi_mouse);
     
     return 0;
 }

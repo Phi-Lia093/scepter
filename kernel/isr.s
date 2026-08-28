@@ -93,6 +93,7 @@ irq\num:
 
 IRQ_STUB 0, pit_isr
 IRQ_STUB 1, kbd_isr
+IRQ_STUB 12, mouse_isr
 
 /* -------------------------------------------------------------------------
  * Syscall stub (int 0x80)

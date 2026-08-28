@@ -34,6 +34,7 @@ vma_t *vma_create(uint32_t start, uint32_t end, uint32_t flags, uint32_t type)
     vma->vm_fd = -1;         /* anonymous by default */
     vma->vm_file_off = 0;
     vma->vm_shared = 0;
+    vma->vm_phys_base = 0;
     
     /* Initialize list node */
     INIT_LIST_HEAD(&vma->list);
@@ -243,6 +244,9 @@ void mm_writeback_shared(task_struct_t *task)
         vma_t *vma = list_entry(pos, vma_t, list);
 
         if (vma->vm_type != VMA_MMAP || vma->vm_fd < 0 || !vma->vm_shared)
+            continue;
+        /* Device mappings (VM_IO) have no backing file to write back to. */
+        if (vma->vm_flags & VM_IO)
             continue;
 
         for (uint32_t a = vma->vm_start; a < vma->vm_end; a += 0x1000) {

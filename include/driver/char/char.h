@@ -26,6 +26,8 @@ typedef int (*ioctl_fn)(int prim_id, int scnd_id, unsigned int command, uint32_t
 #define CHAR_DEV_RANDOM 7
 #define CHAR_DEV_URANDOM 8
 #define CHAR_DEV_PCSPK  9
+#define CHAR_DEV_FBDEV  14
+#define CHAR_DEV_MOUSE  15
 
 /* =========================================================================
  * Character device callback types
@@ -34,11 +36,17 @@ typedef int  (*char_read_fn)(int scnd_id);
 typedef int  (*char_write_fn)(int scnd_id, char c);
 typedef int  (*char_poll_fn)(int scnd_id);
 
+/* mmap: fill *phys with the physical base address of the device's memory
+ * (framebuffer, MMIO region) so a user VMA can map it directly.
+ * Returns 0 on success, -1 if the device has no map-able memory. */
+typedef int (*mmap_fn)(int scnd_id, uint32_t length, uint32_t *phys);
+
 typedef struct {
     char_read_fn  read;
     char_write_fn write;
     char_poll_fn  poll;    /* 1 if data is available without blocking */
     ioctl_fn      ioctl;
+    mmap_fn       mmap;    /* optional: device memory mapping */
 } char_ops_t;
 
 /* =========================================================================
@@ -80,6 +88,9 @@ int  cwrite(int prim_id, int scnd_id, char c);
 
 /** Send an ioctl command to a char device. Returns device value or -1. */
 int  char_ioctl(int prim_id, int scnd_id, unsigned int command, uint32_t arg);
+
+/** Map a character device's physical memory. Returns 0 + *phys, or -1. */
+int  char_mmap(int prim_id, int scnd_id, uint32_t length, uint32_t *phys);
 
 /** Short alias for char_ioctl */
 #define cioctl char_ioctl

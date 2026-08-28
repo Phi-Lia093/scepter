@@ -612,7 +612,19 @@ static int sys_mmap(uint32_t addr, size_t length, int prot, int flags,
     vma->vm_fd       = is_anon ? -1 : fd;
     vma->vm_file_off = offset;
     vma->vm_shared   = (flags & 0x1) ? 1 : 0;
-    
+
+    /* Device memory mapping (e.g. /dev/fb0): ask the filesystem for the
+     * device's physical base and mark the VMA VM_IO so page faults map
+     * the device's physical pages directly instead of allocating RAM.
+     * Regular files return -1 and use the demand-paging file path. */
+    if (!is_anon) {
+        uint32_t phys = 0;
+        if (fs_mmap(fd, length, &phys) == 0) {
+            vma->vm_flags   |= VM_IO;
+            vma->vm_phys_base = phys;
+        }
+    }
+
     vma_insert(task, vma);
     
     /* Pages will be allocated on-demand via page fault handler */
@@ -687,8 +699,10 @@ static int sys_munmap(uint32_t addr, size_t length)
             /* For simplicity, only handle exact match for now */
             if (start == vma->vm_start && end == vma->vm_end) {
                 /* MAP_SHARED file-backed: write dirty pages back to the
-                 * file before unmapping. */
-                if (vma->vm_fd >= 0 && vma->vm_shared) {
+                 * file before unmapping.  (Device maps VM_IO have no file
+                 * to flush to — they are live framebuffer/MMIO memory.) */
+                if (vma->vm_fd >= 0 && vma->vm_shared &&
+                    !(vma->vm_flags & VM_IO)) {
                     for (uint32_t a = vma->vm_start; a < vma->vm_end;
                          a += 0x1000) {
                         uint32_t *pte = task_get_pte(task, a);

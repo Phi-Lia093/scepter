@@ -3,7 +3,7 @@
 # ============================================================================
 
 # Source files
-SRCS = vbe.c fb.c font8x16.c gfxcon.c video.c
+SRCS = vbe.c fb.c font8x16.c gfxcon.c video.c fbdev.c
 
 # Object files (in build directory)
 OBJS = $(addprefix $(BUILD_DIR)/, $(SRCS:.c=.o))

@@ -64,6 +64,30 @@ static int check_access(vma_t *vma, uint32_t error_code)
  */
 static int allocate_page(task_struct_t *task, uint32_t fault_addr, vma_t *vma)
 {
+    uint32_t vaddr = PAGE_ALIGN_DOWN(fault_addr);
+
+    /* Device memory mapping (VM_IO, e.g. /dev/fb0): map the device's
+     * physical page directly — no RAM allocation, no file read. */
+    if (vma->vm_flags & VM_IO) {
+        uint32_t file_off = vma->vm_file_off + (vaddr - vma->vm_start);
+        uint32_t dev_phys = vma->vm_phys_base + file_off;
+        uint32_t pte_flags = vma_flags_to_pte(vma->vm_flags);
+
+        if (map_page(task->mm.pgdir, vaddr, dev_phys, pte_flags) < 0) {
+            printk("[PAGEFAULT] Failed to map device page\n");
+            return -1;
+        }
+
+        /* Keep task->mm.page_tables[] in sync (see comment below). */
+        uint32_t pdi = vaddr >> 22;
+        if (task->mm.page_tables[pdi] == NULL) {
+            uint32_t pde = task->mm.pgdir[pdi];
+            task->mm.page_tables[pdi] =
+                (uint32_t *)((pde & ~0xFFF) + KERNEL_VMA);
+        }
+        return 0;
+    }
+
     /* Allocate physical page */
     void *page_virt = page_alloc(PAGE_SIZE);
     if (!page_virt) {
@@ -78,7 +102,6 @@ static int allocate_page(task_struct_t *task, uint32_t fault_addr, vma_t *vma)
      * The fd belongs to the faulting process (vma->vm_fd was captured
      * at mmap() time and its refcount keeps the open_file alive). */
     if (vma->vm_fd >= 0 && vma->vm_type == VMA_MMAP) {
-        uint32_t vaddr = PAGE_ALIGN_DOWN(fault_addr);
         uint32_t file_off = vma->vm_file_off + (vaddr - vma->vm_start);
         extern int fs_pread(int fd, void *buf, size_t count, uint32_t offset);
         fs_pread(vma->vm_fd, page_virt, PAGE_SIZE, file_off);
@@ -86,9 +109,6 @@ static int allocate_page(task_struct_t *task, uint32_t fault_addr, vma_t *vma)
     
     /* Get physical address */
     uint32_t page_phys = VIRT_TO_PHYS((uint32_t)page_virt);
-    
-    /* Page-align fault address */
-    uint32_t vaddr = PAGE_ALIGN_DOWN(fault_addr);
     
     /* Convert VMA flags to PTE flags */
     uint32_t pte_flags = vma_flags_to_pte(vma->vm_flags);

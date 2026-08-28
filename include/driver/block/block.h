@@ -20,10 +20,15 @@ typedef int (*block_read_fn)(int prim_id, int scnd_id, void *buf,
 typedef int (*block_write_fn)(int prim_id, int scnd_id, const void *buf,
                               uint32_t offset, size_t count);
 
+/* mmap: fill *phys with the physical base address of the device's memory.
+ * Returns 0 on success, -1 if the device has no map-able memory. */
+typedef int (*block_mmap_fn)(int scnd_id, uint32_t length, uint32_t *phys);
+
 typedef struct {
     block_read_fn  read;
     block_write_fn write;
     ioctl_fn       ioctl;
+    block_mmap_fn  mmap;    /* optional: device memory mapping */
 } block_ops_t;
 
 /* =========================================================================
@@ -50,6 +55,9 @@ int bwrite(int prim_id, int scnd_id, const void *buf,
 
 /** Send an ioctl command to a block device. Returns device value or -1. */
 int block_ioctl(int prim_id, int scnd_id, unsigned int command, uint32_t arg);
+
+/** Map a block device's physical memory. Returns 0 + *phys, or -1. */
+int block_mmap(int prim_id, int scnd_id, uint32_t length, uint32_t *phys);
 
 /**
  * Initialise all block devices: IDE disks, MBR partition table.

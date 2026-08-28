@@ -20,6 +20,7 @@
 #define VM_EXEC      0x04  /* Executable */
 #define VM_SHARED    0x08  /* Shared mapping */
 #define VM_GROWSDOWN 0x10  /* Stack-like segment */
+#define VM_IO        0x20  /* Device memory (framebuffer/MMIO) mapping */
 
 /* VMA structure */
 typedef struct vma {
@@ -33,6 +34,7 @@ typedef struct vma {
     int         vm_fd;          /* backing fd for VMA_MMAP (-1 = anonymous) */
     uint32_t    vm_file_off;    /* base offset in the backing file          */
     int         vm_shared;      /* 1 = MAP_SHARED (write-back on unmap)     */
+    uint32_t    vm_phys_base;   /* physical base for VM_IO device maps      */
 } vma_t;
 
 /* Forward declaration */

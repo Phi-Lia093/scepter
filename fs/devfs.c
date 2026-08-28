@@ -453,6 +453,23 @@ static int devfs_fstat(void *file_private, stat_t *st)
  * ========================================================================= */
 
 /* =========================================================================
+ * VFS Callback: mmap (device memory mapping)
+ * ========================================================================= */
+
+static int devfs_mmap(void *file_private, uint32_t length, uint32_t *phys)
+{
+    devfs_file_t *f = (devfs_file_t *)file_private;
+    if (!f || !f->node || !phys) return -1;
+
+    if (f->node->type == DT_CHRDEV)
+        return char_mmap(f->node->dev_id, f->node->minor, length, phys);
+    if (f->node->type == DT_BLKDEV)
+        return block_mmap(f->node->dev_id, f->node->minor, length, phys);
+
+    return -1;
+}
+
+/* =========================================================================
  * VFS Callback: poll (non-blocking readiness)
  * ========================================================================= */
 
@@ -487,6 +504,7 @@ static fs_ops_t devfs_ops = {
     .seek     = devfs_seek,
     .truncate = devfs_truncate,
     .ioctl    = devfs_ioctl,
+    .mmap     = devfs_mmap,
     .readdir  = devfs_readdir,
     .mkdir    = devfs_mkdir,
     .rmdir    = devfs_rmdir,

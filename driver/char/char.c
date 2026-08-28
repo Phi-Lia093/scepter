@@ -143,6 +143,14 @@ int char_ioctl(int prim_id, int scnd_id, unsigned int command, uint32_t arg)
     return dev->ops.ioctl(prim_id, scnd_id, command, arg);
 }
 
+int char_mmap(int prim_id, int scnd_id, uint32_t length, uint32_t *phys)
+{
+    char_device_t *dev = find_char_device(prim_id);
+    if (!dev || !dev->ops.mmap || !phys)
+        return -1;
+    return dev->ops.mmap(scnd_id, length, phys);
+}
+
 /* =========================================================================
  * Aggregator – initialise all character devices in dependency order
  *

@@ -2,6 +2,7 @@
 #include "driver/video/vbe.h"
 #include "driver/video/fb.h"
 #include "driver/video/gfxcon.h"
+#include "driver/video/fbdev.h"
 #include "driver/char/tty.h"
 #include "driver/char/vga.h"
 #include "driver/pci/pci.h"
@@ -95,4 +96,7 @@ void video_init(void)
 
     printk("[VIDEO] VBE %dx%dx%d, LFB phys 0x%08x -> virt 0x%08x\n",
            w, h, bpp, disp.lfb_phys, (uint32_t)virt);
+
+    /* Expose the framebuffer to userland as /dev/fb0 (mmap + ioctls). */
+    fbdev_init(&fb);
 }

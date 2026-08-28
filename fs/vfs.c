@@ -722,6 +722,20 @@ int fs_ioctl(int fd, uint32_t cmd, uint32_t arg)
     return -1;  /* FS driver does not support ioctl */
 }
 
+int fs_mmap(int fd, uint32_t length, uint32_t *phys)
+{
+    fd_entry_t *fde = find_fd_entry(fd);
+    if (!fde || !fde->file) return -1;
+    
+    open_file_t *file = fde->file;
+
+    if (fs_drivers[file->fs_id].ops.mmap)
+        return fs_drivers[file->fs_id].ops.mmap(file->file_private,
+                                                length, phys);
+
+    return -1;  /* FS driver does not support device mappings */
+}
+
 /* =========================================================================
  * Path-Based Operations
  * ========================================================================= */

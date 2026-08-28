@@ -170,6 +170,16 @@ typedef struct fs_ops {
     /* Returns a POLLIN/POLLOUT/POLLERR/POLLHUP mask for the open file.
      * NULL means "always ready" (regular files). */
     int (*poll)(void *file_private);
+
+    /* ---- Device memory mapping ---- */
+    /* Fill *phys with the physical base address of the device's map-able
+     * memory (framebuffer, MMIO). Returns 0 on success, -1 if the file
+     * has no device mapping (regular files return -1 and are handled by
+     * the generic demand-paging file path instead).  Kept at the END of
+     * the struct: this Makefile has no automatic header dependencies, so
+     * inserting a field in the middle would shift every later member in
+     * stale objects and silently corrupt fs dispatch. */
+    int (*mmap)(void *file_private, uint32_t length, uint32_t *phys);
 } fs_ops_t;
 
 /* -------------------------------------------------------------------------
@@ -413,6 +423,14 @@ int fs_close_range(unsigned int first, unsigned int last);
  * readiness.  Called by pipe I/O, the keyboard IRQ, and the PIT tick.
  */
 void vfs_poll_wakeup(void);
+
+/**
+ * Map an open file's device memory (framebuffer, MMIO).
+ * On success returns 0 and stores the physical base in *phys; the caller
+ * creates a VM_IO VMA that maps those physical pages directly. Returns -1
+ * when the file has no device mapping (regular files).
+ */
+int fs_mmap(int fd, uint32_t length, uint32_t *phys);
 
 /* -------------------------------------------------------------------------
  * Working Directory (stored in task_struct.cwd)
