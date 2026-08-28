@@ -9,6 +9,7 @@
 #include "driver/acpi/acpi.h"
 #include "driver/acpi/tables.h"
 #include "kernel/asm.h"
+#include "kernel/cpu.h"
 #include "lib/printk.h"
 
 /* ============================================================================
@@ -16,6 +17,9 @@
  * ============================================================================ */
 
 static interrupt_mode_t g_int_mode = INT_MODE_UNKNOWN;
+
+/* Registered IRQ handlers (ISA IRQs 0-15). */
+static irq_handler_t g_irq_handlers[IRQ_COUNT];
 
 /* IRQ override table (from ACPI MADT) */
 #define MAX_IRQ_OVERRIDES 16
@@ -220,4 +224,49 @@ void interrupt_disable_irq(uint8_t irq)
     } else {
         pic_disable_irq(irq);
     }
+}
+
+/* ============================================================================
+ * Generic IRQ Dispatch
+ *
+ * The stubs in kernel/isr.s call irq_dispatch(irq, cs) for every IRQ 0-15.
+ * irq_init() installs the IDT gates once at boot; drivers then register a
+ * handler with irq_register().  EOI is sent here (after the handler) so
+ * handlers never touch the interrupt controller themselves.
+ * ============================================================================ */
+
+void irq_init(void)
+{
+    static const void *const stubs[IRQ_COUNT] = {
+        (const void *)irq0,  (const void *)irq1,  (const void *)irq2,
+        (const void *)irq3,  (const void *)irq4,  (const void *)irq5,
+        (const void *)irq6,  (const void *)irq7,  (const void *)irq8,
+        (const void *)irq9,  (const void *)irq10, (const void *)irq11,
+        (const void *)irq12, (const void *)irq13, (const void *)irq14,
+        (const void *)irq15,
+    };
+
+    for (int i = 0; i < IRQ_COUNT; i++) {
+        idt_set_gate(0x20 + i, (uint32_t)stubs[i],
+                     GDT_KERNEL_CODE, IDT_GATE_INT32);
+    }
+}
+
+void irq_register(int irq, irq_handler_t handler)
+{
+    if (irq < 0 || irq >= IRQ_COUNT || !handler)
+        return;
+
+    g_irq_handlers[irq] = handler;
+
+    /* Unmask on the active controller (PIC or I/O APIC). */
+    interrupt_enable_irq((uint8_t)irq);
+}
+
+void irq_dispatch(uint32_t irq, uint32_t cs)
+{
+    if (irq < IRQ_COUNT && g_irq_handlers[irq])
+        g_irq_handlers[irq](cs);
+
+    interrupt_eoi((uint8_t)irq);
 }

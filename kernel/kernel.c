@@ -15,6 +15,7 @@
 #include "driver/pci/pci.h"
 #include "driver/block/block.h"
 #include "driver/block/ide.h"
+#include "driver/block/ahci.h"
 #include "driver/block/part_mbr.h"
 #include "driver/pic.h"
 #include "driver/apic/interrupt.h"
@@ -46,6 +47,7 @@ void kernel_main(void)
     tss_init();
     idt_init();
     isr_init();
+    irq_init();   /* install IDT gates for IRQs 0-15 (vectors 32-47) */
     
     /* Initialize PIC early for boot (will be replaced by APIC later) */
     pic_init(0x20, 0x28);
@@ -117,12 +119,13 @@ void kernel_main(void)
     /* ------------------------------------------------------------------
      * Mount root filesystem
      * ------------------------------------------------------------------ */
-    /* Mount the root filesystem: the single merged disk is hda, so its
-     * first partition (hda1 = block device 4, partition 1) is the root.
-     * It holds /init, /bin and /boot (GRUB reads the kernel from /boot
-     * before this point). */
-    if (fs_mount(4, 1, "minix3", "/") != 0) {
-        printk("[KERNEL] Failed to mount root filesystem\n");
+    /* The merged boot+root disk (holding /init, /bin and /boot) is the
+     * first AHCI disk by default: sda1 = block device 12, partition 1.
+     * Systems without an AHCI controller fall back to the first IDE disk
+     * (hda1 = block device 4, partition 1). */
+    int root_dev = (ahci_disk_count() > 0) ? 12 : 4;
+    if (fs_mount(root_dev, 1, "minix3", "/") != 0) {
+        printk("[KERNEL] Failed to mount root filesystem (dev %d)\n", root_dev);
         sti();
         while (1);
     }
@@ -142,9 +145,17 @@ void kernel_main(void)
     sti();
     
     /* Kernel idle loop - the scheduler preempts us when a user task is
-     * runnable; otherwise we halt here (true idle task). */
+     * runnable; otherwise we halt here (true idle task).
+     *
+     * schedule() after hlt is essential for I/O latency: blocked tasks
+     * (e.g. an AHCI DMA read waiting in sleep_on) are woken by their
+     * completion IRQ while we sit in sti;hlt.  Without this, a woken
+     * task would stay READY until the PIT's periodic schedule() - which
+     * only fires every 10 ticks (100 ms) - turning every 512-byte sector
+     * read into a ~100 ms round trip. */
     for (;;) {
         sti();
         hlt();
+        schedule();
     }
 }

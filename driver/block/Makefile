@@ -3,7 +3,7 @@
 # ============================================================================
 
 # Source files
-SRCS = block.c ide.c cache.c part_mbr.c
+SRCS = block.c ide.c ahci.c cache.c part_mbr.c
 
 # Object files (in build directory)
 OBJS = $(addprefix $(BUILD_DIR)/, $(SRCS:.c=.o))

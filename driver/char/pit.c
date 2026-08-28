@@ -35,7 +35,7 @@ uint32_t pit_get_ticks(void)
 void pit_isr(uint32_t cs)
 {
     pit_ticks++;
-    interrupt_eoi(IRQ0);
+    /* EOI is handled by irq_dispatch() after the handler returns. */
 
     /* Mix timer-phase jitter into the entropy pool. */
     extern void random_add_entropy(uint32_t bits);
@@ -93,8 +93,6 @@ static int pit_write(int scnd_id, char c)
  * Initialisation – hardware + IRQ setup + driver registration + devfs node
  * ========================================================================= */
 
-extern void irq0(void);   /* defined in kernel/isr.s */
-
 void pit_init(uint32_t hz)
 {
     /* Calculate divisor, clamp to valid range [1, 65535] */
@@ -107,14 +105,13 @@ void pit_init(uint32_t hz)
     outb(PIT_CHANNEL0, (uint8_t)(divisor & 0xFF));
     outb(PIT_CHANNEL0, (uint8_t)(divisor >> 8));
 
-    /* Register IRQ0 handler in IDT (vector 32 = PIC master offset 0x20) */
-    idt_set_gate(32, (uint32_t)irq0, GDT_KERNEL_CODE, IDT_GATE_INT32);
+    /* Register IRQ0 handler through the generic IRQ dispatcher.
+     * irq_init() already installed the IDT gate (vector 32); this just
+     * records the handler and unmasks the IRQ on the active controller. */
+    irq_register(IRQ0, pit_isr);
 
     /* Initialize the timer wake-up queue used by nanosleep() */
     init_waitqueue_head(&timer_wq);
-
-    /* Enable IRQ0 (works with both PIC and APIC) */
-    interrupt_enable_irq(IRQ0);
 
     /* Register as char device 1 and add devfs node */
     char_ops_t ops = { .read = pit_read, .write = pit_write, .ioctl = NULL };

@@ -1,5 +1,6 @@
 #include "driver/block/ide.h"
 #include "driver/block/block.h"
+#include "driver/block/part_mbr.h"
 #include "driver/pci/pci.h"
 #include "fs/devfs.h"
 #include "kernel/asm.h"
@@ -118,7 +119,7 @@ static bool ide_identify(uint16_t base_port, uint16_t ctrl_port,
  * Sector-level I/O
  * ========================================================================= */
 
-int ide_read_sectors(uint8_t disk_id, uint32_t lba, uint8_t count, void *buffer)
+int ide_read_sectors(int disk_id, uint32_t lba, uint8_t count, void *buffer)
 {
     if (disk_id >= IDE_MAX_DISKS || !ide_disks[disk_id].exists)
         return -1;
@@ -164,7 +165,7 @@ int ide_read_sectors(uint8_t disk_id, uint32_t lba, uint8_t count, void *buffer)
     return 0;
 }
 
-int ide_write_sectors(uint8_t disk_id, uint32_t lba, uint8_t count,
+int ide_write_sectors(int disk_id, uint32_t lba, uint8_t count,
                       const void *buffer)
 {
     if (disk_id >= IDE_MAX_DISKS || !ide_disks[disk_id].exists)
@@ -396,5 +397,6 @@ void ide_init(void)
             printk("[IDE] Failed to register %s\n", names[i]);
         }
         devfs_register_device(names[i], DT_BLKDEV, i, 0);
+        mbr_register_disk(names[i], 0, i, ide_read_sectors, ide_write_sectors);
     }
 }

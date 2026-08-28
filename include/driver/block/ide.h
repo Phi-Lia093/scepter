@@ -91,7 +91,7 @@ void ide_init(void);
  * @param buffer Buffer to store read data (must be count * 512 bytes)
  * @return 0 on success, -1 on error
  */
-int ide_read_sectors(uint8_t disk_id, uint32_t lba, uint8_t count, void *buffer);
+int ide_read_sectors(int disk_id, uint32_t lba, uint8_t count, void *buffer);
 
 /**
  * Write sectors to an IDE disk using LBA28 addressing
@@ -102,7 +102,7 @@ int ide_read_sectors(uint8_t disk_id, uint32_t lba, uint8_t count, void *buffer)
  * @param buffer Buffer containing data to write (must be count * 512 bytes)
  * @return 0 on success, -1 on error
  */
-int ide_write_sectors(uint8_t disk_id, uint32_t lba, uint8_t count, const void *buffer);
+int ide_write_sectors(int disk_id, uint32_t lba, uint8_t count, const void *buffer);
 
 /**
  * Print information about detected IDE disks

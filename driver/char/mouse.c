@@ -126,10 +126,8 @@ void mouse_isr(uint32_t cs)
          * mid-packet (e.g. a dropped byte) — resynchronise. */
         if (!(byte & 0x08)) {
             mouse_state.packet_len = 0;
-            interrupt_eoi(IRQ_MOUSE);
             return;
         }
-        interrupt_eoi(IRQ_MOUSE);
         return;
     }
 
@@ -140,8 +138,6 @@ void mouse_isr(uint32_t cs)
         /* Wake blocked readers. */
         char_wakeup(CHAR_DEV_MOUSE);
     }
-
-    interrupt_eoi(IRQ_MOUSE);
 }
 
 /* -------------------------------------------------------------------------
@@ -182,8 +178,6 @@ static int mouse_ioctl(int prim_id, int scnd_id, unsigned int command,
  * Initialisation – 8042 aux enable + IRQ setup + registration
  * ------------------------------------------------------------------------- */
 
-extern void irq12(void);   /* defined in kernel/isr.s */
-
 void mouse_init(void)
 {
     mouse_state.read_pos   = 0;
@@ -212,9 +206,8 @@ void mouse_init(void)
     ps2_send_aux_cmd(AUX_CMD_SET_DEFAULTS);
     ps2_send_aux_cmd(AUX_CMD_ENABLE_REPORT);
 
-    idt_set_gate(32 + IRQ_MOUSE, (uint32_t)irq12, GDT_KERNEL_CODE,
-                 IDT_GATE_INT32);
-    interrupt_enable_irq(IRQ_MOUSE);
+    /* Register IRQ12 handler through the generic IRQ dispatcher. */
+    irq_register(IRQ_MOUSE, mouse_isr);
 
     char_ops_t ops = {
         .read  = mouse_read,

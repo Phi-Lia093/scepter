@@ -3,6 +3,13 @@
 
 #include <stdint.h>
 
+/* Number of legacy IRQ lines we support (ISA IRQs 0-15). */
+#define IRQ_COUNT 16
+
+/* IRQ handler: receives the interrupted CS so it can tell user mode
+ * (0x1B) from kernel mode (0x08) when it needs to. */
+typedef void (*irq_handler_t)(uint32_t cs);
+
 /* ============================================================================
  * Interrupt Controller Manager
  *
@@ -50,5 +57,42 @@ void interrupt_enable_irq(uint8_t irq);
  * @param irq IRQ number
  */
 void interrupt_disable_irq(uint8_t irq);
+
+/* ============================================================================
+ * Generic IRQ Dispatch
+ *
+ * All ISA IRQ stubs (irq0-irq15, kernel/isr.s) save the register frame and
+ * call irq_dispatch(irq, cs).  Drivers register their handler with
+ * irq_register() instead of installing their own IDT gate.
+ * ============================================================================ */
+
+/** IRQ stubs defined in kernel/isr.s (vector 0x20+irq in the IDT). */
+extern void irq0(void);   extern void irq1(void);   extern void irq2(void);
+extern void irq3(void);   extern void irq4(void);   extern void irq5(void);
+extern void irq6(void);   extern void irq7(void);   extern void irq8(void);
+extern void irq9(void);   extern void irq10(void);  extern void irq11(void);
+extern void irq12(void);  extern void irq13(void);  extern void irq14(void);
+extern void irq15(void);
+
+/**
+ * Install IDT gates for vectors 32-47 (IRQs 0-15).
+ * Called once during kernel startup (after isr_init()).
+ */
+void irq_init(void);
+
+/**
+ * Register an IRQ handler and enable the IRQ on the active controller.
+ * @param irq     IRQ number (0-15)
+ * @param handler Handler to call from irq_dispatch()
+ */
+void irq_register(int irq, irq_handler_t handler);
+
+/**
+ * Dispatch an IRQ to its registered handler and then send EOI.
+ * Called from the IRQ stubs in kernel/isr.s.
+ * @param irq IRQ number
+ * @param cs  Interrupted code segment (0x08 kernel, 0x1B user)
+ */
+void irq_dispatch(uint32_t irq, uint32_t cs);
 
 #endif /* INTERRUPT_H */

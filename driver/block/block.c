@@ -1,6 +1,7 @@
 #include "driver/block/block.h"
 #include "driver/block/cache.h"
 #include "driver/block/ide.h"
+#include "driver/block/ahci.h"
 #include "driver/block/part_mbr.h"
 #include "lib/string.h"
 #include "lib/printk.h"
@@ -151,6 +152,7 @@ int block_mmap(int prim_id, int scnd_id, uint32_t length, uint32_t *phys)
 void block_init(void)
 {
     ide_init();             /* detect, register, devfs: hda-hdd */
+    ahci_init();            /* detect SATA via PCI, register sda-sdd */
     mbr_init();             /* parse MBR, register partition devs */
     mbr_print_partitions(); /* print partition table summary      */
 }

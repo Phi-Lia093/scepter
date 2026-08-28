@@ -17,6 +17,9 @@
 #define MBR_PARTITION_COUNT     4
 #define MBR_BOOTSTRAP_SIZE      446
 
+/* Maximum disks tracked (4 IDE + 4 AHCI). */
+#define MBR_MAX_DISKS           8
+
 /* Partition Types (common ones) */
 #define PART_TYPE_EMPTY         0x00
 #define PART_TYPE_FAT16_LBA     0x0E
@@ -26,6 +29,32 @@
 #define PART_TYPE_LINUX         0x83
 #define PART_TYPE_LINUX_SWAP    0x82
 #define PART_TYPE_EXTENDED      0x05
+
+/* =========================================================================
+ * Disk registration
+ *
+ * Block drivers (IDE, AHCI) register every raw disk with mbr_register_disk()
+ * so the MBR scanner can parse partitions on any of them.  Partition block
+ * devices are numbered base_prim + 4 + disk_idx (e.g. IDE partitions 4-7,
+ * AHCI partitions 12-15); the underlying raw disk is base_prim + disk_idx.
+ * ========================================================================= */
+
+/* Sector-level I/O callbacks implemented by the disk driver. */
+typedef int (*disk_read_fn)(int disk_idx, uint32_t lba, uint8_t count,
+                            void *buffer);
+typedef int (*disk_write_fn)(int disk_idx, uint32_t lba, uint8_t count,
+                             const void *buffer);
+
+/**
+ * Register a raw disk for MBR scanning.
+ * @param name       Device name, e.g. "hda" or "sda" (no partitions suffix)
+ * @param base_prim  First prim_id of the disk family (0 = IDE, 8 = AHCI)
+ * @param disk_idx   Index within the family (0-3)
+ * @param read       Sector read function
+ * @param write      Sector write function
+ */
+void mbr_register_disk(const char *name, int base_prim, int disk_idx,
+                       disk_read_fn read, disk_write_fn write);
 
 /* =========================================================================
  * MBR Structures

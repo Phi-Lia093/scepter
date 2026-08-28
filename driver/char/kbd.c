@@ -113,31 +113,25 @@ void kbd_isr(uint32_t cs)
 
     if (scancode == SC_LSHIFT || scancode == SC_RSHIFT) {
         kbd_state.shift_pressed = 1;
-        interrupt_eoi(IRQ1);
         return;
     }
     if (scancode == SC_LSHIFT_REL || scancode == SC_RSHIFT_REL) {
         kbd_state.shift_pressed = 0;
-        interrupt_eoi(IRQ1);
         return;
     }
     if (scancode == SC_CAPSLOCK) {
         kbd_state.caps_lock = !kbd_state.caps_lock;
-        interrupt_eoi(IRQ1);
         return;
     }
     if (scancode == SC_LCTRL) {
         kbd_state.ctrl_pressed = 1;
-        interrupt_eoi(IRQ1);
         return;
     }
     if (scancode == SC_LCTRL_REL) {
         kbd_state.ctrl_pressed = 0;
-        interrupt_eoi(IRQ1);
         return;
     }
     if (scancode & 0x80) {   /* break code – ignore */
-        interrupt_eoi(IRQ1);
         return;
     }
 
@@ -170,7 +164,6 @@ void kbd_isr(uint32_t cs)
          * (or the pending signal -> char_read_block returns -EINTR). */
         char_wakeup(3);
     }
-    interrupt_eoi(IRQ1);
 }
 
 /* =========================================================================
@@ -205,8 +198,6 @@ static int kbd_ioctl(int prim_id, int scnd_id, unsigned int command, uint32_t ar
  * Initialisation – IRQ setup + driver registration + devfs node
  * ========================================================================= */
 
-extern void irq1(void);   /* defined in kernel/isr.s */
-
 void kbd_init(void)
 {
     kbd_state.read_pos      = 0;
@@ -215,8 +206,8 @@ void kbd_init(void)
     kbd_state.shift_pressed = 0;
     kbd_state.caps_lock     = 0;
 
-    idt_set_gate(33, (uint32_t)irq1, GDT_KERNEL_CODE, IDT_GATE_INT32);
-    interrupt_enable_irq(IRQ1);
+    /* Register IRQ1 handler through the generic IRQ dispatcher. */
+    irq_register(IRQ1, kbd_isr);
 
     char_ops_t ops = { .read = kbd_read, .write = kbd_write, .poll = kbd_poll, .ioctl = kbd_ioctl };
     register_char_device(3, &ops);

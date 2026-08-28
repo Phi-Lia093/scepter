@@ -54,9 +54,15 @@ ISR_NOERR 31
 
 /* -------------------------------------------------------------------------
  * IRQ stubs
+ *
+ * Every IRQ (0-15) shares one stub that saves the full register frame and
+ * calls the C dispatcher irq_dispatch(irq, cs).  The dispatcher looks the
+ * IRQ up in a handler table (see driver/apic/interrupt.c) and EOIs the
+ * active interrupt controller afterwards, so drivers must NOT send their
+ * own EOI.
  * ------------------------------------------------------------------------- */
 
-.macro IRQ_STUB num, handler
+.macro IRQ_STUB num
 .global irq\num
 irq\num:
     cli
@@ -72,14 +78,16 @@ irq\num:
     movw  %ax, %es
     movw  %ax, %fs
     movw  %ax, %gs
-    /* Push the interrupted CS (saved by the CPU in the iret frame) as
-     * the single argument to the C handler, so it can tell user mode
-     * (0x1B) from kernel mode (0x08).  Layout here (top of stack):
-     *   [esp+0]=cr3 [esp+4..16]=gs fs es ds [esp+20..48]=pusha regs
-     *   [esp+52]=eip [esp+56]=cs [esp+60]=eflags [esp+64..]=user esp/ss */
-    pushl 56(%esp)
-    call  \handler
-    addl  $4, %esp          /* pop the CS argument */
+    /* irq_dispatch(irq, cs): push the arguments right-to-left (cs first,
+     * then the IRQ number).  Layout at this point (top of stack):
+     *   [esp+0]=cr3 [esp+4..16]=gs fs es ds [esp+20..51]=pusha regs
+     *   [esp+52]=eip [esp+56]=cs [esp+60]=eflags [esp+64..]=user esp/ss
+     * so the interrupted CS is at [esp+56].  After both pushes the callee
+     * sees irq at [esp+4] and cs at [esp+8]. */
+    pushl 56(%esp)          /* interrupted CS (arg2) */
+    pushl $\num             /* IRQ number (arg1)     */
+    call  irq_dispatch
+    addl  $8, %esp          /* pop the two arguments */
 
     popl  %eax
     movl  %eax, %cr3
@@ -91,9 +99,22 @@ irq\num:
     iret
 .endm
 
-IRQ_STUB 0, pit_isr
-IRQ_STUB 1, kbd_isr
-IRQ_STUB 12, mouse_isr
+IRQ_STUB 0
+IRQ_STUB 1
+IRQ_STUB 2
+IRQ_STUB 3
+IRQ_STUB 4
+IRQ_STUB 5
+IRQ_STUB 6
+IRQ_STUB 7
+IRQ_STUB 8
+IRQ_STUB 9
+IRQ_STUB 10
+IRQ_STUB 11
+IRQ_STUB 12
+IRQ_STUB 13
+IRQ_STUB 14
+IRQ_STUB 15
 
 /* -------------------------------------------------------------------------
  * Syscall stub (int 0x80)

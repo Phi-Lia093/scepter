@@ -563,6 +563,97 @@ Notes:
   - Bounds checking prevents reading/writing beyond partition limits
   - Registered as /dev/hdaX, /dev/hdbX in devfs (X = partition number)
 
+--------------------------------------------------------------------------------
+Devices 8-11: SATA Hard Disks (sda, sdb, sdc, sdd)
+--------------------------------------------------------------------------------
+Type: Block Device
+File: driver/block/ahci.c
+Header: include/driver/block/ahci.h
+Registration: ahci_init()
+
+Description:
+  SATA disk driver using the AHCI (Advanced Host Controller Interface)
+  specification. Supports up to 4 disks on any implemented HBA ports.
+  Transfers use bus-mastering DMA through the HBA's Physical Region
+  Descriptor Table; command completion is signalled by interrupts and
+  delivered through the generic IRQ dispatch (irq_register()).
+
+  **DYNAMIC DISCOVERY** via PCI:
+  1. Scans PCI bus for SATA controllers (class 0x01, subclass 0x06, prog_if 0x01)
+  2. Enables memory space + bus mastering
+  3. Maps the ABAR (BAR5, or BAR4:BAR5 for 64-bit BARs) with ioremap()
+  4. Resets the HBA, enters AHCI mode (GHC.AE), probes implemented ports
+  5. Waits for PHY online (PxSSTS.DET==3), checks signature (PxSIG==0x101)
+  6. Issues IDENTIFY via DMA (polled at boot), reads model + LBA28/LBA48 size
+
+Device Mapping:
+  8  = sda (first detected port)
+  9  = sdb
+  10 = sdc
+  11 = sdd
+
+Operations:
+  read(prim_id, scnd_id, buf, offset, count)
+    - Reads block(s) using READ DMA (EXT) with interrupt completion
+    - Parameters:
+        prim_id: Disk ID (8-11)
+        scnd_id: 0 (unused for raw disk access)
+        buf: Buffer to read into (count * 512 bytes)
+        offset: Starting LBA sector number (0-based, absolute on disk)
+        count: Number of blocks (sectors) to read (1-256)
+    - Return: Bytes read (count * 512) on success, -1 on error
+    - Example: read(8, 0, buf, 0, 1) reads sector 0 (the MBR) of sda
+
+  write(prim_id, scnd_id, buf, offset, count)
+    - Writes block(s) using WRITE DMA (EXT) with interrupt completion
+    - Return: Bytes written (count * 512) on success, -1 on error
+
+  ioctl(prim_id, scnd_id, command)
+    - NOT IMPLEMENTED (returns -1)
+
+Implementation Details:
+  - One DMA command per port at a time (command slot 0)
+  - Per-port physically-contiguous bounce buffer (128 KB = 256 sectors)
+  - Single PRD entry per command; PRDT lives at command-table offset 0x80
+  - Runtime commands: PxIE mask → clear status → issue → unmask → sleep_on()
+    on the port wait queue; the ISR (ahci_isr) wakes the waiter once the
+    HBA clears PxCI (spurious interrupts cannot complete a command early)
+  - Boot-time IDENTIFY polls PxCI/PxIS (interrupts are globally disabled)
+  - Uses READ/WRITE DMA EXT (LBA48) when the device supports it, else
+    READ/WRITE DMA (LBA28)
+  - Falls back to polling if the controller's IRQ is unusable
+  - irq_save()/irq_restore() around submit+wait keeps the sleep_on()
+    protocol atomic with respect to IRQ wakeups
+
+Notes:
+  - **DYNAMIC DISCOVERY** - PCI scan for SATA/AHCI controllers
+  - The system boots and runs in AHCI mode: `make root` creates the single
+    AHCI disk image and `make run` attaches it to an ICH9 AHCI controller,
+    mounting the root filesystem from sda1 (block device 12).  On machines
+    without an AHCI controller the kernel falls back to booting the IDE root
+    disk (hda1 = block device 4).
+  - Registered as /dev/sda, /dev/sdb, /dev/sdc, /dev/sdd in devfs
+  - MSI/MSI-X and NCQ are not implemented (PCI INTx + one command/port)
+
+--------------------------------------------------------------------------------
+Devices 12-15: SATA Partition Devices (sdaX, sdbX, sdcX, sddX)
+--------------------------------------------------------------------------------
+Type: Block Device
+File: driver/block/part_mbr.c
+Registration: mbr_init() (via mbr_register_disk())
+
+Description:
+  SATA partitions are handled by the same MBR parser as IDE disks.  AHCI
+  registers each raw disk with mbr_register_disk() and partitions appear as
+  block devices 12-15 (sdaX-sddX); the underlying raw disk is prim_id - 4
+  (i.e. 8-11).  All partition I/O chains through the AHCI DMA path.
+
+Device Mapping:
+  12 = sdaX (sda partitions 1-4)
+  13 = sdbX
+  14 = sdcX
+  15 = sddX
+
 ================================================================================
 INFRASTRUCTURE DRIVERS
 ================================================================================
