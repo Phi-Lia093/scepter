@@ -56,6 +56,45 @@ int main(int argc, char *argv[], char *envp[])
 
     printf("Scepter OS - init running\n");
 
+    /* ---- /etc: hostname + optional boot script ------------------------
+     * Create /etc on the (minix) root filesystem, seed a default
+     * /etc/hostname, apply it to the kernel, and run /etc/rc if present. */
+    mkdir("/etc", 0755);
+
+    int hfd = open("/etc/hostname", O_RDONLY);
+    if (hfd < 0) {
+        hfd = open("/etc/hostname", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        if (hfd >= 0) {
+            write(hfd, "scepter\n", 8);
+            close(hfd);
+        }
+        sethostname("scepter", 7);
+    } else {
+        char hnbuf[64];
+        int n = 0;
+        char c;
+        while (n < 63 && read(hfd, &c, 1) == 1) {
+            if (c == '\n' || c == '\r')
+                break;
+            hnbuf[n++] = c;
+        }
+        hnbuf[n] = '\0';
+        close(hfd);
+        if (n > 0)
+            sethostname(hnbuf, (size_t)n);
+    }
+
+    if (access("/etc/rc", F_OK) == 0) {
+        pid_t rcpid = fork();
+        if (rcpid == 0) {
+            char *rc_argv[] = { "sh", "/etc/rc", NULL };
+            execve("/bin/sh", rc_argv, envp);
+            _exit(127);
+        }
+        int rcstatus;
+        waitpid(rcpid, &rcstatus, 0);
+    }
+
     for (;;) {
         pid_t pid = fork();
         if (pid < 0) {

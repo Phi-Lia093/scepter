@@ -4,11 +4,15 @@
  * Features:
  *   - prompt with the current directory
  *   - line editing (echo, backspace, Ctrl-C aborts the line, Ctrl-D exits)
+ *   - command history (Up/Down arrows)
  *   - tokenizer honouring single/double quotes and backslash escapes
- *   - command separation with ';', pipelines with '|'
+ *   - command separation with ';', pipelines with '|', conditionals
+ *     '&&' and '||', background jobs with '&'
  *   - redirection '<', '>', '>>'
- *   - background jobs with '&' (reaped at the next prompt with WNOHANG)
- *   - builtins: cd, pwd, echo, exit, clear, help, export, unset
+ *   - glob expansion (*, ?) for unquoted words
+ *   - $? last-exit-status expansion
+ *   - builtins: cd, pwd, echo, exit, clear, help, export, unset, test/[,
+ *     printf, type, command, umask, source/., jobs, fg, bg
  *   - external commands resolved through $PATH, fork+execve+wait
  * ============================================================================ */
 
@@ -21,12 +25,14 @@
 #include "sys/wait.h"
 #include "sys/stat.h"
 #include "termios.h"
+#include "dirent.h"
 
 #define MAX_LINE   512
 #define MAX_WORDS  96
 #define MAX_ARGS   32
 #define MAX_STAGES 16
 #define MAX_JOBS   16
+#define HIST_MAX   50
 
 /* ============================================================================
  * Background job table
@@ -56,6 +62,45 @@ static void reap_jobs(void)
         }
     }
 }
+
+/* ============================================================================
+ * Command history
+ * ============================================================================ */
+
+static char history[HIST_MAX][MAX_LINE];
+static int  hist_count = 0;    /* number of entries stored */
+static int  hist_cursor = 0;   /* current position for up/down recall */
+
+static void history_add(const char *line)
+{
+    if (line[0] == '\0')
+        return;
+    /* don't store an exact duplicate of the previous entry */
+    if (hist_count > 0 && strcmp(history[hist_count - 1], line) == 0)
+        return;
+    if (hist_count < HIST_MAX) {
+        strncpy(history[hist_count], line, MAX_LINE - 1);
+        history[hist_count][MAX_LINE - 1] = '\0';
+        hist_count++;
+    } else {
+        /* shift down */
+        for (int i = 1; i < HIST_MAX; i++)
+            strcpy(history[i - 1], history[i]);
+        strncpy(history[HIST_MAX - 1], line, MAX_LINE - 1);
+        history[HIST_MAX - 1][MAX_LINE - 1] = '\0';
+    }
+    hist_cursor = hist_count;
+}
+
+/* ============================================================================
+ * Last exit status ($?)
+ * ============================================================================ */
+
+static int last_status = 0;
+
+/* Forward declarations (defined below). */
+static void run_line(char *line);
+static int find_in_path(const char *name, char *out, int size);
 
 /* ============================================================================
  * Line editor
@@ -114,6 +159,7 @@ static int read_line(char *buf, int size)
         if (c == '\n' || c == '\r') {
             buf[len] = '\0';
             write(STDOUT_FILENO, "\n", 1);
+            history_add(buf);
             return len;
         }
         if (c == '\b' || c == 0x7f) {
@@ -130,6 +176,50 @@ static int read_line(char *buf, int size)
         if (c == 0x04) {              /* Ctrl-D */
             if (len == 0)
                 return -1;
+            continue;
+        }
+        if (c == 0x1b) {              /* ESC: arrow keys */
+            char seq[2];
+            if (read(STDIN_FILENO, &seq[0], 1) != 1)
+                continue;
+            if (seq[0] != '[') {
+                /* lone ESC: ignore */
+                continue;
+            }
+            if (read(STDIN_FILENO, &seq[1], 1) != 1)
+                continue;
+
+            /* erase the current edit line on screen */
+            for (int i = 0; i < len; i++)
+                write(STDOUT_FILENO, "\b \b", 3);
+
+            if (seq[1] == 'A') {      /* Up */
+                if (hist_cursor > 0)
+                    hist_cursor--;
+                else
+                    hist_cursor = 0;
+            } else if (seq[1] == 'B') { /* Down */
+                if (hist_cursor < hist_count)
+                    hist_cursor++;
+            } else {
+                /* left/right: unsupported; restore the edit line */
+                for (int i = 0; i < len; i++)
+                    write(STDOUT_FILENO, &buf[i], 1);
+                continue;
+            }
+
+            if (hist_cursor < hist_count) {
+                len = (int)strlen(history[hist_cursor]);
+                if (len > size - 1)
+                    len = size - 1;
+                strncpy(buf, history[hist_cursor], (size_t)len);
+                buf[len] = '\0';
+                write(STDOUT_FILENO, buf, (size_t)len);
+            } else {
+                /* past the newest entry: empty line */
+                len = 0;
+                buf[0] = '\0';
+            }
             continue;
         }
         if (c >= 32 && c < 127 && len < size - 1) {
@@ -288,12 +378,20 @@ static int find_in_path(const char *name, char *out, int size)
  * Builtins
  * ============================================================================ */
 
+static int run_simple(command_t *c);   /* defined below */
+static int run_script_file(const char *path);   /* defined below */
+
 static int is_builtin(const char *cmd)
 {
     return strcmp(cmd, "cd") == 0 || strcmp(cmd, "pwd") == 0 ||
            strcmp(cmd, "echo") == 0 || strcmp(cmd, "exit") == 0 ||
            strcmp(cmd, "clear") == 0 || strcmp(cmd, "help") == 0 ||
-           strcmp(cmd, "export") == 0 || strcmp(cmd, "unset") == 0;
+           strcmp(cmd, "export") == 0 || strcmp(cmd, "unset") == 0 ||
+           strcmp(cmd, "type") == 0 || strcmp(cmd, "command") == 0 ||
+           strcmp(cmd, "umask") == 0 || strcmp(cmd, "source") == 0 ||
+           strcmp(cmd, ".") == 0 || strcmp(cmd, "jobs") == 0 ||
+           strcmp(cmd, "fg") == 0 || strcmp(cmd, "bg") == 0 ||
+           strcmp(cmd, "exec") == 0 || strcmp(cmd, "history") == 0;
 }
 
 static int do_builtin(command_t *c)
@@ -342,11 +440,15 @@ static int do_builtin(command_t *c)
 
     if (strcmp(cmd, "help") == 0) {
         printf("builtins: cd pwd echo exit clear help export unset\n");
+        printf("          type command umask source . jobs fg bg exec history\n");
         printf("syntax:   cmd | cmd    (pipe)\n");
         printf("          cmd < f      (input redirection)\n");
         printf("          cmd > f, >> f (output redirection)\n");
         printf("          cmd &        (background)\n");
         printf("          cmd ; cmd    (sequential)\n");
+        printf("          cmd && cmd   (run if success)\n");
+        printf("          cmd || cmd   (run if failure)\n");
+        printf("          * and ? glob, $? last status, Up/Down history\n");
         return 0;
     }
 
@@ -366,7 +468,157 @@ static int do_builtin(command_t *c)
         return 0;
     }
 
+    if (strcmp(cmd, "umask") == 0) {
+        if (c->argv[1]) {
+            mode_t m = (mode_t)strtol(c->argv[1], NULL, 8);
+            umask(m);
+        } else {
+            mode_t old = umask(0);
+            umask(old);
+            printf("%04o\n", old);
+        }
+        return 0;
+    }
+
+    if (strcmp(cmd, "type") == 0) {
+        if (!c->argv[1]) {
+            fprintf(stderr, "type: usage: type NAME...\n");
+            return 2;
+        }
+        for (int i = 1; c->argv[i]; i++) {
+            if (is_builtin(c->argv[i])) {
+                printf("%s is a shell builtin\n", c->argv[i]);
+            } else {
+                char path[256];
+                if (find_in_path(c->argv[i], path, sizeof(path)))
+                    printf("%s is %s\n", c->argv[i], path);
+                else
+                    printf("type: %s: not found\n", c->argv[i]);
+            }
+        }
+        return 0;
+    }
+
+    if (strcmp(cmd, "command") == 0) {
+        if (!c->argv[1]) {
+            fprintf(stderr, "command: usage: command [-v] CMD [ARG...]\n");
+            return 2;
+        }
+        if (strcmp(c->argv[1], "-v") == 0 && c->argv[2]) {
+            char path[256];
+            if (find_in_path(c->argv[2], path, sizeof(path)))
+                printf("%s\n", path);
+            else
+                fprintf(stderr, "command: %s: not found\n", c->argv[2]);
+            return 0;
+        }
+        /* shift argv: run the remaining command (builtin or external) */
+        for (int i = 1; c->argv[i]; i++)
+            c->argv[i - 1] = c->argv[i];
+        return run_simple(c);
+    }
+
+    if (strcmp(cmd, "source") == 0 || strcmp(cmd, ".") == 0) {
+        if (!c->argv[1]) {
+            fprintf(stderr, "%s: usage: %s FILE\n", cmd, cmd);
+            return 2;
+        }
+        return run_script_file(c->argv[1]);
+    }
+
+    if (strcmp(cmd, "jobs") == 0) {
+        int any = 0;
+        for (int i = 0; i < MAX_JOBS; i++) {
+            if (jobs[i]) {
+                printf("[%d] %d\n", i + 1, jobs[i]);
+                any = 1;
+            }
+        }
+        if (!any)
+            printf("no jobs\n");
+        return 0;
+    }
+
+    if (strcmp(cmd, "fg") == 0) {
+        /* Wait for a background job.  No stop/continue support in the
+         * kernel, so fg simply waits for the job to finish. */
+        pid_t p = 0;
+        if (c->argv[1]) {
+            if (c->argv[1][0] == '%')
+                p = jobs[atoi(c->argv[1] + 1) - 1];
+            else
+                p = (pid_t)atoi(c->argv[1]);
+        }
+        if (!p) {
+            for (int i = 0; i < MAX_JOBS; i++)
+                if (jobs[i]) { p = jobs[i]; break; }
+        }
+        if (!p) {
+            fprintf(stderr, "fg: no current job\n");
+            return 1;
+        }
+        for (int i = 0; i < MAX_JOBS; i++)
+            if (jobs[i] == p) jobs[i] = 0;
+        int st;
+        waitpid(p, &st, 0);
+        return WIFEXITED(st) ? WEXITSTATUS(st) : 1;
+    }
+
+    if (strcmp(cmd, "bg") == 0) {
+        /* No job control (no stop/continue) - the job already runs. */
+        if (c->argv[1])
+            printf("bg: %s (already running; no stop/continue support)\n",
+                   c->argv[1]);
+        else
+            printf("bg: no job control in this shell\n");
+        return 0;
+    }
+
+    if (strcmp(cmd, "exec") == 0) {
+        if (!c->argv[1]) {
+            fprintf(stderr, "exec: usage: exec CMD [ARG...]\n");
+            return 2;
+        }
+        char path[256];
+        if (!find_in_path(c->argv[1], path, sizeof(path))) {
+            fprintf(stderr, "exec: %s: command not found\n", c->argv[1]);
+            return 127;
+        }
+        execve(path, &c->argv[1], environ);
+        fprintf(stderr, "exec: %s: exec failed\n", c->argv[1]);
+        return 126;
+    }
+
+    if (strcmp(cmd, "history") == 0) {
+        for (int i = 0; i < hist_count; i++)
+            printf("%4d  %s\n", i + 1, history[i]);
+        return 0;
+    }
+
     return 1;
+}
+
+/* Execute a shell script from a file (used by 'source'/'.' and by
+ * 'sh FILE' invocation).  Returns the last command's exit status. */
+static int run_script_file(const char *path)
+{
+    int fd = open(path, O_RDONLY);
+    if (fd < 0) {
+        fprintf(stderr, "sh: %s: no such file\n", path);
+        return 1;
+    }
+    char *line = NULL;
+    size_t cap = 0;
+    while (getline(&line, &cap, fd) > 0) {
+        size_t len = strlen(line);
+        while (len && (line[len - 1] == '\n' || line[len - 1] == '\r'))
+            line[--len] = '\0';
+        if (line[0] != '\0' && line[0] != '#')
+            run_line(line);
+    }
+    free(line);
+    close(fd);
+    return last_status;
 }
 
 /* ============================================================================
@@ -445,9 +697,12 @@ static int run_simple(command_t *c)
     waitpid(pid, &status, 0);
     ioctl(STDOUT_FILENO, IOCTL_TTY_SET_FG, 0);
 
-    if (WIFSIGNALED(status) && WTERMSIG(status) != 0)
-        fprintf(stderr, "sh: %s: terminated by signal %d\n", c->argv[0], WTERMSIG(status));
-    return status;
+    if (WIFSIGNALED(status) && WTERMSIG(status) != 0) {
+        fprintf(stderr, "sh: %s: terminated by signal %d\n",
+                c->argv[0], WTERMSIG(status));
+        return 128 + WTERMSIG(status);
+    }
+    return WIFEXITED(status) ? WEXITSTATUS(status) : 1;
 }
 
 /* ============================================================================
@@ -523,7 +778,9 @@ static int run_pipeline(command_t *cmds, int n)
             if (i == n - 1) status = st;
         }
         ioctl(STDOUT_FILENO, IOCTL_TTY_SET_FG, 0);
-        return status;
+        if (WIFSIGNALED(status) && WTERMSIG(status) != 0)
+            return 128 + WTERMSIG(status);
+        return WIFEXITED(status) ? WEXITSTATUS(status) : 1;
     }
 
     printf("[%d]\n", pids[n - 1]);
@@ -535,18 +792,119 @@ static int run_pipeline(command_t *cmds, int n)
  * Execute one ';'-separated segment.
  * ============================================================================ */
 
-/* Find the next unquoted "&&" in the string (quote-aware). */
-static char *find_double_amp(char *p)
+/* Find the next unquoted "&&" or "||" in the string (quote-aware).
+ * Returns the operator ("&&" or "||") or NULL. */
+static const char *find_conditional(char *p, char **out_op_pos)
 {
     int quote = 0;
     for (; *p; p++) {
         if (*p == '\'' && quote != 2)       quote = quote ? 0 : 1;
         else if (*p == '"' && quote != 1)    quote = quote ? 0 : 2;
         else if (*p == '\\' && quote != 1) { p++; }
-        else if (quote == 0 && p[0] == '&' && p[1] == '&')
-            return p;
+        else if (quote == 0 && p[0] == '&' && p[1] == '&') {
+            *out_op_pos = p;
+            return "&&";
+        } else if (quote == 0 && p[0] == '|' && p[1] == '|') {
+            *out_op_pos = p;
+            return "||";
+        }
     }
     return NULL;
+}
+
+/* Simple glob matcher: '*' matches any sequence, '?' any single char. */
+static int glob_match(const char *pat, const char *s)
+{
+    if (!*pat)
+        return *s == '\0';
+    if (*pat == '*')
+        return glob_match(pat + 1, s) || (*s && glob_match(pat, s + 1));
+    if (*pat == '?')
+        return *s && glob_match(pat + 1, s + 1);
+    return *s == *pat && glob_match(pat + 1, s + 1);
+}
+
+/* Expand one word: $? substitution and * / ? globbing against the cwd.
+ * Fills out[] with 0 or more strings (malloc'd; caller frees). */
+static int expand_word(const char *word, char *out[], int max)
+{
+    if (strstr(word, "$?")) {
+        char tmp[512];
+        char *d = tmp;
+        for (const char *p = word; *p && d < tmp + sizeof(tmp) - 16; ) {
+            if (p[0] == '$' && p[1] == '?') {
+                int n = snprintf(d, 16, "%d", last_status);
+                d += n;
+                p += 2;
+            } else {
+                *d++ = *p++;
+            }
+        }
+        *d = '\0';
+        out[0] = strdup(tmp);
+        return 1;
+    }
+
+    if (!strchr(word, '*') && !strchr(word, '?')) {
+        out[0] = strdup(word);
+        return 1;
+    }
+
+    /* glob: match against entries of the directory part of the word */
+    char dirbuf[256], namebuf[128];
+    const char *slash = strrchr(word, '/');
+    if (slash) {
+        size_t dlen = (size_t)(slash - word);
+        if (dlen == 0) {
+            strcpy(dirbuf, "/");
+        } else {
+            memcpy(dirbuf, word, dlen);
+            dirbuf[dlen] = '\0';
+        }
+        snprintf(namebuf, sizeof(namebuf), "%s", slash + 1);
+    } else {
+        strcpy(dirbuf, ".");
+        snprintf(namebuf, sizeof(namebuf), "%s", word);
+    }
+
+    DIR *d = opendir(dirbuf);
+    if (!d) {
+        out[0] = strdup(word);
+        return 1;
+    }
+
+    int count = 0;
+    struct dirent *e;
+    while ((e = readdir(d)) && count < max) {
+        if (e->d_name[0] == '.' && namebuf[0] != '.')
+            continue;   /* don't match hidden files unless pattern is hidden */
+        if (glob_match(namebuf, e->d_name)) {
+            char full[512];
+            if (strcmp(dirbuf, ".") == 0)
+                snprintf(full, sizeof(full), "%s", e->d_name);
+            else if (strcmp(dirbuf, "/") == 0)
+                snprintf(full, sizeof(full), "/%s", e->d_name);
+            else
+                snprintf(full, sizeof(full), "%s/%s", dirbuf, e->d_name);
+            out[count++] = strdup(full);
+        }
+    }
+    closedir(d);
+
+    if (count == 0) {
+        out[0] = strdup(word);   /* no match: keep literal */
+        return 1;
+    }
+
+    /* simple sort (bubble) of matches */
+    for (int i = 0; i < count - 1; i++)
+        for (int j = i + 1; j < count; j++)
+            if (strcmp(out[i], out[j]) > 0) {
+                char *t = out[i];
+                out[i] = out[j];
+                out[j] = t;
+            }
+    return count;
 }
 
 /* Run a single command (simple or pipeline). Returns the exit status. */
@@ -557,8 +915,24 @@ static int run_subsegment(char *seg)
     if (n == 0)
         return 0;
 
+    /* Word expansion: $? and globbing.  Redirection operators (<, >, >>)
+     * are copied through verbatim (they are never expanded); only real
+     * operands get $?/glob treatment. */
+    char *ewords[MAX_WORDS * 2];
+    int en = 0;
+    for (int i = 0; i < n && en < MAX_WORDS * 2 - 1; i++) {
+        if (strchr(words[i], '<') || strchr(words[i], '>')) {
+            ewords[en++] = strdup(words[i]);   /* keep redirection op */
+            continue;
+        }
+        int k = expand_word(words[i], &ewords[en], MAX_WORDS * 2 - en - 1);
+        en += k;
+    }
+
     command_t cmds[MAX_STAGES];
-    int ns = build_commands(words, n, cmds, MAX_STAGES);
+    int ns = build_commands(ewords, en, cmds, MAX_STAGES);
+    for (int i = 0; i < en; i++)
+        free(ewords[i]);
     if (ns <= 0)
         return 127;
 
@@ -567,18 +941,27 @@ static int run_subsegment(char *seg)
     return run_pipeline(cmds, ns);
 }
 
-/* Execute a ';'-segment, honouring '&&' short-circuiting. */
+/* Execute a ';'-segment, honouring '&&' and '||' short-circuiting. */
 static int run_segment(char *seg)
 {
     int status = 0;
+    int run_next = 1;   /* run the first subsegment */
     char *p = seg;
     while (p) {
-        char *amp = find_double_amp(p);
-        if (amp) *amp = '\0';
-        if (status == 0)
+        char *op_pos = NULL;
+        const char *op = find_conditional(p, &op_pos);
+        if (op_pos) *op_pos = '\0';
+
+        if (run_next)
             status = run_subsegment(p);
-        if (!amp) break;
-        p = amp + 2;
+
+        if (!op) break;
+        /* determine whether to run the next subsegment */
+        if (strcmp(op, "&&") == 0)
+            run_next = (status == 0);
+        else /* || */
+            run_next = (status != 0);
+        p = op_pos + 2;
     }
     return status;
 }
@@ -589,7 +972,7 @@ static void run_line(char *line)
     while (p) {
         char *semi = strchr(p, ';');
         if (semi) *semi = '\0';
-        run_segment(p);
+        last_status = run_segment(p);
         if (!semi) break;
         p = semi + 1;
     }
@@ -605,7 +988,31 @@ int main(int argc, char *argv[], char *envp[])
     (void)argv;
     (void)envp;
 
-    printf("\nScepter OS - /bin/sh (type 'help' for builtins)\n");
+    /* Sensible environment defaults. */
+    if (!getenv("PATH"))
+        setenv("PATH", "/bin", 0);
+    if (!getenv("HOME"))
+        setenv("HOME", "/", 0);
+    if (!getenv("SHELL"))
+        setenv("SHELL", "/bin/sh", 0);
+
+    /* Print /etc/motd if present. */
+    int motd = open("/etc/motd", O_RDONLY);
+    if (motd >= 0) {
+        char buf[512];
+        long r;
+        while ((r = read(motd, buf, sizeof(buf))) > 0)
+            write(STDOUT_FILENO, buf, (size_t)r);
+        close(motd);
+    } else {
+        printf("\nScepter OS - /bin/sh (type 'help' for builtins)\n");
+    }
+
+    /* Non-interactive mode: sh SCRIPT [ARG...] */
+    if (argc > 1) {
+        setenv("0", argv[1], 1);
+        return run_script_file(argv[1]);
+    }
 
     for (;;) {
         char cwd[256];

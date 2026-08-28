@@ -4,6 +4,8 @@
 #include <string.h>
 #include <unistd.h>
 
+static int count_lines = 1, count_words = 1, count_bytes = 1;
+
 static void wc_file(const char *name, unsigned long *lines_out,
                     unsigned long *words_out, unsigned long *bytes_out,
                     int *ok)
@@ -40,8 +42,15 @@ static void wc_file(const char *name, unsigned long *lines_out,
     *words_out += words;
     *bytes_out += bytes;
 
-    printf("%7lu %7lu %7lu %s\n", lines, words, bytes,
-           name ? name : "");
+    if (count_lines && count_words && count_bytes)
+        printf("%7lu %7lu %7lu %s\n", lines, words, bytes,
+               name ? name : "");
+    else {
+        if (count_lines) printf("%7lu ", lines);
+        if (count_words) printf("%7lu ", words);
+        if (count_bytes) printf("%7lu ", bytes);
+        printf("%s\n", name ? name : "");
+    }
 }
 
 int main(int argc, char *argv[])
@@ -49,13 +58,31 @@ int main(int argc, char *argv[])
     unsigned long tl = 0, tw = 0, tb = 0;
     int ok = 1;
 
-    if (argc == 1) {
-        wc_file(NULL, &tl, &tw, &tb, &ok);
-        printf("%7lu %7lu %7lu\n", tl, tw, tb);
+    /* Parse flags: -l -w -c (and combinations like -lw) */
+    int a = 1;
+    while (a < argc && argv[a][0] == '-') {
+        const char *f = argv[a] + 1;
+        if (*f == '\0')
+            break;
+        count_lines = count_words = count_bytes = 0;
+        for (; *f; f++) {
+            if (*f == 'l') count_lines = 1;
+            else if (*f == 'w') count_words = 1;
+            else if (*f == 'c') count_bytes = 1;
+            else {
+                fprintf(stderr, "wc: unknown option: -%c\n", *f);
+                return 1;
+            }
+        }
+        a++;
+    }
+
+    if (a >= argc) {
+        wc_file(NULL, &tl, &tw, &tb, &ok);   /* prints the counts */
         return ok ? 0 : 1;
     }
 
-    for (int a = 1; a < argc; a++)
+    for (; a < argc; a++)
         wc_file(argv[a], &tl, &tw, &tb, &ok);
 
     if (argc > 2)

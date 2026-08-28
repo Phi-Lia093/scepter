@@ -66,6 +66,22 @@ static inline void sti(void)
     __asm__ volatile ("sti");
 }
 
+/* Save the interrupt flag and disable interrupts.  Unlike cli()/sti(),
+ * this restores the *previous* IF state, so calling it while interrupts
+ * are already off does NOT enable them early. */
+static inline unsigned long irq_save(void)
+{
+    unsigned long flags;
+    __asm__ volatile ("pushfl; popl %0; cli" : "=g"(flags) : : "memory");
+    return flags;
+}
+
+/* Restore the interrupt flag saved by irq_save(). */
+static inline void irq_restore(unsigned long flags)
+{
+    __asm__ volatile ("pushl %0; popfl" : : "g"(flags) : "memory");
+}
+
 /* Halt the CPU until the next interrupt */
 static inline void hlt(void)
 {

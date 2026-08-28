@@ -214,6 +214,12 @@ static int devfs_read(void *file_private, void *buf, size_t count)
             random_get_bytes(buf, count);
             return (int)count;
         }
+        /* /dev/kmsg: bulk copy of complete kernel-log lines.  Returns 0
+         * (EOF for dmesg's one-shot dump) when no line is complete yet. */
+        if (node->dev_id == CHAR_DEV_KMSG) {
+            extern int kmsg_read(char *buf, int max);
+            return kmsg_read((char *)buf, (int)count);
+        }
         /* Read count characters one at a time.
          * Blocking devices (the keyboard) sleep until input arrives;
          * with O_NONBLOCK we poll first and return -EAGAIN when empty.

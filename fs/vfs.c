@@ -736,6 +736,52 @@ int fs_mmap(int fd, uint32_t length, uint32_t *phys)
     return -1;  /* FS driver does not support device mappings */
 }
 
+/* -------------------------------------------------------------------------
+ * Mount table enumeration (for /proc/mounts)
+ * ------------------------------------------------------------------------- */
+
+int vfs_get_mount(int index, vfs_mount_info_t *info)
+{
+    if (!info)
+        return 0;
+
+    static const char *hd[] = { "hda", "hdb", "hdc", "hdd" };
+
+    for (int i = 0; i < MAX_MOUNT_POINTS; i++) {
+        if (!mount_table[i].in_use)
+            continue;
+        if (index-- > 0)
+            continue;
+
+        /* Device name: block-backed mounts get hdaN, pseudo filesystems
+         * get "none".  dev 0-3 are whole disks hda-hdd; dev 4-7 are the
+         * partition pseudo-devices (hda1..hdd4, partition_id is 1-based). */
+        int dev = mount_table[i].device_id;
+        if (dev >= 0 && dev < 4) {
+            strcpy(info->m_device, hd[dev]);
+        } else if (dev >= 4 && dev < 8) {
+            const char *base = hd[dev - 4];
+            int plen = (int)strlen(base);
+            if (plen < (int)sizeof(info->m_device) - 2) {
+                memcpy(info->m_device, base, (size_t)plen);
+                info->m_device[plen] =
+                    (char)('0' + mount_table[i].partition_id);
+                info->m_device[plen + 1] = '\0';
+            } else {
+                strcpy(info->m_device, "hdx");
+            }
+        } else {
+            strcpy(info->m_device, "none");
+        }
+
+        strcpy(info->m_path, mount_table[i].mount_path);
+        strcpy(info->m_fstype,
+               fs_drivers[mount_table[i].fs_id].fs_name);
+        return 1;
+    }
+    return 0;
+}
+
 /* =========================================================================
  * Path-Based Operations
  * ========================================================================= */

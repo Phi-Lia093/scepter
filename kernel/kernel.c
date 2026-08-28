@@ -11,6 +11,7 @@
 #include "driver/char/random.h"
 #include "driver/char/pcspk.h"
 #include "driver/char/mouse.h"
+#include "kernel/kmsg.h"
 #include "driver/pci/pci.h"
 #include "driver/block/block.h"
 #include "driver/block/ide.h"
@@ -77,6 +78,7 @@ void kernel_main(void)
     miscdev_init(); /* /dev/null, /dev/zero */
     random_init();  /* /dev/random, /dev/urandom */
     pcspk_init();   /* /dev/pcspk */
+    kmsg_init();    /* /dev/kmsg (kernel log ring buffer) */
 
     printk("[KERNEL] Early initialization complete\n\n");
 

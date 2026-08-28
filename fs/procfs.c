@@ -168,12 +168,13 @@ enum {
     PROC_LOADAVG,
     PROC_STAT,
     PROC_TASKS,
+    PROC_MOUNTS,
     PROC_NFILES
 };
 
 static const char *proc_names[PROC_NFILES] = {
     "version", "uptime", "meminfo", "cpuinfo",
-    "loadavg", "stat", "tasks"
+    "loadavg", "stat", "tasks", "mounts"
 };
 
 static const char *state_name(task_state_t s)
@@ -260,9 +261,16 @@ static void gen_tasks(procbuf_t *pb)
     }
 }
 
+static void gen_mounts(procbuf_t *pb)
+{
+    vfs_mount_info_t mi;
+    for (int i = 0; vfs_get_mount(i, &mi); i++)
+        pb_printf(pb, "%s %s %s\n", mi.m_device, mi.m_path, mi.m_fstype);
+}
+
 static void (*proc_generators[PROC_NFILES])(procbuf_t *) = {
     gen_version, gen_uptime, gen_meminfo, gen_cpuinfo,
-    gen_loadavg, gen_stat,   gen_tasks
+    gen_loadavg, gen_stat,   gen_tasks,   gen_mounts
 };
 
 /* ============================================================================

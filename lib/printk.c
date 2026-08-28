@@ -34,6 +34,10 @@ static void put_char_early(char c)
     /* Direct VGA access for early boot */
     extern void vga_putchar(char);
     vga_putchar(c);
+
+    /* Also capture early output in the kernel log ring buffer. */
+    extern void kmsg_putchar(char);
+    kmsg_putchar(c);
 }
 
 /* Forward declare serial write function */
@@ -50,6 +54,10 @@ static void put_char(char c)
     
     /* Also send to serial for logging */
     serial_write_char(c);
+
+    /* Capture in the kernel log ring buffer (/dev/kmsg for dmesg). */
+    extern void kmsg_putchar(char);
+    kmsg_putchar(c);
 }
 
 static void put_str(const char *s, int len, int use_early)

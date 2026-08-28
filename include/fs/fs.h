@@ -433,6 +433,21 @@ void vfs_poll_wakeup(void);
 int fs_mmap(int fd, uint32_t length, uint32_t *phys);
 
 /* -------------------------------------------------------------------------
+ * Mount table enumeration (used by /proc/mounts)
+ * ------------------------------------------------------------------------- */
+
+/* One row of the mount table, rendered for /proc/mounts. */
+typedef struct {
+    char m_device[MAX_PATH_LEN];   /* "hda1", "none", ... */
+    char m_path[MAX_PATH_LEN];     /* mount point          */
+    char m_fstype[MAX_FS_NAME];    /* "minix3", "devfs", ... */
+} vfs_mount_info_t;
+
+/* Enumerate mounted filesystems.  Call with index 0, 1, ...; returns 1 and
+ * fills *info while a mount exists, 0 once the list is exhausted. */
+int vfs_get_mount(int index, vfs_mount_info_t *info);
+
+/* -------------------------------------------------------------------------
  * Working Directory (stored in task_struct.cwd)
  * ------------------------------------------------------------------------- */
 

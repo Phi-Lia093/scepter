@@ -26,6 +26,7 @@ typedef int (*ioctl_fn)(int prim_id, int scnd_id, unsigned int command, uint32_t
 #define CHAR_DEV_RANDOM 7
 #define CHAR_DEV_URANDOM 8
 #define CHAR_DEV_PCSPK  9
+#define CHAR_DEV_KMSG   10
 #define CHAR_DEV_FBDEV  14
 #define CHAR_DEV_MOUSE  15
 
