@@ -5,14 +5,14 @@
 #include "kernel/process.h"
 #include "kernel/syscall.h"
 #include "kernel/sched.h"
-#include "kernel/cpu.h"
+#include "arch/cpu.h"
+#include "arch/paging.h"
+#include "arch/timer.h"
 #include "mm/mm.h"
 #include "mm/buddy.h"
 #include "mm/slab.h"
-#include "mm/pgtable.h"
 #include "mm/vma.h"
 #include "fs/fs.h"
-#include "driver/char/pit.h"
 #include "lib/printk.h"
 #include "errno.h"
 #include "lib/string.h"
@@ -64,8 +64,7 @@ void do_exit(int status)
     /* Note: We keep the kernel stack and task_struct for parent to reap */
     
     /* Switch to kernel CR3 immediately - we'll map page tables as needed */
-    extern uint32_t kernel_page_table;
-    __asm__ volatile("mov %0, %%cr3" : : "r"(kernel_page_table));
+    __asm__ volatile("mov %0, %%cr3" : : "r"(arch_kernel_pgdir_phys()));
     
     /* Free all VMAs and their pages */
     list_for_each_safe(pos, tmp, &task->mm.vma_list) {
@@ -587,12 +586,12 @@ int sys_nanosleep(timespec_t *user_req, timespec_t *user_rem)
     uint32_t total_ticks = (uint32_t)req.tv_sec * 100UL;
     total_ticks += (uint32_t)((req.tv_nsec + 9999999L) / 10000000L);
     
-    uint32_t target = pit_get_ticks() + total_ticks;
+    uint32_t target = arch_timer_get_ticks() + total_ticks;
     
-    /* Sleep until the target tick. The timer IRQ (pit_isr) wakes us each
-     * tick; we re-check and go back to sleep until the deadline.  A
-     * pending signal aborts the sleep with EINTR. */
-    while (pit_get_ticks() < target) {
+    /* Sleep until the target tick. The timer IRQ wakes us each tick; we
+     * re-check and go back to sleep until the deadline.  A pending signal
+     * aborts the sleep with EINTR. */
+    while (arch_timer_get_ticks() < target) {
         sleep_on(&timer_wq);
         if (current->pending)
             return -EINTR;
@@ -827,8 +826,7 @@ static int do_exec(const char *user_path, char **user_argv, char **user_envp)
     uint32_t file_size = (uint32_t)file_size_tmp;
     
     /* Switch to kernel page tables before freeing user memory */
-    extern uint32_t kernel_page_table;
-    __asm__ volatile("mov %0, %%cr3" : : "r"(kernel_page_table));
+    __asm__ volatile("mov %0, %%cr3" : : "r"(arch_kernel_pgdir_phys()));
     
     /* Free all existing user memory (VMAs and pages) */
     list_head_t *pos, *tmp;
@@ -1002,9 +1000,7 @@ static int do_exec(const char *user_path, char **user_argv, char **user_envp)
 
     /* Close every fd marked FD_CLOEXEC (POSIX exec semantics). */
     fs_close_on_exec();
-    
-    extern void enter_userspace(uint32_t cr3, uint32_t entry, uint32_t user_esp);
-    
+
     /* Switch to the task's page directory */
     uint32_t cr3 = VIRT_TO_PHYS((uint32_t)&task->mm.pgdir[0]);
     

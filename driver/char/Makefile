@@ -2,8 +2,8 @@
 # Character Driver Module Makefile
 # ============================================================================
 
-# Source files
-SRCS = char.c vga.c tty.c kbd.c pit.c serial.c rtc.c miscdev.c random.c pcspk.c mouse.c
+# Source files (pit.c = system timer moved to arch/i386/timer.c)
+SRCS = char.c vga.c tty.c kbd.c serial.c rtc.c miscdev.c random.c pcspk.c mouse.c
 
 # Object files (in build directory)
 OBJS = $(addprefix $(BUILD_DIR)/, $(SRCS:.c=.o))

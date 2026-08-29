@@ -143,10 +143,10 @@ void random_init(void)
      * predictable, so we immediately mix in a fixed golden-ratio constant
      * and each other; random_add_entropy() from IRQ timing then diversifies
      * the pool as the system runs. */
-    extern uint32_t pit_get_ticks(void);
+    extern uint32_t arch_timer_get_ticks(void);
     extern uint32_t rtc_get_unix_time(void);
 
-    uint32_t seed = pit_get_ticks() ^ (uint32_t)0xA5A5A5A5U;
+    uint32_t seed = arch_timer_get_ticks() ^ (uint32_t)0xA5A5A5A5U;
     seed ^= rtc_get_unix_time();
     seed ^= (uint32_t)(uintptr_t)&rs;   /* stack/kernel layout jitter */
 

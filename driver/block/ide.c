@@ -3,7 +3,7 @@
 #include "driver/block/part_mbr.h"
 #include "driver/pci/pci.h"
 #include "fs/devfs.h"
-#include "kernel/asm.h"
+#include "arch/io.h"
 #include "lib/printk.h"
 #include <stddef.h>
 

@@ -1,9 +1,8 @@
 #include "driver/char/mouse.h"
 #include "driver/char/char.h"
-#include "driver/apic/interrupt.h"
-#include "kernel/cpu.h"
+#include "arch/irq.h"
 #include "fs/devfs.h"
-#include "kernel/asm.h"
+#include "arch/io.h"
 #include "lib/printk.h"
 #include <stdint.h>
 #include <stddef.h>

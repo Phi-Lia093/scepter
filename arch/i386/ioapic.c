@@ -2,7 +2,7 @@
  * I/O APIC Driver
  * ============================================================================ */
 
-#include "driver/apic/ioapic.h"
+#include "arch/ioapic.h"
 #include "mm/vmalloc.h"
 #include "lib/printk.h"
 #include <stddef.h>

@@ -1,7 +1,7 @@
 #include "driver/char/tty.h"
 #include "driver/char/vga.h"
 #include "driver/char/char.h"
-#include "driver/char/pit.h"
+#include "arch/timer.h"
 #include "driver/char/termios.h"
 #include "fs/devfs.h"
 #include "kernel/signal.h"
@@ -530,26 +530,26 @@ static int tty_read(int scnd_id)
                 return c;
             }
             /* accumulate up to VMIN bytes (VTIME = timeout between bytes) */
-            uint32_t start = pit_get_ticks();
+            uint32_t start = arch_timer_get_ticks();
             uint32_t limit = vtime ? start + (uint32_t)vtime * 10 : 0;
             while ((unsigned)tty_raw_len < vmin) {
                 if (char_poll(3, 0)) {
                     int c = cread(3, 0);
                     if (c > 0) {
                         tty_raw_buf[tty_raw_len++] = (char)c;
-                        start = pit_get_ticks();
+                        start = arch_timer_get_ticks();
                         limit = vtime ? start + (uint32_t)vtime * 10 : 0;
                         continue;
                     }
                 }
-                if (vtime && tty_raw_len > 0 && pit_get_ticks() >= limit)
+                if (vtime && tty_raw_len > 0 && arch_timer_get_ticks() >= limit)
                     break;
                 int c = char_read_block(3, 0);
                 if (c < 0)
                     return c;
                 if (c > 0) {
                     tty_raw_buf[tty_raw_len++] = (char)c;
-                    start = pit_get_ticks();
+                    start = arch_timer_get_ticks();
                     limit = vtime ? start + (uint32_t)vtime * 10 : 0;
                 }
             }

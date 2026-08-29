@@ -1,6 +1,5 @@
 #include "lib/printk.h"
 #include "driver/driver.h"
-#include "driver/char/pit.h"
 #include <stdint.h>
 
 /* =========================================================================

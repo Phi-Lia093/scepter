@@ -9,7 +9,7 @@ include common.mk
 TARGET = $(BUILD_DIR)/kernel.elf
 
 # Modules to build
-MODULES = kernel mm lib driver fs net
+MODULES = arch kernel mm lib driver fs net
 
 # Automatically collect all .o files from build directory
 # This is much cleaner than listing every single object file

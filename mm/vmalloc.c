@@ -5,7 +5,7 @@
 #include "mm/vmalloc.h"
 #include "mm/mm.h"
 #include "mm/buddy.h"
-#include "mm/pgtable.h"
+#include "arch/paging.h"
 #include "lib/printk.h"
 #include "lib/string.h"
 #include <stddef.h>

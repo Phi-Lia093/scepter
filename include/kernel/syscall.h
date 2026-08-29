@@ -3,24 +3,8 @@
 
 #include <stdint.h>
 #include <stddef.h>
-
-/* =========================================================================
- * CPU Register State (for fork context preservation)
- * ========================================================================= */
-
-typedef struct registers {
-    /* Pushed by pusha */
-    uint32_t edi, esi, ebp, esp_dummy, ebx, edx, ecx, eax;
-    
-    /* Segment selectors */
-    uint32_t gs, fs, es, ds;
-    
-    /* Saved CR3 */
-    uint32_t cr3;
-    
-    /* IRET frame (pushed by CPU) */
-    uint32_t eip, cs, eflags, user_esp, ss;
-} registers_t;
+#include "arch/abi.h"
+#include "arch/uaccess.h"
 
 /* =========================================================================
  * System Call Numbers (Linux i386-compatible)
@@ -282,33 +266,11 @@ extern struct utsname sys_utsname;   /* global system identity (mutable) */
 
 /* =========================================================================
  * User Pointer Validation
+ *
+ * valid_user_pointer() / copy_from_user() / copy_to_user() are declared in
+ * arch/uaccess.h (included at the top of this header) and implemented by
+ * the active arch.
  * ========================================================================= */
-
-/**
- * Validate a user pointer is within user address space
- * @param ptr User pointer to validate
- * @param len Length of memory region
- * @return 1 if valid, 0 if invalid
- */
-int valid_user_pointer(const void *ptr, size_t len);
-
-/**
- * Copy data from userspace to kernel space safely
- * @param kernel_dst Kernel buffer (destination)
- * @param user_src User buffer (source)
- * @param n Number of bytes to copy
- * @return 0 on success, -1 if user pointer is invalid
- */
-int copy_from_user(void *kernel_dst, const void *user_src, size_t n);
-
-/**
- * Copy data from kernel space to userspace safely
- * @param user_dst User buffer (destination)
- * @param kernel_src Kernel buffer (source)
- * @param n Number of bytes to copy
- * @return 0 on success, -1 if user pointer is invalid
- */
-int copy_to_user(void *user_dst, const void *kernel_src, size_t n);
 
 /* =========================================================================
  * System Call Handler

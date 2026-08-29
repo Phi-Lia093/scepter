@@ -2,17 +2,12 @@
 #define MM_H
 
 #include <stdint.h>
+#include "arch/paging.h"
 
-/* Memory layout constants (Linux-style) */
-#define KERNEL_VMA              0xC0000000U  /* Kernel virtual base */
-#define KERNEL_DIRECT_MAP_LIMIT 0x38000000U  /* 896 MB physical limit */
-#define KERNEL_VMALLOC_BASE     0xF8000000U  /* vmalloc region start (reserved) */
-#define KERNEL_VMALLOC_END      0xFFBFFFFFU  /* vmalloc region end (128 MB) */
-#define KERNEL_FIXMAP_BASE      0xFFC00000U  /* Fixed mappings (4 MB, future) */
-
-/* Helper macros for address conversion */
-#define PHYS_TO_VIRT(phys)  ((void*)((uint32_t)(phys) + KERNEL_VMA))
-#define VIRT_TO_PHYS(virt)  ((uint32_t)(virt) - KERNEL_VMA)
+/* =========================================================================
+ * Memory layout constants and phys<->virt helpers now live in
+ * arch/paging.h (arch-specific).
+ * ========================================================================= */
 
 /* Global memory information (set by mm_init) */
 extern uint32_t mem_total_kb;          /* Total detected RAM in KB */

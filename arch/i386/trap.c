@@ -1,0 +1,187 @@
+/* ============================================================================
+ * Exception entry (i386): panic_isr is called from arch/i386/isr.s
+ * ============================================================================ */
+
+#include "arch/cpu.h"
+#include "kernel/sched.h"
+#include "kernel/panic.h"
+#include "mm/pagefault.h"
+#include "lib/printk.h"
+#include <stdint.h>
+
+/* =========================================================================
+ * CPU register frame pushed by isr.s
+ *
+ * Stack layout at the point panic_isr is called (low → high address):
+ *   gs, fs, es, ds          (pushed by isr_common, reversed order)
+ *   edi..eax                (pusha)
+ *   int_no, err_code        (pushed by stub)
+ *   eip, cs, eflags         (pushed by CPU)
+ *   useresp, ss             (pushed by CPU on privilege change)
+ * ========================================================================= */
+
+typedef struct {
+    uint32_t cr3_saved;               /* saved CR3 (pushed before call) */
+    uint32_t gs, fs, es, ds;          /* segment registers (pushed in this order) */
+    uint32_t edi, esi, ebp,
+             esp_dummy,               /* ESP value at pusha time (not usable)   */
+             ebx, edx, ecx, eax;     /* general-purpose registers               */
+    uint32_t int_no;                  /* exception vector number                 */
+    uint32_t err_code;                /* error code (0 if none)                  */
+    /* pushed by CPU automatically: */
+    uint32_t eip;
+    uint32_t cs;
+    uint32_t eflags;
+    uint32_t useresp;                 /* only valid on ring-3 → ring-0 switch    */
+    uint32_t ss;
+} regs_t;
+
+/* =========================================================================
+ * Exception names (Intel SDM Vol.3 Table 6-1)
+ * ========================================================================= */
+
+static const char *exception_names[32] = {
+    "#DE Divide Error",
+    "#DB Debug",
+    "NMI Interrupt",
+    "#BP Breakpoint",
+    "#OF Overflow",
+    "#BR BOUND Range Exceeded",
+    "#UD Invalid Opcode",
+    "#NM Device Not Available",
+    "#DF Double Fault",
+    "Coprocessor Segment Overrun",
+    "#TS Invalid TSS",
+    "#NP Segment Not Present",
+    "#SS Stack-Segment Fault",
+    "#GP General Protection",
+    "#PF Page Fault",
+    "Reserved (15)",
+    "#MF x87 FPU Error",
+    "#AC Alignment Check",
+    "#MC Machine Check",
+    "#XM SIMD Floating-Point",
+    "#VE Virtualization",
+    "#CP Control Protection",
+    "Reserved (22)",
+    "Reserved (23)",
+    "Reserved (24)",
+    "Reserved (25)",
+    "Reserved (26)",
+    "Reserved (27)",
+    "#HV Hypervisor Injection",
+    "#VC VMM Communication",
+    "#SX Security Exception",
+    "Reserved (31)",
+};
+
+/* =========================================================================
+ * Read control registers via inline asm
+ * ========================================================================= */
+
+static inline uint32_t read_cr0(void)
+{
+    uint32_t v;
+    __asm__ volatile ("mov %%cr0, %0" : "=r"(v));
+    return v;
+}
+
+static inline uint32_t read_cr2(void)
+{
+    uint32_t v;
+    __asm__ volatile ("mov %%cr2, %0" : "=r"(v));
+    return v;
+}
+
+static inline uint32_t read_cr3(void)
+{
+    uint32_t v;
+    __asm__ volatile ("mov %%cr3, %0" : "=r"(v));
+    return v;
+}
+
+static inline uint32_t read_cr4(void)
+{
+    uint32_t v;
+    __asm__ volatile ("mov %%cr4, %0" : "=r"(v));
+    return v;
+}
+
+/* =========================================================================
+ * panic_isr – called from isr.s with the saved register frame
+ * ========================================================================= */
+
+void panic_isr(regs_t *r)
+{
+    /* Special handling for page faults (exception 14) */
+    if (r->int_no == 14) {
+        uint32_t fault_addr = read_cr2();
+        /* Verbose register/stack dump only for KERNEL faults (which panic).
+         * User-space faults are normal demand-paging; the handler prints
+         * its own diagnostics only on error. */
+        if (!(r->err_code & 0x4)) {
+            extern task_struct_t *current;
+            printk("\n[PAGEFAULT] INT14 cr2=0x%08x err=0x%x EIP=0x%08x CS=0x%x pid=%u\n",
+                   fault_addr, r->err_code, r->eip, r->cs, current ? current->pid : 0xffffffffu);
+            printk("[PAGEFAULT] EAX=%08x EBX=%08x ECX=%08x EDX=%08x\n",
+                   r->eax, r->ebx, r->ecx, r->edx);
+            printk("[PAGEFAULT] ESI=%08x EDI=%08x EBP=%08x\n",
+                   r->esi, r->edi, r->ebp);
+            printk("[PAGEFAULT] esp_dummy=%08x\n", r->esp_dummy);
+            {
+                uint32_t *sp = (uint32_t *)r->esp_dummy;
+                for (int i = 0; i < 40; i++) {
+                    if ((uint32_t)sp < 0xC0000000U) break;  /* sanity */
+                    printk("[PAGEFAULT]   [%08x] %08x\n",
+                           (uint32_t)(sp + i), sp[i]);
+                }
+            }
+        }
+        page_fault_handler(r->err_code, fault_addr);
+        /* If we get here, the page fault was handled successfully */
+        return;
+    }
+
+    const char *name = (r->int_no < 32)
+                       ? exception_names[r->int_no]
+                       : "Unknown Exception";
+
+    printk("\n\n*** CPU EXCEPTION ***\n");
+    printk("Vector : %u  %s\n", r->int_no, name);
+    printk("ErrCode: 0x%08x\n\n", r->err_code);
+
+    /* General-purpose registers */
+    printk("EAX=%08x  EBX=%08x  ECX=%08x  EDX=%08x\n",
+           r->eax, r->ebx, r->ecx, r->edx);
+    printk("ESI=%08x  EDI=%08x  EBP=%08x\n",
+           r->esi, r->edi, r->ebp);
+
+    /* Instruction / stack pointers */
+    printk("EIP=%08x  EFLAGS=%08x\n", r->eip, r->eflags);
+
+    /* Segment registers
+     * SS and user ESP are only pushed by the CPU on a ring-3 -> ring-0 transition.
+     * If CS DPL == 0 (kernel exception), those stack slots don't exist. */
+    int from_userspace = (r->cs & 0x3) == 3;
+    if (from_userspace) {
+        printk("CS=%04x  DS=%04x  ES=%04x  FS=%04x  GS=%04x  SS=%04x\n",
+               r->cs, r->ds, r->es, r->fs, r->gs, r->ss);
+        printk("ESP(user)=%08x\n", r->useresp);
+    } else {
+        printk("CS=%04x  DS=%04x  ES=%04x  FS=%04x  GS=%04x  SS=<kernel>\n",
+               r->cs, r->ds, r->es, r->fs, r->gs);
+    }
+
+    /* Control registers */
+    printk("CR0=%08x  CR2=%08x  CR3=%08x  CR4=%08x\n",
+           read_cr0(), read_cr2(), read_cr3(), read_cr4());
+
+    /* Stack dump – print 8 words from the faulting stack */
+    printk("\nStack dump (EIP area):\n");
+    uint32_t *stack = (uint32_t *)r->eip;
+    for (int i = 0; i < 8; i++)
+        printk("  [%08x] %08x\n",
+               (uint32_t)(stack + i), stack[i]);
+
+    panic(name);
+}

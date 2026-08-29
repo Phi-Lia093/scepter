@@ -1,16 +1,12 @@
 /* ============================================================================
- * Page Table Management Utilities
+ * Page Table Management Utilities (i386 two-level paging)
  * ============================================================================ */
 
-#include "mm/mm.h"
+#include "arch/paging.h"
 #include "mm/buddy.h"
 #include "lib/printk.h"
 #include <stdint.h>
 #include <stddef.h>
-
-/* External: Boot page directory and tables from boot.s */
-extern uint32_t boot_page_directory[];
-extern uint32_t boot_page_tables[];
 
 /* Forward declaration for allocation */
 extern void *page_alloc_flags(size_t size, uint32_t flags);

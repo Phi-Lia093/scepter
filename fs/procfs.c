@@ -200,8 +200,8 @@ static void gen_version(procbuf_t *pb)
 
 static void gen_uptime(procbuf_t *pb)
 {
-    extern uint32_t pit_get_ticks(void);
-    pb_printf(pb, "%u 0\n", pit_get_ticks() / 100);
+    extern uint32_t arch_timer_get_ticks(void);
+    pb_printf(pb, "%u 0\n", arch_timer_get_ticks() / 100);
 }
 
 static void gen_meminfo(procbuf_t *pb)

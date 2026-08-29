@@ -4,7 +4,8 @@
 
 #include "driver/acpi/acpi.h"
 #include "driver/acpi/tables.h"
-#include "kernel/asm.h"
+#include "arch/io.h"
+#include "arch/cpu.h"
 #include "lib/printk.h"
 #include "mm/mm.h"
 

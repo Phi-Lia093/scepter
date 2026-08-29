@@ -213,8 +213,8 @@ static tmpfs_node_t *lookup_parent(tmpfs_node_t *root, const char *path,
 
 static uint32_t now_secs(void)
 {
-    extern uint32_t pit_get_ticks(void);
-    return pit_get_ticks() / 100;
+    extern uint32_t arch_timer_get_ticks(void);
+    return arch_timer_get_ticks() / 100;
 }
 
 static int tmpfs_mount(int dev_id, int part_id, void **fs_private)

@@ -1,7 +1,7 @@
 #include "driver/char/char.h"
 #include "driver/char/vga.h"
 #include "driver/char/tty.h"
-#include "driver/char/pit.h"
+#include "arch/timer.h"
 #include "driver/char/kbd.h"
 #include "kernel/sched.h"
 #include "errno.h"
@@ -166,7 +166,7 @@ void char_init(void)
 {
     vga_init();     /* VGA text mode: hw init + register char dev 0  */
     tty_init();     /* TTY emulator:  hw init + register char dev 2  */
-    pit_init(100);  /* PIT @ 100 Hz:  hw init + register char dev 1  */
+    arch_timer_init(100);  /* system timer @ 100 Hz: hw init + register char dev 1  */
     kbd_init();     /* PS/2 kbd:      hw init + register char dev 3  */
     miscdev_init(); /* /dev/null, /dev/zero: char devs 5, 6          */
 }

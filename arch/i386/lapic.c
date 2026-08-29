@@ -2,8 +2,8 @@
  * Local APIC Driver
  * ============================================================================ */
 
-#include "driver/apic/lapic.h"
-#include "kernel/asm.h"
+#include "arch/lapic.h"
+#include "arch/msr.h"
 #include "mm/vmalloc.h"
 #include "lib/printk.h"
 #include <stddef.h>

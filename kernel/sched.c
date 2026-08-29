@@ -3,25 +3,14 @@
  * ============================================================================ */
 
 #include "kernel/sched.h"
-#include "kernel/cpu.h"
+#include "arch/cpu.h"
+#include "arch/paging.h"
 #include "mm/vma.h"
 #include "lib/string.h"
 #include "lib/printk.h"
 #include "mm/slab.h"
 #include "mm/buddy.h"
 #include "mm/mm.h"
-
-/* ============================================================================
- * External Symbols
- * ============================================================================ */
-
-/* boot_page_directory: the actual kernel page directory (virtual address) */
-extern uint32_t boot_page_directory[];
-
-/* kernel_page_table: 4-byte variable holding the PHYSICAL address of
- * boot_page_directory (set in boot.s via:
- *   mov $boot_page_directory-0xC0000000, kernel_page_table) */
-extern uint32_t kernel_page_table;
 
 /* ============================================================================
  * Global Variables
@@ -58,7 +47,7 @@ void init_task_mm(task_struct_t *task)
     memset(&task->mm.pgdir[0], 0, 768 * sizeof(uint32_t));
     
     /* Copy kernel space page directory entries (768-1023) from actual page directory */
-    memcpy(&task->mm.pgdir[768], &boot_page_directory[768], 256 * sizeof(uint32_t));
+    memcpy(&task->mm.pgdir[768], &arch_kernel_pgdir()[768], 256 * sizeof(uint32_t));
     
     /* Initialize page table pointers (all NULL initially) */
     memset(task->mm.page_tables, 0, sizeof(task->mm.page_tables));
@@ -216,7 +205,7 @@ list_head_t *task_list_head(void)
  *     user mode) and ITIMER_PROF (any CPU tick), firing SIGVTALRM/SIGPROF
  *
  * Safe from interrupt context: single-CPU, interrupts disabled while the
- * task list is walked (schedule() also runs inside pit_isr).
+ * task list is walked (schedule() also runs inside the timer ISR).
  * ============================================================================ */
 void timer_tick(int in_user)
 {
@@ -433,21 +422,19 @@ void schedule(void)
     /* Update current */
     current = next;
     
-    /* Update TSS.esp0 to new task's kernel stack top.
+    /* Update the ring-0 stack used for user->kernel transitions.
      * This is CRITICAL for ring-3 tasks: when a timer fires while PID N is
      * in ring 3, the CPU uses TSS.esp0 as the ring-0 stack pointer.
      * If esp0 points to the wrong stack, the interrupt frame goes to garbage. */
     if (next->pid != 0) {
-        tss.esp0 = next->kernel_stack + KERNEL_STACK_SIZE;
+        arch_set_kernel_stack(next->kernel_stack + KERNEL_STACK_SIZE);
     }
-    
-    /* Get CR3 (physical address of page directory)
-     * kernel_page_table is a uint32_t holding the PHYSICAL addr of boot_page_directory
-     * For user tasks, compute from their embedded (aligned) page directory */
+
+    /* Get CR3 (physical address of page directory) */
     uint32_t new_cr3;
     if (next->pid == 0) {
         /* Kernel task: use stored physical address directly */
-        new_cr3 = kernel_page_table;
+        new_cr3 = arch_kernel_pgdir_phys();
     } else {
         new_cr3 = VIRT_TO_PHYS((uint32_t)&next->mm.pgdir[0]);
     }

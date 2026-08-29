@@ -8,7 +8,7 @@
 #include "driver/char/char.h"
 #include "fs/devfs.h"
 #include "lib/printk.h"
-#include "kernel/asm.h"
+#include "arch/io.h"
 
 /* =========================================================================
  * Global State

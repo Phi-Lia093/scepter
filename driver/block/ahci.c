@@ -2,10 +2,10 @@
 #include "driver/block/block.h"
 #include "driver/block/part_mbr.h"
 #include "driver/pci/pci.h"
-#include "driver/apic/interrupt.h"
-#include "driver/char/pit.h"
+#include "arch/irq.h"
+#include "arch/timer.h"
 #include "fs/devfs.h"
-#include "kernel/asm.h"
+#include "arch/cpu.h"
 #include "kernel/sched.h"
 #include "mm/buddy.h"
 #include "mm/mm.h"
@@ -94,7 +94,7 @@ static inline void ahci_mb(void)
  *
  * Boot-time waits run with interrupts disabled, so they use the TSC
  * calibrated once against one full PIT channel-0 countdown period (~10 ms
- * at the 100 Hz setting programmed by pit_init()).  The PIT counter is
+ * at the 100 Hz setting programmed by arch_timer_init()).  The timer counter is
  * free-running and only needs to be read, so no IRQs are required.
  * All arithmetic is 32-bit friendly (no __udivdi3 / libgcc dependency).
  * ========================================================================= */
@@ -108,14 +108,10 @@ static inline uint64_t ahci_rdtsc(void)
     return ((uint64_t)hi << 32) | lo;
 }
 
-/* Latch and read the free-running PIT channel-0 count. */
+/* Latch and read the free-running timer counter (via the arch timer API). */
 static inline uint16_t ahci_pit_count(void)
 {
-    uint16_t v;
-    outb(PIT_CMD, 0x00);                  /* latch channel 0 */
-    v  = (uint16_t)inb(PIT_CHANNEL0);
-    v |= (uint16_t)inb(PIT_CHANNEL0) << 8;
-    return v;
+    return arch_timer_read_count();
 }
 
 /* Measure TSC ticks per millisecond from one PIT countdown period. */

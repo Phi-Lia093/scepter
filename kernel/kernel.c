@@ -1,9 +1,10 @@
-#include "kernel/cpu.h"
+#include "arch/cpu.h"
+#include "arch/irq.h"
+#include "arch/timer.h"
 #include "kernel/sched.h"
 #include "mm/pagefault.h"
 #include "driver/char/vga.h"
 #include "driver/char/tty.h"
-#include "driver/char/pit.h"
 #include "driver/char/kbd.h"
 #include "driver/char/serial.h"
 #include "driver/char/rtc.h"
@@ -17,8 +18,6 @@
 #include "driver/block/ide.h"
 #include "driver/block/ahci.h"
 #include "driver/block/part_mbr.h"
-#include "driver/pic.h"
-#include "driver/apic/interrupt.h"
 #include "lib/printk.h"
 #include "lib/string.h"
 #include "mm/mm.h"
@@ -44,16 +43,10 @@
 void kernel_main(void)
 {
     /* ------------------------------------------------------------------
-     * CPU / interrupt infrastructure (PIC for early boot)
+     * CPU / interrupt infrastructure (arch-specific: GDT/TSS/IDT,
+     * exception gates, IRQ gates, early PIC for boot)
      * ------------------------------------------------------------------ */
-    gdt_init();
-    tss_init();
-    idt_init();
-    isr_init();
-    irq_init();   /* install IDT gates for IRQs 0-15 (vectors 32-47) */
-    
-    /* Initialize PIC early for boot (will be replaced by APIC later) */
-    pic_init(0x20, 0x28);
+    arch_cpu_init();
 
     /* VGA and serial for early output */
     vga_init();
@@ -76,7 +69,7 @@ void kernel_main(void)
      * ------------------------------------------------------------------ */
     tty_init();
     video_init();  /* switch to VBE graphics + graphics console if available */
-    pit_init(100);
+    arch_timer_init(100);
     kbd_init();
     mouse_init();  /* PS/2 mouse: /dev/mouse */
     rtc_init();  /* RTC prints system time automatically */

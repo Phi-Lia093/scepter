@@ -3,18 +3,15 @@
  * ============================================================================ */
 
 #include "kernel/exec.h"
-#include "kernel/cpu.h"
+#include "arch/cpu.h"
 #include "kernel/sched.h"
-#include "mm/pgtable.h"
+#include "arch/paging.h"
 #include "mm/buddy.h"
 #include "mm/mm.h"
 #include "mm/vma.h"
 #include "fs/fs.h"
 #include "lib/printk.h"
 #include "lib/string.h"
-
-/* External: enter_userspace function from context.s */
-extern void enter_userspace(uint32_t cr3, uint32_t entry, uint32_t user_esp);
 
 /* ============================================================================
  * Simple Binary Loader
@@ -120,13 +117,12 @@ int exec_flat(const char *path)
         return -1;
     }
     
-    /* Set TSS.esp0 to top of kernel stack
-     * This is where CPU will switch when interrupt occurs in Ring 3 */
-    extern tss_entry_t tss;
-    tss.esp0 = (uint32_t)kernel_stack + KERNEL_STACK_SIZE;  /* Top of stack (grows down) */
+    /* Set the ring-0 stack for this process (TSS.esp0): the CPU switches
+     * here when an interrupt occurs while running in Ring 3. */
+    arch_set_kernel_stack((uint32_t)kernel_stack + KERNEL_STACK_SIZE);  /* Top of stack (grows down) */
     
-    printk("[EXEC] Kernel stack: 0x%08x-0x%08x (TSS.esp0 = 0x%08x)\n",
-           (uint32_t)kernel_stack, (uint32_t)kernel_stack + KERNEL_STACK_SIZE, tss.esp0);
+    printk("[EXEC] Kernel stack: 0x%08x-0x%08x\n",
+           (uint32_t)kernel_stack, (uint32_t)kernel_stack + KERNEL_STACK_SIZE);
     
     /* Create VMAs for the loaded process */
     task_struct_t *task = current;

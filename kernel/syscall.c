@@ -8,11 +8,11 @@
 #include "kernel/sched.h"
 #include "kernel/process.h"
 #include "mm/vma.h"
-#include "mm/pgtable.h"
+#include "arch/paging.h"
 #include "mm/slab.h"
 #include "fs/fs.h"
 #include "fs/pipe.h"
-#include "driver/char/pit.h"
+#include "arch/timer.h"
 #include "driver/char/rtc.h"
 #include "lib/printk.h"
 #include "errno.h"
@@ -20,111 +20,6 @@
 
 /* select()/poll() wait queue (defined in fs/vfs.c) */
 extern wait_queue_head_t select_wq;
-
-/* Kernel virtual memory starts at 3GB */
-#define KERNEL_VMA 0xC0000000
-
-/* ============================================================================
- * User Pointer Validation
- * ============================================================================ */
-
-/**
- * check_user_range - Verify a user memory range is mapped in the current
- * task's page tables.
- *
- * Walks current->mm.page_tables[] (the same table the running user CR3 is
- * built from).  Every page in [addr, addr+len) must be present; when
- * need_write is set, pages must also be writable.  Returns 1 if valid,
- * 0 otherwise.
- */
-static int check_user_range(const void *ptr, size_t len, int need_write)
-{
-    uint32_t addr = (uint32_t)ptr;
-    uint32_t end  = addr + len;
-
-    /* Check for wraparound */
-    if (end < addr) {
-        return 0;
-    }
-
-    /* Must be below kernel space */
-    if (addr >= KERNEL_VMA) {
-        return 0;
-    }
-
-    if (end > KERNEL_VMA) {
-        return 0;
-    }
-
-    if (len == 0) {
-        return 1;
-    }
-
-    task_struct_t *task = current;
-    if (!task) {
-        return 0;
-    }
-
-    for (uint32_t a = addr; a < end; a += 0x1000) {
-        uint32_t pdi = a >> 22;
-        if (pdi >= 768) {
-            return 0;   /* above 3GB is kernel space */
-        }
-        uint32_t *pt = task->mm.page_tables[pdi];
-        if (!pt) {
-            return 0;   /* no page table for this 4MB region */
-        }
-        uint32_t pte = pt[(a >> 12) & 0x3FF];
-        if (!(pte & 0x1)) {
-            return 0;   /* not present */
-        }
-        if (need_write && !(pte & 0x2)) {
-            return 0;   /* read-only */
-        }
-    }
-
-    return 1;
-}
-
-/**
- * Validate a user pointer is within user address space
- * User space: 0x00000000 - 0xBFFFFFFF
- * Kernel space: 0xC0000000 - 0xFFFFFFFF
- */
-int valid_user_pointer(const void *ptr, size_t len)
-{
-    return check_user_range(ptr, len, 0);
-}
-
-/**
- * Copy data from userspace to kernel space safely
- */
-int copy_from_user(void *kernel_dst, const void *user_src, size_t n)
-{
-    /* Validate user pointer */
-    if (!valid_user_pointer(user_src, n)) {
-        return -1;
-    }
-    
-    /* Copy data */
-    memcpy(kernel_dst, user_src, n);
-    return 0;
-}
-
-/**
- * Copy data from kernel space to userspace safely
- */
-int copy_to_user(void *user_dst, const void *kernel_src, size_t n)
-{
-    /* Validate user pointer AND writability (page-table walk) */
-    if (!check_user_range(user_dst, n, 1)) {
-        return -1;
-    }
-    
-    /* Copy data */
-    memcpy(user_dst, kernel_src, n);
-    return 0;
-}
 
 /* ============================================================================
  * System Call Handlers
@@ -753,7 +648,7 @@ static int sys_gettimeofday(struct timeval *user_tv, void *user_tz)
         return -EFAULT;
 
     struct timeval tv;
-    uint32_t ticks = pit_get_ticks();
+    uint32_t ticks = arch_timer_get_ticks();
 
     tv.tv_sec  = (int32_t)rtc_get_boot_unix_time() + (int32_t)(ticks / 100);
     tv.tv_usec = (int32_t)((ticks % 100) * 10000);   /* 10 ms per tick */
@@ -1053,7 +948,7 @@ static int do_poll(struct pollfd_k *fds, int nfds, int timeout)
     if (timeout >= 0) {
         /* 100 Hz tick = 10 ms per tick */
         uint32_t ticks = (uint32_t)((timeout + 9) / 10);
-        deadline = pit_get_ticks() + ticks;
+        deadline = arch_timer_get_ticks() + ticks;
     }
 
     for (;;) {
@@ -1078,7 +973,7 @@ static int do_poll(struct pollfd_k *fds, int nfds, int timeout)
 
         if (timeout == 0)
             return 0;
-        if (deadline && (int32_t)(pit_get_ticks() - deadline) >= 0)
+        if (deadline && (int32_t)(arch_timer_get_ticks() - deadline) >= 0)
             return 0;
         if (current->pending)
             return -EINTR;
@@ -1440,7 +1335,7 @@ static int sys_clock_gettime(int clockid, timespec_t *user_ts)
         return -EFAULT;
 
     timespec_t ts;
-    uint32_t ticks = pit_get_ticks();
+    uint32_t ticks = arch_timer_get_ticks();
 
     switch (clockid) {
         case CLOCK_REALTIME: {
@@ -1502,7 +1397,7 @@ static int sys_times(struct tms_k *user_tms)
 
     if (copy_to_user(user_tms, &tms, sizeof(struct tms_k)) < 0)
         return -EFAULT;
-    return (int)pit_get_ticks();   /* return clock ticks since boot */
+    return (int)arch_timer_get_ticks();   /* return clock ticks since boot */
 }
 
 static int sys_alarm(uint32_t seconds)
@@ -1695,7 +1590,7 @@ static int sys_utime(const char *user_path, struct utimbuf_k *user_times)
         atime = (uint32_t)ut.actime;
         mtime = (uint32_t)ut.modtime;
     } else {
-        uint32_t now = rtc_get_boot_unix_time() + pit_get_ticks() / 100;
+        uint32_t now = rtc_get_boot_unix_time() + arch_timer_get_ticks() / 100;
         atime = mtime = now;
     }
 

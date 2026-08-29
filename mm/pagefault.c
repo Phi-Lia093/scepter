@@ -4,7 +4,7 @@
 
 #include "mm/pagefault.h"
 #include "mm/vma.h"
-#include "mm/pgtable.h"
+#include "arch/paging.h"
 #include "mm/buddy.h"
 #include "mm/mm.h"
 #include "kernel/sched.h"

@@ -10,7 +10,7 @@
 #include "kernel/process.h"
 #include "kernel/signal.h"
 #include "fs/fs.h"
-#include "driver/char/pit.h"
+#include "arch/timer.h"
 #include "driver/char/rtc.h"
 #include "mm/buddy.h"
 #include "lib/printk.h"
@@ -27,7 +27,7 @@ extern int copy_to_user(void *user_dst, const void *kernel_src, size_t n);
 #define CLOCK_MONOTONIC          1
 #define CLOCK_PROCESS_CPUTIME_ID 2
 
-extern uint32_t pit_get_ticks(void);
+extern uint32_t arch_timer_get_ticks(void);
 extern uint32_t rtc_get_boot_unix_time(void);
 extern void do_exit(int status);
 extern void schedule(void);
@@ -81,7 +81,7 @@ struct sched_param_k {
 /* sys_time - Seconds since epoch (wall clock). */
 int sys_time(int *user_tloc)
 {
-    uint32_t now = rtc_get_boot_unix_time() + pit_get_ticks() / 100;
+    uint32_t now = rtc_get_boot_unix_time() + arch_timer_get_ticks() / 100;
 
     if (user_tloc) {
         if (!valid_user_pointer(user_tloc, sizeof(int)))
@@ -114,7 +114,7 @@ int sys_settimeofday(struct timeval *user_tv, void *user_tz)
     if (tv.tv_usec < 0 || tv.tv_usec >= 1000000)
         return -EINVAL;
 
-    uint32_t now = rtc_get_real_boot_unix_time() + pit_get_ticks() / 100;
+    uint32_t now = rtc_get_real_boot_unix_time() + arch_timer_get_ticks() / 100;
     int32_t  delta = tv.tv_sec - (int32_t)now;
     rtc_set_time_offset(delta);
 
@@ -143,7 +143,7 @@ int sys_utimes(const char *user_path, void *user_times)
         atime = (uint32_t)tv[0].tv_sec;
         mtime = (uint32_t)tv[1].tv_sec;
     } else {
-        uint32_t now = (uint32_t)rtc_get_boot_unix_time() + pit_get_ticks() / 100;
+        uint32_t now = (uint32_t)rtc_get_boot_unix_time() + arch_timer_get_ticks() / 100;
         atime = mtime = now;
     }
 
@@ -170,7 +170,7 @@ int sys_clock_nanosleep(int clockid, int flags, void *user_rqtp,
 
     if (flags & 1) {   /* TIMER_ABSTIME */
         /* remaining = target - now */
-        uint32_t now_ms = pit_get_ticks() * 10;   /* ms since boot */
+        uint32_t now_ms = arch_timer_get_ticks() * 10;   /* ms since boot */
         uint32_t target_ms = (uint32_t)rqtp.tv_sec * 1000
                            + (uint32_t)rqtp.tv_nsec / 1000000;
         if ((int32_t)(now_ms - target_ms) >= 0)
@@ -187,9 +187,9 @@ int sys_clock_nanosleep(int clockid, int flags, void *user_rqtp,
 
     uint32_t total_ticks = (uint32_t)rqtp.tv_sec * 100UL
                          + (uint32_t)((rqtp.tv_nsec + 9999999L) / 10000000L);
-    uint32_t target = pit_get_ticks() + total_ticks;
+    uint32_t target = arch_timer_get_ticks() + total_ticks;
 
-    while (pit_get_ticks() < target) {
+    while (arch_timer_get_ticks() < target) {
         extern wait_queue_head_t timer_wq;
         sleep_on(&timer_wq);
         if (current->pending)
@@ -583,7 +583,7 @@ int sys_sysinfo(void *user_info)
         return -EFAULT;
 
     struct sysinfo_k info;
-    info.uptime   = pit_get_ticks() / 100;
+    info.uptime   = arch_timer_get_ticks() / 100;
     info.loads[0] = info.loads[1] = info.loads[2] = 0;
     info.totalram = buddy_total_pages() * 4096U;
     info.freeram  = buddy_free_pages() * 4096U;

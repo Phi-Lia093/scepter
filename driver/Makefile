@@ -2,25 +2,16 @@
 # Driver Module Makefile (Orchestrator)
 # ============================================================================
 
-# Subdirectories
-SUBDIRS = pci apic char block acpi video net
-
-# Root driver files (pic.c in driver/)
-SRCS = pic.c
-OBJS = $(addprefix $(BUILD_DIR)/, $(SRCS:.c=.o))
+# Subdirectories (interrupt controllers + timer live in arch/)
+SUBDIRS = pci char block acpi video net
 
 # Build all drivers
-all: $(OBJS) subdirs
+all: subdirs
 
 # Build subdirectories
 subdirs:
 	@for dir in $(SUBDIRS); do \
 		$(MAKE) -C $$dir || exit 1; \
 	done
-
-# Compilation rule for root driver files
-$(BUILD_DIR)/%.o: %.c
-	@echo "  CC      driver/$<"
-	@$(CC) $(CFLAGS) $(INCLUDE) $< -o $@
 
 .PHONY: all subdirs

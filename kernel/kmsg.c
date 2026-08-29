@@ -1,7 +1,7 @@
 #include "kernel/kmsg.h"
 #include "driver/char/char.h"
 #include "fs/devfs.h"
-#include "kernel/asm.h"
+#include "arch/cpu.h"
 #include "lib/printk.h"
 #include <stdint.h>
 

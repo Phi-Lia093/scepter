@@ -9,7 +9,7 @@
 #include "fs/devfs.h"
 #include "lib/printk.h"
 #include "lib/string.h"
-#include "kernel/asm.h"
+#include "arch/io.h"
 #include <stddef.h>
 
 /* ============================================================================

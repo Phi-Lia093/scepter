@@ -1,11 +1,10 @@
 #include "driver/char/kbd.h"
 #include "driver/char/char.h"
 #include "driver/char/tty.h"
-#include "driver/apic/interrupt.h"
-#include "kernel/cpu.h"
+#include "arch/irq.h"
 #include "kernel/signal.h"
 #include "fs/devfs.h"
-#include "kernel/asm.h"
+#include "arch/io.h"
 
 /* =========================================================================
  * PS/2 Keyboard Constants
@@ -108,8 +107,8 @@ void kbd_isr(uint32_t cs)
 
     /* Keyboard timing/scan code is a decent entropy source. */
     extern void random_add_entropy(uint32_t bits);
-    extern uint32_t pit_get_ticks(void);
-    random_add_entropy((uint32_t)scancode ^ pit_get_ticks());
+    extern uint32_t arch_timer_get_ticks(void);
+    random_add_entropy((uint32_t)scancode ^ arch_timer_get_ticks());
 
     if (scancode == SC_LSHIFT || scancode == SC_RSHIFT) {
         kbd_state.shift_pressed = 1;

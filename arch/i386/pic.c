@@ -1,5 +1,5 @@
-#include "driver/pic.h"
-#include "kernel/asm.h"
+#include "arch/pic.h"
+#include "arch/io.h"
 
 /* =========================================================================
  * 8259A PIC driver

@@ -3,18 +3,26 @@
 # Shared by all module Makefiles
 # ============================================================================
 
-# Compiler and flags
-CC      = gcc
-CFLAGS  = -c -ffreestanding -nostdlib -fno-builtin -fno-stack-protector \
-          -fno-pie -mno-red-zone -O100 -Wall -Wextra -fno-pic -m32
-
-LDFLAGS = -T linker.ld -ffreestanding -nostdlib -fno-builtin -fno-stack-protector \
-          -fno-pie -mno-red-zone -O100 -Wall -Wextra -fno-pic -m32
-
 # Directories
 TOP_DIR    := $(shell pwd)
 BUILD_DIR  := $(TOP_DIR)/build
-INCLUDE    := -I $(TOP_DIR)/include -I $(TOP_DIR)/kernel
+
+# Architecture selection (only arch/i386 is implemented for now)
+ARCH      ?= i386
+ARCH_DIR  := $(TOP_DIR)/arch/$(ARCH)
+
+# Include architecture-specific toolchain flags
+include $(ARCH_DIR)/arch.mk
+
+# Compiler and flags
+CC      = gcc
+CFLAGS  = -c -ffreestanding -nostdlib -fno-builtin -fno-stack-protector \
+          -O100 -Wall -Wextra $(ARCH_CFLAGS)
+
+LDFLAGS = -T $(ARCH_DIR)/linker.ld -ffreestanding -nostdlib -fno-builtin \
+          -fno-stack-protector -O100 -Wall -Wextra $(ARCH_LDFLAGS)
+
+INCLUDE    := -I $(TOP_DIR)/include -I $(TOP_DIR)/kernel -I $(ARCH_DIR)/include
 
 # Export for sub-makes
-export CC CFLAGS LDFLAGS TOP_DIR BUILD_DIR INCLUDE
+export ARCH ARCH_DIR CC CFLAGS LDFLAGS TOP_DIR BUILD_DIR INCLUDE

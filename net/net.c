@@ -8,7 +8,7 @@
 #include "net/net.h"
 #include "lib/string.h"
 #include "lib/printk.h"
-#include "kernel/asm.h"
+#include "arch/cpu.h"
 
 /* ============================================================================
  * Interface registry (static, allocation-free)

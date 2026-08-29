@@ -4,9 +4,9 @@
 
 #include "kernel/exec.h"
 #include "kernel/sched.h"
-#include "kernel/cpu.h"
+#include "arch/cpu.h"
 #include "kernel/process.h"
-#include "mm/pgtable.h"
+#include "arch/paging.h"
 #include "mm/buddy.h"
 #include "mm/mm.h"
 #include "mm/vma.h"
@@ -272,8 +272,7 @@ int spawn_init(const char *path)
      *
      * Since kstack-- goes to lower addresses, push HIGH-address items first:
      */
-    extern void first_entry_trampoline(void);
-    
+    /* first_entry_trampoline is declared in arch/cpu.h */
     uint32_t *kstack = (uint32_t *)(task->kernel_esp);
     
     /* IRET frame (highest address = pushed first) */
@@ -304,9 +303,8 @@ int spawn_init(const char *path)
     
     task->kernel_esp = (uint32_t)kstack;
     
-    /* Set TSS.esp0 to top of kernel stack (for ring3→ring0 transitions) */
-    extern tss_entry_t tss;
-    tss.esp0 = task->kernel_stack + KERNEL_STACK_SIZE;
+    /* Set the ring-0 stack for ring3→ring0 transitions (TSS.esp0) */
+    arch_set_kernel_stack(task->kernel_stack + KERNEL_STACK_SIZE);
     
     /* Add to scheduler */
     task->state = TASK_READY;

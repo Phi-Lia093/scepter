@@ -2,12 +2,11 @@
 # Kernel Module Makefile
 # ============================================================================
 
-# Source files
-SRCS_C = kernel.c cpu.c panic.c sched.c exec.c syscall.c spawn.c process.c signal.c syscall_new.c kmsg.c syscalls_net.c
-SRCS_S = boot.s isr.s context.s
+# Source files (arch-specific code lives in arch/, not here)
+SRCS_C = kernel.c panic.c sched.c exec.c syscall.c spawn.c process.c signal.c syscall_new.c kmsg.c syscalls_net.c
 
 # Object files (in build directory)
-OBJS = $(addprefix $(BUILD_DIR)/, $(SRCS_C:.c=.o) $(SRCS_S:.s=.o))
+OBJS = $(addprefix $(BUILD_DIR)/, $(SRCS_C:.c=.o))
 
 # Build all objects
 all: $(OBJS)
@@ -15,11 +14,6 @@ all: $(OBJS)
 # C source compilation
 $(BUILD_DIR)/%.o: %.c
 	@echo "  CC      kernel/$<"
-	@$(CC) $(CFLAGS) $(INCLUDE) $< -o $@
-
-# Assembly source compilation
-$(BUILD_DIR)/%.o: %.s
-	@echo "  AS      kernel/$<"
 	@$(CC) $(CFLAGS) $(INCLUDE) $< -o $@
 
 .PHONY: all

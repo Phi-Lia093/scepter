@@ -1,5 +1,8 @@
-#include "kernel/cpu.h"
-#include <stddef.h>
+#include "arch/cpu.h"
+#include "arch/gdt.h"
+#include "arch/irq.h"
+#include "arch/paging.h"
+#include "arch/pic.h"
 
 /* =========================================================================
  * GDT
@@ -31,7 +34,7 @@ static void gdt_set_entry(int idx, uint32_t base, uint32_t limit,
     gdt[idx].access       = access;
 }
 
-void gdt_init(void)
+static void gdt_init(void)
 {
     gdt_ptr.limit = sizeof(gdt) - 1;
     gdt_ptr.base  = (uint32_t)&gdt;
@@ -68,7 +71,7 @@ void gdt_init(void)
     gdt_flush(&gdt_ptr);
 }
 
-void tss_init(void)
+static void tss_init(void)
 {
     uint32_t base = (uint32_t)&tss;
     uint32_t limit = sizeof(tss) - 1;
@@ -115,7 +118,7 @@ void idt_set_gate(uint8_t num, uint32_t handler, uint16_t sel, uint8_t flags)
     idt[num].type_attr   = flags;
 }
 
-void idt_init(void)
+static void idt_init(void)
 {
     idt_ptr.limit = sizeof(idt) - 1;
     idt_ptr.base  = (uint32_t)&idt;
@@ -128,7 +131,7 @@ void idt_init(void)
     idt_flush(&idt_ptr);
 }
 
-void isr_init(void)
+static void isr_init(void)
 {
     idt_set_gate( 0, (uint32_t)isr0,  GDT_KERNEL_CODE, IDT_GATE_INT32);
     idt_set_gate( 1, (uint32_t)isr1,  GDT_KERNEL_CODE, IDT_GATE_INT32);
@@ -172,3 +175,32 @@ void isr_init(void)
  * ========================================================================= */
 // global var for page physical addr
 volatile uint32_t kernel_page_table;
+
+/* =========================================================================
+ * Arch-neutral API (see arch/cpu.h / arch/paging.h)
+ * ========================================================================= */
+
+uint32_t *arch_kernel_pgdir(void)
+{
+    return boot_page_directory;
+}
+
+uint32_t arch_kernel_pgdir_phys(void)
+{
+    return kernel_page_table;
+}
+
+void arch_set_kernel_stack(uint32_t esp0)
+{
+    tss.esp0 = esp0;
+}
+
+void arch_cpu_init(void)
+{
+    gdt_init();
+    tss_init();
+    idt_init();
+    isr_init();
+    irq_init();              /* install IDT gates for IRQs 0-15 (vectors 32-47) */
+    pic_init(0x20, 0x28);    /* initialize PIC early for boot (replaced by APIC later) */
+}

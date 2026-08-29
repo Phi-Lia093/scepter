@@ -2,14 +2,14 @@
  * Interrupt Controller Manager
  * ============================================================================ */
 
-#include "driver/apic/interrupt.h"
-#include "driver/apic/lapic.h"
-#include "driver/apic/ioapic.h"
-#include "driver/pic.h"
+#include "arch/irq.h"
+#include "arch/lapic.h"
+#include "arch/ioapic.h"
+#include "arch/pic.h"
+#include "arch/gdt.h"
+#include "arch/io.h"
 #include "driver/acpi/acpi.h"
 #include "driver/acpi/tables.h"
-#include "kernel/asm.h"
-#include "kernel/cpu.h"
 #include "lib/printk.h"
 
 /* ============================================================================

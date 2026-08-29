@@ -9,7 +9,7 @@
 #include "driver/char/pcspk.h"
 #include "driver/char/char.h"
 #include "fs/devfs.h"
-#include "kernel/asm.h"
+#include "arch/io.h"
 #include "lib/printk.h"
 #include <stdint.h>
 
@@ -33,8 +33,8 @@ static uint32_t beep_until = 0;
 void pcspk_tick(void)
 {
     if (beep_until != 0) {
-        extern uint32_t pit_get_ticks(void);
-        if (pit_get_ticks() >= beep_until) {
+        extern uint32_t arch_timer_get_ticks(void);
+        if (arch_timer_get_ticks() >= beep_until) {
             pcspk_off();
             beep_until = 0;
         }
@@ -86,9 +86,9 @@ static int pcspk_write(int scnd_id, char c)
     (void)scnd_id;
     (void)c;
     /* Writing any byte produces a short standard beep (like ^G). */
-    extern uint32_t pit_get_ticks(void);
+    extern uint32_t arch_timer_get_ticks(void);
     pcspk_beep(880);
-    beep_until = pit_get_ticks() + 2;   /* ~20 ms */
+    beep_until = arch_timer_get_ticks() + 2;   /* ~20 ms */
     return 0;
 }
 

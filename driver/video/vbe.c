@@ -1,6 +1,6 @@
 #include "driver/video/vbe.h"
 #include "driver/pci/pci.h"
-#include "kernel/asm.h"
+#include "arch/io.h"
 #include "lib/printk.h"
 #include "lib/string.h"
 

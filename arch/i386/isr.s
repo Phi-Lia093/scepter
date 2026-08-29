@@ -57,7 +57,7 @@ ISR_NOERR 31
  *
  * Every IRQ (0-15) shares one stub that saves the full register frame and
  * calls the C dispatcher irq_dispatch(irq, cs).  The dispatcher looks the
- * IRQ up in a handler table (see driver/apic/interrupt.c) and EOIs the
+ * IRQ up in a handler table (see arch/i386/irq.c) and EOIs the
  * active interrupt controller afterwards, so drivers must NOT send their
  * own EOI.
  * ------------------------------------------------------------------------- */

@@ -1,8 +1,15 @@
-#ifndef CPU_H
-#define CPU_H
+#ifndef ARCH_I386_GDT_H
+#define ARCH_I386_GDT_H
 
 #include <stdint.h>
-#include "kernel/asm.h"
+
+/* =========================================================================
+ * PRIVATE i386 header – GDT / TSS / IDT layout.
+ *
+ * This header is only included by arch/i386/ sources.  Generic kernel
+ * code must NOT use these types or selectors directly; it uses the
+ * arch-neutral API in <arch/cpu.h> / <arch/irq.h> instead.
+ * ========================================================================= */
 
 /* =========================================================================
  * GDT
@@ -51,10 +58,8 @@ typedef struct {
     uint16_t iomap_base;
 } __attribute__((packed)) tss_entry_t;
 
-/* Global TSS - used to set esp0 for ring 3->0 transitions */
+/* Global TSS - esp0 is set via arch_set_kernel_stack() */
 extern tss_entry_t tss;
-
-void tss_init(void);
 
 /* Load GDT and reload all segment registers (inline asm) */
 static inline void gdt_flush(gdt_ptr_t *ptr)
@@ -78,10 +83,8 @@ static inline void gdt_flush(gdt_ptr_t *ptr)
     );
 }
 
-void gdt_init(void);
-
 /* =========================================================================
- * ISR stubs (defined in kernel/isr.s)
+ * ISR stubs (defined in arch/i386/isr.s)
  * ========================================================================= */
 
 extern void isr0(void);  extern void isr1(void);  extern void isr2(void);
@@ -99,11 +102,7 @@ extern void isr30(void); extern void isr31(void);
 /* Syscall interrupt (int 0x80) */
 extern void isr128(void);
 
-/* Register all 32 exception stubs in the IDT */
-void isr_init(void);
-
-/* IRQ stubs (defined in kernel/isr.s, dispatched via irq_dispatch() in
- * driver/apic/interrupt.c; IDT gates installed by irq_init()). */
+/* IRQ stubs (defined in arch/i386/isr.s, dispatched via irq_dispatch()). */
 extern void irq0(void);   extern void irq1(void);   extern void irq2(void);
 extern void irq3(void);   extern void irq4(void);   extern void irq5(void);
 extern void irq6(void);   extern void irq7(void);   extern void irq8(void);
@@ -139,7 +138,6 @@ static inline void idt_flush(idt_ptr_t *ptr)
     __asm__ volatile ("lidt (%0)" : : "r"(ptr) : "memory");
 }
 
-void idt_init(void);
 void idt_set_gate(uint8_t num, uint32_t handler, uint16_t sel, uint8_t flags);
 
-#endif /* CPU_H */
+#endif /* ARCH_I386_GDT_H */
