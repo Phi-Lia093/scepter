@@ -4,7 +4,6 @@
 #include "driver/char/char.h"
 #include "kernel/sched.h"
 #include "fs/devfs.h"
-#include "lib/printk.h"
 
 #define IRQ0  0  /* Timer IRQ */
 

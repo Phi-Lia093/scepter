@@ -21,13 +21,29 @@ switch_to:
  *
  * Reached via ret from switch_to when a task is first scheduled.  The
  * kernel stack holds the arch_setup_first_stack() frame:
- *   [rsp+0]  ret addr (this trampoline, already popped)
- *   [rsp+0]  RIP     [rsp+8]  CS=0x23  [rsp+16] RFLAGS(IF=1)
- *   [rsp+24] RSP     [rsp+32] SS=0x1B
- * iretq atomically enters ring 3 with interrupts enabled.
+ *   [rsp+0]   RAX ... [rsp+112] R15   (popped below)
+ *   [rsp+120] RIP  [rsp+128] CS=0x23  [rsp+136] RFLAGS(IF=1)
+ *   [rsp+144] RSP  [rsp+152] SS=0x1B
+ * We restore the GPRs (RAX=0 for a fork child) and iretq atomically enters
+ * ring 3 with interrupts enabled.
  * ---------------------------------------------------------------------------- */
 .global first_entry_trampoline
 first_entry_trampoline:
+    popq %rax
+    popq %rbx
+    popq %rcx
+    popq %rdx
+    popq %rsi
+    popq %rdi
+    popq %rbp
+    popq %r8
+    popq %r9
+    popq %r10
+    popq %r11
+    popq %r12
+    popq %r13
+    popq %r14
+    popq %r15
     iretq
 
 /* ----------------------------------------------------------------------------

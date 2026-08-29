@@ -78,10 +78,6 @@ _start:
     movb $'0', %al
     outb %al, %dx
 
-    /* Debug: '1' = about to build page tables. */
-    movb $'1', %al
-    call ser_putc32
-
     /* ---- Zero the page tables: pml4, pdpt0, pd0, pd_hi ---- */
     movl $pml4, %edi
     xorl %eax, %eax
@@ -130,56 +126,26 @@ _start:
     loop 2b
 
     /* ---- Enable paging ---- */
-    movb $'2', %al
-    call ser_putc32
-
     movl $pml4, %eax
     movl %eax, %cr3                       /* CR3 = pml4 (phys == VMA) */
-
-    movb $'3', %al
-    call ser_putc32
 
     movl %cr4, %eax
     orl  $(1 << 5), %eax                  /* PAE */
     movl %eax, %cr4
-
-    movb $'4', %al
-    call ser_putc32
 
     movl $0xC0000080, %ecx                /* EFER */
     rdmsr
     orl  $(1 << 8), %eax                  /* LME */
     wrmsr
 
-    movb $'5', %al
-    call ser_putc32
-
     movl %cr0, %eax
     orl  $(1 << 31), %eax                 /* PG */
     movl %eax, %cr0
-
-    movb $'6', %al
-    call ser_putc32
 
     /* Load a minimal 64-bit GDT and far-jump into long mode.
      * The jump target is the PHYSICAL address of _start_64. */
     lgdt (gdt64_ptr)
     ljmp $0x08, $_start_64_phys
-
-    /* Send AL to COM1 (32-bit helper for trampoline debugging). */
-ser_putc32:
-    pushl %edx
-    pushl %eax
-    movl $0x3F8, %edx
-    addl $5, %edx                 /* LSR */
-5:  inb %dx, %al
-    testb $0x20, %al              /* THR empty? */
-    jz 5b
-    movl $0x3F8, %edx
-    popl %eax
-    outb %al, %dx
-    popl %edx
-    ret
 
 
 /* ----------------------------------------------------------------------------
@@ -206,15 +172,8 @@ _start_64_v:
     movw %ax, %gs
     movw %ax, %ss
 
-    /* Early debug: send 'A' to COM1. */
-    movb $'A', %cl
-    call ser_putc
-
     /* Switch to the boot stack (low memory, identity-mapped). */
     leaq boot_stack_top(%rip), %rsp
-
-    movb $'B', %cl
-    call ser_putc
 
     /* Zero the kernel .bss. */
     leaq _bss_start_v(%rip), %rdi
@@ -223,15 +182,9 @@ _start_64_v:
     xorl %eax, %eax
     rep stosb
 
-    movb $'C', %cl
-    call ser_putc
-
     /* Publish the boot PML4 physical address (its VMA == phys). */
     movq $pml4, %rax
     movq %rax, kernel_page_table(%rip)
-
-    movb $'D', %cl
-    call ser_putc
 
     /* Call the C kernel (multiboot2 info is in saved_info). */
     call kernel_main
@@ -240,22 +193,6 @@ _start_64_v:
     cli
 3:  hlt
     jmp 3b
-
-/* Send CL to COM1 (for trampoline debugging). */
-ser_putc:
-    pushq %rax
-    pushq %rdx
-    movl $0x3F8, %edx
-    addl $5, %edx                 /* LSR */
-4:  inb %dx, %al
-    testb $0x20, %al              /* THR empty? */
-    jz 4b
-    movl $0x3F8, %edx
-    movb %cl, %al
-    outb %al, %dx
-    popq %rdx
-    popq %rax
-    ret
 
 /* ----------------------------------------------------------------------------
  * Minimal 64-bit GDT (temporary; replaced by arch/x86_64/cpu.c)

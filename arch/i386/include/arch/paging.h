@@ -113,6 +113,7 @@ void arch_mm_free_user_pages(struct task_struct *task, uintptr_t start, uintptr_
 
 /** Free all user page tables and clear the user half of the page directory. */
 void arch_mm_free_user_tables(struct task_struct *task);
+void arch_mm_free_pgd(struct task_struct *task);
 
 /**
  * Duplicate the parent's user address space into the child (eager copy:

@@ -179,6 +179,12 @@ void interrupt_init(void)
     printk("[INT] No APIC available, using legacy PIC\n");
     pic_init(0x20, 0x28);
     g_int_mode = INT_MODE_PIC;
+    /* pic_init() masks every IRQ; re-enable handlers registered before
+     * the controller switched to PIC mode (e.g. the timer IRQ0). */
+    for (int i = 0; i < IRQ_COUNT; i++) {
+        if (g_irq_handlers[i])
+            pic_enable_irq((uint8_t)i);
+    }
     printk("[INT] Using PIC mode\n");
 }
 

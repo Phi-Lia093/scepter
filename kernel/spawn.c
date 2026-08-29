@@ -144,7 +144,7 @@ int spawn_init(const char *path)
         
         /* Map into user space (non-premapped region) */
         uint32_t vaddr = USER_TEXT_START + (i * PAGE_SIZE);
-        uint32_t phys = VIRT_TO_PHYS((uint32_t)page_virt);
+        uint32_t phys = VIRT_TO_PHYS((uintptr_t)page_virt);
         
         if (map_user_page(task, vaddr, phys, 0x7) < 0) {  /* P | RW | U */
             printk("[SPAWN] Failed to map page\n");
@@ -172,7 +172,7 @@ int spawn_init(const char *path)
     
     /* Map stack at top of user space (just below kernel at 0xC0000000) */
     uint32_t stack_vaddr = USER_STACK_TOP - 2 * PAGE_SIZE;
-    uint32_t stack_phys = VIRT_TO_PHYS((uint32_t)stack_pages);
+    uint32_t stack_phys = VIRT_TO_PHYS((uintptr_t)stack_pages);
     
     if (map_user_page(task, stack_vaddr, stack_phys, 0x7) < 0 ||
         map_user_page(task, stack_vaddr + PAGE_SIZE,

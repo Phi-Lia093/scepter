@@ -147,6 +147,7 @@ void free_task(task_struct_t *task)
      * mappings.) */
     arch_mm_free_user_pages(task, 0, USER_STACK_TOP);
     arch_mm_free_user_tables(task);
+    arch_mm_free_pgd(task);
     
     /* Free task structure itself.
      * task_struct is kalloc'd directly from the buddy allocator (its size
@@ -155,7 +156,7 @@ void free_task(task_struct_t *task)
     {
         uint32_t pages = (sizeof(task_struct_t) + PAGE_SIZE - 1) >> PAGE_SHIFT;
         for (uint32_t i = 0; i < pages; i++) {
-            page_free((void *)((uint32_t)task + i * PAGE_SIZE));
+            page_free((void *)((uintptr_t)task + i * PAGE_SIZE));
         }
     }
 }

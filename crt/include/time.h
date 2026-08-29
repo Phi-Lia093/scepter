@@ -9,13 +9,13 @@
 typedef int clockid_t;
 
 struct timespec {
-    long tv_sec;
-    long tv_nsec;
+    int32_t tv_sec;
+    int32_t tv_nsec;
 };
 
 struct timeval {
-    long tv_sec;
-    long tv_usec;
+    int32_t tv_sec;
+    int32_t tv_usec;
 };
 
 /* Clock ids (must match kernel CLOCK_* values in syscall.c) */

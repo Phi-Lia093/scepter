@@ -57,17 +57,17 @@ struct fb_var_screeninfo {
 /* Fixed screen information (Linux 32-bit layout, 64 bytes). */
 struct fb_fix_screeninfo {
     char             id[16];
-    unsigned long    smem_start;
-    unsigned long    smem_len;
+    uint32_t        smem_start;
+    uint32_t        smem_len;
     unsigned int     type;
     unsigned int     type_aux;
     unsigned int     visual;
     unsigned short   xpanstep;
     unsigned short   ypanstep;
     unsigned short   ywrapstep;
-    unsigned long    line_length;
-    unsigned long    mmio_start;
-    unsigned long    mmio_len;
+    uint32_t        line_length;
+    uint32_t        mmio_start;
+    uint32_t        mmio_len;
     unsigned int     accel;
     unsigned short   capabilities;
     unsigned short   reserved[2];

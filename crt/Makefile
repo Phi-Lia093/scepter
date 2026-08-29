@@ -8,16 +8,31 @@ AR = ar
 LD = gcc
 OBJCOPY = objcopy
 
-CFLAGS = -c -ffreestanding -nostdlib -fno-builtin -fno-stack-protector \
-         -fno-pie -mno-red-zone -O2 -Wall -Wextra -fno-pic -fomit-frame-pointer \
-         -m32 -I ./include
-ASFLAGS = -c -ffreestanding -nostdlib -fno-builtin -fno-stack-protector \
-          -fno-pie -mno-red-zone -O2 -Wall -Wextra -fno-pic -m32 -I ./include
-ARFLAGS = rcs
-LDFLAGS = -T linker.ld -ffreestanding -nostdlib -fno-builtin -fno-stack-protector \
-          -fno-pie -mno-red-zone -O2 -Wall -Wextra -fno-pic -m32 -no-pie
+# Architecture: i386 (default) or x86_64
+ARCH ?= i386
 
-BUILD_DIR = build
+ifeq ($(ARCH),x86_64)
+ABI_FLAGS      = -m64 -mno-red-zone -fno-pic -fno-pie
+CRT0_SOURCE    = libc/crt0_64.s
+LINKER_SCRIPT  = linker64.ld
+BUILD_DIR      = build64
+else
+ABI_FLAGS      = -m32 -mno-red-zone -fno-pic -fno-pie
+CRT0_SOURCE    = libc/crt0.s
+LINKER_SCRIPT  = linker.ld
+BUILD_DIR      = build
+endif
+
+CFLAGS = -c -ffreestanding -nostdlib -fno-builtin -fno-stack-protector \
+         -O2 -Wall -Wextra -fomit-frame-pointer \
+         $(ABI_FLAGS) -I ./include
+ASFLAGS = -c -ffreestanding -nostdlib -fno-builtin -fno-stack-protector \
+          -O2 -Wall -Wextra \
+          $(ABI_FLAGS) -I ./include
+ARFLAGS = rcs
+LDFLAGS = -T $(LINKER_SCRIPT) -ffreestanding -nostdlib -fno-builtin -fno-stack-protector \
+          -O2 -Wall -Wextra $(ABI_FLAGS) -no-pie
+
 ROOT_DIR  = $(BUILD_DIR)/root
 BIN_DIR   = $(ROOT_DIR)/bin
 
@@ -55,7 +70,6 @@ LIBC_C_SOURCES = \
     libc/misc.c
 
 SYSCALL_SOURCES = syscall.c
-CRT0_SOURCE     = libc/crt0.s
 
 LIBC_OBJECTS = $(addprefix $(BUILD_DIR)/, $(LIBC_C_SOURCES:.c=.o))
 SYSCALL_OBJECTS = $(addprefix $(BUILD_DIR)/, $(SYSCALL_SOURCES:.c=.o))

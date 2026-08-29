@@ -186,18 +186,19 @@ syscall_entry:
 
     subq  $160, %rsp                 /* reserve registers_t frame */
 
-    /* IRET frame part (high offsets) */
+    /* IRET frame part (high offsets).  rcx/r11 hold the user RIP/RFLAGS
+     * saved by the syscall instruction and are free afterwards. */
     movq  %rcx, 120(%rsp)            /* rip      */
     movq  $0x23, 128(%rsp)           /* cs (0x20 | RPL3) */
     movq  %r11, 136(%rsp)            /* rflags   */
-    movq  syscall_user_rsp(%rip), %rax
-    movq  %rax, 144(%rsp)            /* rsp      */
+    movq  syscall_user_rsp(%rip), %rcx
+    movq  %rcx, 144(%rsp)            /* rsp      */
     movq  $0x1B, 152(%rsp)           /* ss (0x18 | RPL3) */
 
-    /* GPR part */
+    /* GPR part - RAX still holds the syscall number. */
     movq  %rax, 0(%rsp)              /* rax (syscall number) -> return slot */
     movq  %rbx, 8(%rsp)
-    movq  %rcx, 16(%rsp)
+    movq  %rcx, 16(%rsp)             /* rcx (scratch; user rcx is lost to syscall) */
     movq  %rdx, 24(%rsp)
     movq  %rsi, 32(%rsp)
     movq  %rdi, 40(%rsp)
@@ -230,10 +231,23 @@ syscall_entry:
     movq  %rsp, %rdi
     call  do_signal
 
-    /* Restore user context and sysret. */
+    /* Restore user context and sysret.  sysretq uses RCX=RIP and
+     * R11=RFLAGS; the other GPRs are restored from the frame. */
     movq  0(%rsp), %rax              /* return value  */
-    movq  120(%rsp), %rcx            /* user rip      */
+    movq  8(%rsp), %rbx
+    movq  24(%rsp), %rdx
+    movq  32(%rsp), %rsi
+    movq  40(%rsp), %rdi
+    movq  48(%rsp), %rbp
+    movq  56(%rsp), %r8
+    movq  64(%rsp), %r9
+    movq  72(%rsp), %r10
     movq  136(%rsp), %r11            /* user rflags   */
+    movq  88(%rsp), %r12
+    movq  96(%rsp), %r13
+    movq  104(%rsp), %r14
+    movq  112(%rsp), %r15
+    movq  120(%rsp), %rcx            /* user rip      */
     movq  144(%rsp), %rsp            /* user rsp      */
     sysretq
 

@@ -29,6 +29,25 @@ void arch_setup_first_stack(struct task_struct *task, uintptr_t user_entry,
         kstack--; *kstack = regs->rflags;    /* RFLAGS        */
         kstack--; *kstack = regs->cs;        /* CS            */
         kstack--; *kstack = regs->rip;       /* RIP           */
+        /* GPR block (popped by first_entry_trampoline).  Pushed in
+         * REVERSE pop order: the trampoline pops RAX first, so RAX must
+         * be at the lowest address (pushed last).  RAX=0 so the child
+         * sees fork() == 0; the rest mirror the parent. */
+        kstack--; *kstack = regs->r15;
+        kstack--; *kstack = regs->r14;
+        kstack--; *kstack = regs->r13;
+        kstack--; *kstack = regs->r12;
+        kstack--; *kstack = regs->r11;
+        kstack--; *kstack = regs->r10;
+        kstack--; *kstack = regs->r9;
+        kstack--; *kstack = regs->r8;
+        kstack--; *kstack = regs->rbp;
+        kstack--; *kstack = regs->rdi;
+        kstack--; *kstack = regs->rsi;
+        kstack--; *kstack = regs->rdx;
+        kstack--; *kstack = regs->rcx;
+        kstack--; *kstack = regs->rbx;
+        kstack--; *kstack = 0;               /* RAX (pushed last = popped first) */
     } else {
         /* ---- fresh start (spawn) ---- */
         kstack--; *kstack = 0x1B;            /* SS            */
@@ -36,9 +55,12 @@ void arch_setup_first_stack(struct task_struct *task, uintptr_t user_entry,
         kstack--; *kstack = 0x202;           /* RFLAGS (IF=1) */
         kstack--; *kstack = 0x23;            /* CS            */
         kstack--; *kstack = user_entry;      /* RIP           */
+        for (int i = 0; i < 15; i++)
+            kstack--, *kstack = 0;           /* GPRs = 0 */
     }
 
-    /* switch_to() rets to first_entry_trampoline, which iretq's. */
+    /* switch_to() rets to first_entry_trampoline, which pops the GPR
+     * block and iretq's. */
     kstack--; *kstack = (uintptr_t)first_entry_trampoline;
 
     task->kernel_esp = (uintptr_t)kstack;

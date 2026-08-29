@@ -67,7 +67,7 @@ int exec_flat(const char *path)
         }
         
         /* Convert to physical address */
-        uint32_t page_phys = VIRT_TO_PHYS((uint32_t)page_virt);
+        uint32_t page_phys = VIRT_TO_PHYS((uintptr_t)page_virt);
         uint32_t vaddr = USER_BASE + (i * PAGE_SIZE);
         
         /* Map in user page directory with RWX permissions */

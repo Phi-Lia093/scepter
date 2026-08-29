@@ -170,6 +170,13 @@ void flush_tlb(void)
  * 
  * @return Physical address of new page directory, or NULL on error
  */
+/* The i386 page directory is embedded in mm_struct_t (pgdir[1024]), so
+ * there is no separate page-directory allocation to free. */
+void arch_mm_free_pgd(struct task_struct *task)
+{
+    (void)task;
+}
+
 void *create_user_pgdir(void)
 {
     /* Allocate page directory (must be page-aligned) */

@@ -2,8 +2,8 @@
 #define _UTIME_H
 
 struct utimbuf {
-    long actime;    /* access time  */
-    long modtime;   /* modification time */
+    int32_t actime;    /* access time  */
+    int32_t modtime;   /* modification time */
 };
 
 int utime(const char *path, const struct utimbuf *times);

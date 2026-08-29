@@ -148,6 +148,13 @@ static void isr_init(void)
  * STAR bits 63:48 = SYSRET base (CS = base+16 = 0x20, SS = base+8 = 0x18). */
 static void syscall_init(void)
 {
+    /* Enable the syscall/sysret instructions (EFER.SCE). */
+    uint64_t efer = rdmsr(0xC0000080);
+    efer |= 1;   /* SCE */
+    wrmsr(0xC0000080, efer);
+
+    /* STAR bits 47:32 = SYSCALL CS (kernel code 0x08; SS = +8 = 0x10).
+     * STAR bits 63:48 = SYSRET base (CS = base+16 = 0x20, SS = base+8 = 0x18). */
     uint64_t star = ((uint64_t)0x10 << 48) | ((uint64_t)0x08 << 32);
     wrmsr(0xC0000081, star);                    /* STAR */
     wrmsr(0xC0000082, (uint64_t)syscall_entry); /* LSTAR */
@@ -163,7 +170,9 @@ volatile uintptr_t kernel_page_table;   /* set by boot.s = phys of boot_pml4 */
 
 uint64_t *arch_kernel_pgdir(void)
 {
-    return boot_pml4;
+    /* boot_pml4 lives at a low physical address; return the direct-map
+     * alias so dereferences work even under a user PML4. */
+    return (uint64_t *)PHYS_TO_VIRT((uintptr_t)boot_pml4);
 }
 
 uintptr_t arch_kernel_pgdir_phys(void)

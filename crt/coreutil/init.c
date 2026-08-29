@@ -88,7 +88,7 @@ int main(int argc, char *argv[], char *envp[])
         pid_t rcpid = fork();
         if (rcpid == 0) {
             char *rc_argv[] = { "sh", "/etc/rc", NULL };
-            execve("/bin/sh", rc_argv, envp);
+            execve("/bin/sh", rc_argv, environ);
             _exit(127);
         }
         int rcstatus;
@@ -103,7 +103,7 @@ int main(int argc, char *argv[], char *envp[])
         }
         if (pid == 0) {
             /* Child: become the shell */
-            execve("/bin/sh", sh_argv, envp);
+            execve("/bin/sh", sh_argv, environ);
             printf("init: failed to exec /bin/sh\n");
             exit(1);
         }

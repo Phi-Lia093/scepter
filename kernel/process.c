@@ -78,6 +78,8 @@ void do_exit(int status)
     
     /* Free the user page tables (also clears the user half of pgdir) */
     arch_mm_free_user_tables(task);
+    /* Free the page-directory itself (task teardown). */
+    arch_mm_free_pgd(task);
     
     /* Reparent children to init (PID 1) or auto-reap them */
     if (!list_empty(&task->children)) {
@@ -764,7 +766,7 @@ static int do_exec(const char *user_path, char **user_argv, char **user_envp)
         
         /* Map into user space */
         uint32_t vaddr = USER_TEXT_START + (i * PAGE_SIZE);
-        uint32_t phys = VIRT_TO_PHYS((uint32_t)page_virt);
+        uint32_t phys = VIRT_TO_PHYS((uintptr_t)page_virt);
         if (arch_mm_map_user(task, vaddr, phys, 0x7) < 0) {
             printk("[EXEC] Failed to map page %u\n", i);
             fs_close(fd);
@@ -794,7 +796,7 @@ static int do_exec(const char *user_path, char **user_argv, char **user_envp)
     }
     
     uint32_t stack_vaddr = USER_STACK_TOP - 2 * PAGE_SIZE;
-    uint32_t stack_phys = VIRT_TO_PHYS((uint32_t)stack_pages);
+    uint32_t stack_phys = VIRT_TO_PHYS((uintptr_t)stack_pages);
     
     arch_mm_map_user(task, stack_vaddr, stack_phys, 0x7);
     arch_mm_map_user(task, stack_vaddr + PAGE_SIZE, stack_phys + PAGE_SIZE, 0x7);
@@ -819,6 +821,7 @@ static int do_exec(const char *user_path, char **user_argv, char **user_envp)
 
     /* Switch to the task's page directory */
     uint32_t cr3 = arch_mm_get_pgd_phys(task);
+    printk("[EXEC] pid %d: %s\n", (int)task->pid, task->name);
     
     /* This will never return - it directly jumps to userspace */
     enter_userspace(cr3, USER_TEXT_START, user_esp);

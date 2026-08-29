@@ -60,6 +60,7 @@ void *create_user_pgdir(void);
 void arch_mm_init(struct task_struct *task);
 void arch_mm_free_user_pages(struct task_struct *task, uintptr_t start, uintptr_t end);
 void arch_mm_free_user_tables(struct task_struct *task);
+void arch_mm_free_pgd(struct task_struct *task);
 int arch_mm_copy_user(struct task_struct *parent, struct task_struct *child);
 int arch_mm_map_user(struct task_struct *task, uintptr_t vaddr, uintptr_t phys, uint32_t flags);
 uintptr_t arch_mm_get_pgd_phys(struct task_struct *task);

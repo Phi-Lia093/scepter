@@ -26,6 +26,11 @@ extern void *page_alloc_flags(size_t size, uint32_t flags);
 
 extern uint64_t boot_pml4[];
 
+/* The boot page tables live at a low physical address; access them via
+ * the direct map so they work even when a user PML4 (no identity map)
+ * is active. */
+#define BOOT_PML4  ((uint64_t *)PHYS_TO_VIRT((uintptr_t)boot_pml4))
+
 static inline uint64_t *pml4_slot(uint64_t *pml4, uintptr_t va)
 { return &pml4[(va >> PML4_SHIFT) & (ECOUNT - 1)]; }
 static inline uint64_t *pdpt_slot(uint64_t *pdpt, uintptr_t va)
@@ -45,7 +50,7 @@ static inline uint64_t *pt_virt(uint64_t phys)
 
 uint64_t *get_pte(uintptr_t virt_addr)
 {
-    uint64_t *pml4 = boot_pml4;
+    uint64_t *pml4 = BOOT_PML4;
 
     uint64_t *e = pml4_slot(pml4, virt_addr);
     if (!(*e & PTE_PRESENT)) return NULL;
@@ -75,7 +80,7 @@ static uint64_t alloc_pt_page(void)
 
 int map_page(void *pgdir, uintptr_t virt_addr, uintptr_t phys_addr, uint32_t flags)
 {
-    uint64_t *pgdir64 = pgdir ? (uint64_t *)pgdir : boot_pml4;
+    uint64_t *pgdir64 = pgdir ? (uint64_t *)pgdir : BOOT_PML4;
     virt_addr &= ~0xFFFULL;
     phys_addr &= ~0xFFFULL;
 
@@ -167,7 +172,7 @@ void arch_mm_init(struct task_struct *task)
     /* Copy the whole kernel half (PML4[256..511]) - shallow share, so
      * later kernel-half mappings (vmalloc/ioremap) propagate. */
     for (int i = 256; i < 512; i++)
-        pml4[i] = boot_pml4[i];
+        pml4[i] = BOOT_PML4[i];
 
     task->mm.arch.pml4 = pml4;
     task->mm.arch.cr3  = p;
@@ -246,7 +251,9 @@ void arch_mm_free_user_tables(struct task_struct *task)
         return;
 
     /* Free user page tables (PML4[0..255] subtrees); keep the shared
-     * kernel half (256..511). */
+     * kernel half (256..511).  The PML4 itself is kept: do_exec reuses
+     * it for the new image, so it must survive here.  Free it with
+     * arch_mm_free_pgd() when the task is torn down. */
     for (int i = 0; i < 256; i++) {
         uint64_t pml4e = pml4[i];
         if (!(pml4e & PTE_PRESENT)) continue;
@@ -264,8 +271,19 @@ void arch_mm_free_user_tables(struct task_struct *task)
         }
         page_free(pdpt);
     }
-    page_free(pml4);
+    /* Clear the user half so the PML4 is clean for reuse. */
+    for (int i = 0; i < 256; i++)
+        pml4[i] = 0;
+}
 
+/* Free the whole per-process address space including the PML4 itself.
+ * Only for task teardown (do_exit / free_task). */
+void arch_mm_free_pgd(struct task_struct *task)
+{
+    uint64_t *pml4 = task->mm.arch.pml4;
+    if (!pml4)
+        return;
+    page_free(pml4);
     task->mm.arch.pml4 = NULL;
     task->mm.arch.cr3  = 0;
 }
@@ -279,7 +297,7 @@ void *create_user_pgdir(void)
     }
     uint64_t *pml4 = pt_virt(p);
     for (int i = 256; i < 512; i++)
-        pml4[i] = boot_pml4[i];
+        pml4[i] = BOOT_PML4[i];
     return (void *)(uintptr_t)p;             /* physical address */
 }
 
@@ -308,19 +326,19 @@ int arch_mm_copy_user(struct task_struct *parent, struct task_struct *child)
                 /* ensure child has PML4/PDPT/PD levels */
                 if (!(cpml4[i] & PTE_PRESENT)) {
                     uint64_t p = alloc_pt_page();
-                    if (!p) return -1;
+                    if (!p) { printk("[FORK] OOM: PML4 alloc\n"); return -1; }
                     cpml4[i] = p | PTE_PRESENT | PTE_WRITABLE | PTE_USER;
                 }
                 uint64_t *cpdpt = pt_virt(cpml4[i] & ~0xFFFULL);
                 if (!(cpdpt[j] & PTE_PRESENT)) {
                     uint64_t p = alloc_pt_page();
-                    if (!p) return -1;
+                    if (!p) { printk("[FORK] OOM: PDPT alloc\n"); return -1; }
                     cpdpt[j] = p | PTE_PRESENT | PTE_WRITABLE | PTE_USER;
                 }
                 uint64_t *cpd = pt_virt(cpdpt[j] & ~0xFFFULL);
                 if (!(cpd[k] & PTE_PRESENT)) {
                     uint64_t p = alloc_pt_page();
-                    if (!p) return -1;
+                    if (!p) { printk("[FORK] OOM: PD alloc\n"); return -1; }
                     cpd[k] = p | PTE_PRESENT | PTE_WRITABLE | PTE_USER;
                 }
 

@@ -35,84 +35,60 @@
 #include "fcntl.h"
 
 /* ============================================================================
- * Syscall invocation helpers (int 0x80, up to 5 args)
- * Arguments: EAX=num EBX=arg1 ECX=arg2 EDX=arg3 ESI=arg4 EDI=arg5
+ * Syscall invocation helpers.
+ *   i386:    int $0x80,  EAX=num EBX/ECX/EDX/ESI/EDI/EBP=args
+ *   x86_64:  syscall,   RAX=num RDI/RSI/RDX/R10/R8/R9=args
  * ============================================================================ */
 
 #define INLINE __attribute__((always_inline)) static inline
 
+#ifndef __x86_64__
+
 INLINE int syscall0(int num)
 {
     int ret;
-    __asm__ volatile(
-        "int $0x80"
-        : "=a"(ret)
-        : "a"(num)
-        : "memory", "ebx", "ecx", "edx", "esi", "edi", "ebp"
-    );
+    __asm__ volatile("int $0x80" : "=a"(ret) : "a"(num)
+                     : "memory", "ebx", "ecx", "edx", "esi", "edi", "ebp");
     return ret;
 }
-
 INLINE int syscall1(int num, int arg1)
 {
     int ret;
-    __asm__ volatile(
-        "int $0x80"
-        : "=a"(ret)
-        : "a"(num), "b"(arg1)
-        : "memory", "ecx", "edx", "esi", "edi", "ebp"
-    );
+    __asm__ volatile("int $0x80" : "=a"(ret) : "a"(num), "b"(arg1)
+                     : "memory", "ecx", "edx", "esi", "edi", "ebp");
     return ret;
 }
-
 INLINE int syscall2(int num, int arg1, int arg2)
 {
     int ret;
-    __asm__ volatile(
-        "int $0x80"
-        : "=a"(ret)
-        : "a"(num), "b"(arg1), "c"(arg2)
-        : "memory", "edx", "esi", "edi", "ebp"
-    );
+    __asm__ volatile("int $0x80" : "=a"(ret) : "a"(num), "b"(arg1), "c"(arg2)
+                     : "memory", "edx", "esi", "edi", "ebp");
     return ret;
 }
-
 INLINE int syscall3(int num, int arg1, int arg2, int arg3)
 {
     int ret;
-    __asm__ volatile(
-        "int $0x80"
-        : "=a"(ret)
-        : "a"(num), "b"(arg1), "c"(arg2), "d"(arg3)
-        : "memory", "esi", "edi", "ebp"
-    );
+    __asm__ volatile("int $0x80" : "=a"(ret)
+                     : "a"(num), "b"(arg1), "c"(arg2), "d"(arg3)
+                     : "memory", "esi", "edi", "ebp");
     return ret;
 }
-
 INLINE int syscall4(int num, int arg1, int arg2, int arg3, int arg4)
 {
     int ret;
-    __asm__ volatile(
-        "int $0x80"
-        : "=a"(ret)
-        : "a"(num), "b"(arg1), "c"(arg2), "d"(arg3), "S"(arg4)
-        : "memory", "edi", "ebp"
-    );
+    __asm__ volatile("int $0x80" : "=a"(ret)
+                     : "a"(num), "b"(arg1), "c"(arg2), "d"(arg3), "S"(arg4)
+                     : "memory", "edi", "ebp");
     return ret;
 }
-
 INLINE int syscall5(int num, int arg1, int arg2, int arg3, int arg4, int arg5)
 {
     int ret;
-    __asm__ volatile(
-        "int $0x80"
-        : "=a"(ret)
-        : "a"(num), "b"(arg1), "c"(arg2), "d"(arg3), "S"(arg4), "D"(arg5)
-        : "memory", "ebp"
-    );
+    __asm__ volatile("int $0x80" : "=a"(ret)
+                     : "a"(num), "b"(arg1), "c"(arg2), "d"(arg3), "S"(arg4), "D"(arg5)
+                     : "memory", "ebp");
     return ret;
 }
-
 /* 6-arg syscalls pass the 6th argument in EBP (Linux i386 convention). */
 INLINE int syscall6(int num, int arg1, int arg2, int arg3, int arg4,
                     int arg5, int arg6)
@@ -124,10 +100,79 @@ INLINE int syscall6(int num, int arg1, int arg2, int arg3, int arg4,
         : "=a"(ret)
         : "a"(num), "b"(arg1), "c"(arg2), "d"(arg3), "S"(arg4), "D"(arg5),
           "m"(arg6)
-        : "memory", "ebp"
-    );
+        : "memory", "ebp");
     return ret;
 }
+
+#else /* __x86_64__: the 'syscall' instruction */
+
+INLINE int syscall0(int num)
+{
+    long ret;
+    __asm__ volatile("syscall" : "=a"(ret) : "a"((long)num)
+                     : "rcx", "r11", "memory");
+    return (int)ret;
+}
+INLINE int syscall1(int num, int arg1)
+{
+    long ret;
+    __asm__ volatile("syscall" : "=a"(ret)
+                     : "a"((long)num), "D"((long)arg1)
+                     : "rcx", "r11", "memory");
+    return (int)ret;
+}
+INLINE int syscall2(int num, int arg1, int arg2)
+{
+    long ret;
+    __asm__ volatile("syscall" : "=a"(ret)
+                     : "a"((long)num), "D"((long)arg1), "S"((long)arg2)
+                     : "rcx", "r11", "memory");
+    return (int)ret;
+}
+INLINE int syscall3(int num, int arg1, int arg2, int arg3)
+{
+    long ret;
+    __asm__ volatile("syscall" : "=a"(ret)
+                     : "a"((long)num), "D"((long)arg1), "S"((long)arg2), "d"((long)arg3)
+                     : "rcx", "r11", "memory");
+    return (int)ret;
+}
+INLINE int syscall4(int num, int arg1, int arg2, int arg3, int arg4)
+{
+    long ret;
+    register long r10 asm("r10") = (long)arg4;
+    __asm__ volatile("syscall" : "=a"(ret)
+                     : "a"((long)num), "D"((long)arg1), "S"((long)arg2),
+                       "d"((long)arg3), "r"(r10)
+                     : "rcx", "r11", "memory");
+    return (int)ret;
+}
+INLINE int syscall5(int num, int arg1, int arg2, int arg3, int arg4, int arg5)
+{
+    long ret;
+    register long r10 asm("r10") = (long)arg4;
+    register long r8  asm("r8")  = (long)arg5;
+    __asm__ volatile("syscall" : "=a"(ret)
+                     : "a"((long)num), "D"((long)arg1), "S"((long)arg2),
+                       "d"((long)arg3), "r"(r10), "r"(r8)
+                     : "rcx", "r11", "memory");
+    return (int)ret;
+}
+INLINE int syscall6(int num, int arg1, int arg2, int arg3, int arg4,
+                    int arg5, int arg6)
+{
+    long ret;
+    register long r10 asm("r10") = (long)arg4;
+    register long r8  asm("r8")  = (long)arg5;
+    register long r9  asm("r9")  = (long)arg6;
+    __asm__ volatile("syscall" : "=a"(ret)
+                     : "a"((long)num), "D"((long)arg1), "S"((long)arg2),
+                       "d"((long)arg3), "r"(r10), "r"(r8), "r"(r9)
+                     : "rcx", "r11", "memory");
+    return (int)ret;
+}
+
+#endif /* __x86_64__ */
 
 /* ============================================================================
  * Process control

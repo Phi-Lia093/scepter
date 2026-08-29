@@ -100,7 +100,7 @@ static int allocate_page(task_struct_t *task, uint32_t fault_addr, vma_t *vma)
     }
     
     /* Get physical address */
-    uint32_t page_phys = VIRT_TO_PHYS((uint32_t)page_virt);
+    uintptr_t page_phys = VIRT_TO_PHYS((uintptr_t)page_virt);
     
     /* Convert VMA flags to PTE flags */
     uint32_t pte_flags = vma_flags_to_pte(vma->vm_flags);
