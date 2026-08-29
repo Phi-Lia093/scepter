@@ -74,6 +74,29 @@ The x86_64 userspace ABI keeps the 32-bit (x32-style) struct layouts
 (timeval/timespec/stat/fb_fix_screeninfo are 32-bit) so the same
 kernel↔libc byte layout works on both arches.
 
+## One-command build & run
+
+    ./run_i386.sh        # clean everything -> build i386 kernel+userspace ->
+                         # create root.img (GRUB MBR + ext2) -> qemu-system-i386
+    ./run_x86_64.sh      # clean everything -> build x86_64 kernel+userspace ->
+                         # create root64.img + efi.img (EFI GRUB ESP) ->
+                         # qemu-system-x86_64 with OVMF
+
+Both scripts start from a clean tree: `make clean`, then remove every
+`*.img`, `*.log`, `*.sym` and the `mnt/` mount point before rebuilding.
+
+For incremental work:
+
+    make ARCH=i386 all          # or ARCH=x86_64
+    make -C crt ARCH=i386 all
+    make ARCH=i386 root         # create the disk image(s) for that arch
+    make ARCH=i386 app          # install the userspace
+    make ARCH=i386 run          # QEMU (add -s -S via: make ARCH=i386 debug)
+
+QEMU is the only emulator used.  `make debug` runs QEMU paused with a GDB
+stub on `tcp::1234` (attach with `gdb build-<arch>/kernel.elf`, `target
+remote :1234`).
+
 ## Booting x86_64 (EFI)
 
 i386 boots the classic way: GRUB multiboot from `root.img` on the first

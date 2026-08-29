@@ -43,30 +43,59 @@ $(TARGET): modules
 	@$(CC) $(LDFLAGS) -o $@ $(KERNEL_OBJS)
 	nm --no-sort $@ > kernel.sym
 
-# ===========================================================================
-# Root Disk Management
+# ============================================================================
+# Architecture-specific disk/run parameters
+# ============================================================================
 #
-# One IDE disk image (root.img) holds everything: GRUB in the MBR and a
-# single ext2 partition (hda1) that is both the boot partition
-# (/boot/kernel.elf) and the root filesystem (/init, /bin; /dev is devfs
-# automounted by init).  'make run' boots it as the first IDE disk.
-# ===========================================================================
+# i386:   one disk (root.img) with GRUB (i386-pc) in the MBR + an ext2
+#         partition that is both the boot partition and the root fs.
+# x86_64: two disks — efi.img is a GPT ESP holding EFI GRUB (x86_64-efi,
+#         multiboot2) + the kernel, root64.img is the ext2 root fs (hda1).
+# ============================================================================
+ifeq ($(ARCH),x86_64)
+RUN_IMG     = efi.img          # disk GRUB + kernel live on (kernel copy target)
+KERNEL_NAME = kernel64.elf
+ROOT_FS_IMG = root64.img       # ext2 root filesystem (hda1)
+CRT_ROOT    = crt/build64/root
+QEMU_BIN    = qemu-system-x86_64
+QEMU_BIOS   = -bios /usr/share/ovmf/OVMF.fd
+QEMU_DRIVES = -drive file=root64.img,format=raw,if=ide,index=0 \
+              -drive file=efi.img,format=raw,if=ide,index=1
+else
+RUN_IMG     = root.img         # GRUB MBR + ext2 root fs in one disk
+KERNEL_NAME = kernel.elf
+ROOT_FS_IMG = root.img
+CRT_ROOT    = crt/build/root
+QEMU_BIN    = qemu-system-i386
+QEMU_BIOS   =
+QEMU_DRIVES = -drive file=root.img,format=raw,if=ide,index=0
+endif
+
+# ============================================================================
+# Root / Boot Disk Management
+# ============================================================================
 MOUNT_DIR = mnt
+IMG ?= $(RUN_IMG)    # image to mount (override for app: IMG=root64.img)
 
 root:
-	@echo "Creating root disk image (GRUB + root filesystem)..."
-	@sudo ./script/make_grub_disk.sh
-	@echo "Done! Use 'make mount' to mount it, then 'make app'."
+	@echo "Creating $(ARCH) boot/root disk image(s)..."
+ifeq ($(ARCH),x86_64)
+	@sudo ./script/make_grub_disk.sh root64.img nogrub
+	@sudo ./script/make_efi_disk.sh
+else
+	@sudo ./script/make_grub_disk.sh root.img
+endif
+	@echo "Done! Use 'make app' to install the userspace, then 'make run'."
 
 mount:
-	@if [ ! -f root.img ]; then \
-		echo "ERROR: root.img not found. Run 'make root' first."; \
+	@if [ ! -f $(IMG) ]; then \
+		echo "ERROR: $(IMG) not found. Run 'make root' first."; \
 		exit 1; \
 	fi
-	@echo "Mounting root.img to ./$(MOUNT_DIR)..."
+	@echo "Mounting $(IMG) to ./$(MOUNT_DIR)..."
 	@mkdir -p $(MOUNT_DIR)
-	@sudo losetup -fP root.img
-	@LOOP=$$(losetup -j root.img | cut -d: -f1); \
+	@sudo losetup -fP $(IMG)
+	@LOOP=$$(losetup -j $(IMG) | cut -d: -f1); \
 	sudo mount $${LOOP}p1 $(MOUNT_DIR); \
 	sudo chown -R $(USER):$(USER) $(MOUNT_DIR); \
 	echo "✓ Mounted at ./$(MOUNT_DIR) (owned by $(USER))"
@@ -76,89 +105,66 @@ umount:
 	@if mountpoint -q $(MOUNT_DIR); then \
 		sudo umount $(MOUNT_DIR); \
 	fi
-	@LOOP=$$(losetup -j root.img 2>/dev/null | cut -d: -f1); \
+	@LOOP=$$(losetup -j $(IMG) 2>/dev/null | cut -d: -f1); \
 	if [ -n "$$LOOP" ]; then \
 		sudo losetup -d $$LOOP; \
 	fi
 	@rmdir $(MOUNT_DIR) 2>/dev/null || true
 	@echo "✓ Unmounted"
 
-# ===========================================================================
-# Run and Debug
+# ============================================================================
+# Run and Debug (QEMU only)
 #
-# The system boots from an IDE disk (root.img): SeaBIOS + GRUB boot from the
-# first IDE drive and the kernel mounts the ext2 root filesystem from hda1.
-# ===========================================================================
+# i386   boots from root.img via SeaBIOS + GRUB multiboot.
+# x86_64 boots via OVMF (UEFI): the ESP on efi.img is found, EFI GRUB loads
+# /boot/kernel64.elf with multiboot2, and the kernel mounts root64.img (hda1).
+# 'make debug' pauses QEMU and exposes a GDB stub on tcp::1234.
+# ============================================================================
 run: $(TARGET)
-	@if [ ! -f root.img ]; then \
-		echo "ERROR: root.img not found. Run 'make root' first."; \
-		exit 1; \
-	fi
-	@if ! mountpoint -q $(MOUNT_DIR); then \
-		echo "Mounting disk..."; \
-		$(MAKE) mount; \
-	fi
+	@$(MAKE) mount
 	@echo "Copying kernel to disk..."
-	@cp $(TARGET) $(MOUNT_DIR)/boot/kernel.elf
+	@cp $(TARGET) $(MOUNT_DIR)/boot/$(KERNEL_NAME)
 	@sync
-	@echo "Unmounting disk..."
 	@$(MAKE) umount
-ifeq ($(ARCH),x86_64)
-	@echo "Starting QEMU x86_64 (OVMF + EFI GRUB; root64.img + efi.img)..."
+	@echo "Starting QEMU ($(ARCH))..."
 	@rm -f kernel.log
-	@qemu-system-x86_64 -bios /usr/share/ovmf/OVMF.fd -m 128 \
-		-drive file=root64.img,format=raw,if=ide,index=0 \
-		-drive file=efi.img,format=raw,if=ide,index=1 \
+	@$(QEMU_BIN) -m 128 $(QEMU_BIOS) $(QEMU_DRIVES) \
 		-serial file:kernel.log \
 		-netdev user,id=net0 -device rtl8139,netdev=net0 \
-		-display none -no-reboot
-else
-	@echo "Starting QEMU (IDE root disk + RTL8139 NIC)..."
-	@rm -f kernel.log
-	@qemu-system-i386 -m 128 \
-		-drive file=root.img,format=raw,if=ide,index=0 \
-		-serial file:kernel.log \
-		-netdev user,id=net0 \
-		-device rtl8139,netdev=net0
-endif
-
+		-no-reboot
 
 debug: $(TARGET)
-	@if [ ! -f root.img ]; then \
-		echo "ERROR: root.img not found. Run 'make root' first."; \
-		exit 1; \
-	fi
-	@if ! mountpoint -q $(MOUNT_DIR); then \
-		echo "Mounting disk..."; \
-		$(MAKE) mount; \
-	fi
+	@$(MAKE) mount
 	@echo "Copying kernel to disk..."
-	@cp $(TARGET) $(MOUNT_DIR)/boot/kernel.elf
+	@cp $(TARGET) $(MOUNT_DIR)/boot/$(KERNEL_NAME)
 	@sync
-	@echo "Unmounting disk..."
 	@$(MAKE) umount
-	@echo "Starting bochs..."
+	@echo "Starting QEMU ($(ARCH)) with GDB stub on tcp::1234 (paused)..."
 	@rm -f kernel.log
-	@bochs
+	@$(QEMU_BIN) -s -S -m 128 $(QEMU_BIOS) $(QEMU_DRIVES) \
+		-serial file:kernel.log \
+		-netdev user,id=net0 -device rtl8139,netdev=net0 \
+		-no-reboot
 
 app:
-	@make mount
-	@make -C crt all
+	@make -C crt all ARCH=$(ARCH)
+	@echo "Mounting $(ROOT_FS_IMG) to install userspace..."
+	@$(MAKE) mount IMG=$(ROOT_FS_IMG)
 	@echo "Copying userspace programs to disk..."
 	@rm -f mnt/bin/* mnt/init
-	@cp crt/build/root/init mnt/
+	@cp $(CRT_ROOT)/init mnt/
 	@mkdir -p mnt/bin
-	@cp crt/build/root/bin/* mnt/bin/
+	@cp $(CRT_ROOT)/bin/* mnt/bin/
 	@echo "✓ Userspace programs installed"
-	@make umount
+	@$(MAKE) umount IMG=$(ROOT_FS_IMG)
 
-# ===========================================================================
+# ============================================================================
 # Clean
-# ===========================================================================
+# ============================================================================
 clean:
 	@echo "Cleaning build artifacts..."
-	@rm -rf $(BUILD_DIR)
-	@make -C crt clean
+	@rm -rf build-i386 build-x86_64
+	@rm -rf crt/build crt/build64
 	@rm -f *.sym
 	@echo "✓ Clean complete"
 

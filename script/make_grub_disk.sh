@@ -1,24 +1,32 @@
 #!/bin/bash
 #
-# Create a single bootable disk image that merges the boot disk and the
-# root filesystem into one (root.img):
+# Create a bootable ext2 root disk image (default: root.img):
 #
-#   - GRUB bootloader in the MBR
+#   - (optional) GRUB bootloader in the MBR (i386-pc, multiboot)
 #   - one ext2 partition (hda1) that serves BOTH as the boot partition
 #     (GRUB reads /boot/kernel.elf from it) and as the root filesystem
 #     (the kernel mounts it at /, containing /init and /bin)
 #   - /dev is populated at runtime by init (devfs automount)
 #
-# Usage: sudo ./script/make_grub_disk.sh
+# Usage: sudo ./script/make_grub_disk.sh [DISK_IMG] [grub|nogrub]
+#
+#   DISK_IMG   output file name (default root.img)
+#   nogrub     skip GRUB installation (used for the x86_64 root fs; the
+#              bootloader lives on efi.img there)
+#
+# Examples:
+#   sudo ./script/make_grub_disk.sh               # root.img with GRUB (i386)
+#   sudo ./script/make_grub_disk.sh root64.img nogrub
 #
 
 set -e  # Exit on error
 
-DISK_IMG="root.img"
+DISK_IMG="${1:-root.img}"
+MODE="${2:-grub}"
 DISK_SIZE_MB=128
 
 echo "=============================================="
-echo "Creating Bootable Root Disk Image (root.img)"
+echo "Creating Bootable Root Disk Image ($DISK_IMG)"
 echo "=============================================="
 
 # Check if running as root
@@ -65,16 +73,21 @@ echo "[5/7] Mounting partition..."
 TEMP_MOUNT=$(mktemp -d)
 mount "${LOOP_DEV}p1" "$TEMP_MOUNT"
 
-# Step 6: Install GRUB.
+# Step 6: Install GRUB (i386-pc) unless the caller asked for no GRUB.
 # The ext2 module is embedded in the core image so GRUB can read the
 # root partition to find grub.cfg and load /boot/kernel.elf.
-echo "[6/7] Installing GRUB bootloader..."
-grub-install --target=i386-pc --boot-directory="$TEMP_MOUNT/boot" --install-modules="ext2 normal multiboot" "$LOOP_DEV" 2>&1 | grep -v "Installing"
+if [ "$MODE" = "grub" ]; then
+    echo "[6/7] Installing GRUB bootloader..."
+    grub-install --target=i386-pc --boot-directory="$TEMP_MOUNT/boot" --install-modules="ext2 normal multiboot" "$LOOP_DEV" 2>&1 | grep -v "Installing"
+else
+    echo "[6/7] Skipping GRUB installation ($MODE mode)..."
+fi
 
-# Step 7: Create grub.cfg
-echo "[7/7] Creating GRUB configuration..."
-mkdir -p "$TEMP_MOUNT/boot/grub"
-cat > "$TEMP_MOUNT/boot/grub/grub.cfg" << 'EOF'
+# Step 7: Create grub.cfg (only in GRUB mode)
+if [ "$MODE" = "grub" ]; then
+    echo "[7/7] Creating GRUB configuration..."
+    mkdir -p "$TEMP_MOUNT/boot/grub"
+    cat > "$TEMP_MOUNT/boot/grub/grub.cfg" << 'EOF'
 set timeout=5
 set default=0
 
@@ -83,6 +96,7 @@ menuentry "kernel" {
     boot
 }
 EOF
+fi
 
 # Root filesystem layout: /boot (GRUB), /bin, /dev (devfs mounts over it),
 # and /init is installed later by 'make app'.
@@ -100,10 +114,12 @@ echo "=============================================="
 echo "SUCCESS! Bootable root disk created: $DISK_IMG"
 echo "=============================================="
 echo "  Partition 1: ext2 filesystem (type 0x83, bootable)"
-echo "  /boot  -> GRUB + kernel.elf"
+if [ "$MODE" = "grub" ]; then
+    echo "  /boot  -> GRUB + kernel.elf"
+fi
 echo "  /bin   -> core utilities (installed by 'make app')"
 echo "  /init  -> init process (installed by 'make app')"
 echo "  /dev   -> devfs (automounted by init)"
 echo ""
-echo "Run 'make mount' to mount it, then 'make app' to install userspace."
+echo "Run 'make app' to install the userspace, then 'make run'."
 echo ""

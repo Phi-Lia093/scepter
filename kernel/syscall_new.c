@@ -725,7 +725,7 @@ int sys_reboot(uint32_t magic1, uint32_t magic2, uint32_t cmd, void *arg)
 
     printk("[SYSCALL] reboot cmd=0x%x\n", cmd);
 
-    /* Power off: QEMU/Bochs ACPI port. */
+    /* Power off: QEMU ACPI port. */
     if (cmd == 0x4321fedc) {   /* LINUX_REBOOT_CMD_POWER_OFF */
         __asm__ volatile("outw %0, %1" : : "a"((uint16_t)0x2000),
                          "Nd"((uint16_t)0x604));
