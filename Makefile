@@ -103,6 +103,16 @@ run: $(TARGET)
 	@sync
 	@echo "Unmounting disk..."
 	@$(MAKE) umount
+ifeq ($(ARCH),x86_64)
+	@echo "Starting QEMU x86_64 (OVMF + EFI GRUB; root64.img + efi.img)..."
+	@rm -f kernel.log
+	@qemu-system-x86_64 -bios /usr/share/ovmf/OVMF.fd -m 128 \
+		-drive file=root64.img,format=raw,if=ide,index=0 \
+		-drive file=efi.img,format=raw,if=ide,index=1 \
+		-serial file:kernel.log \
+		-netdev user,id=net0 -device rtl8139,netdev=net0 \
+		-display none -no-reboot
+else
 	@echo "Starting QEMU (IDE root disk + RTL8139 NIC)..."
 	@rm -f kernel.log
 	@qemu-system-i386 -m 128 \
@@ -110,6 +120,7 @@ run: $(TARGET)
 		-serial file:kernel.log \
 		-netdev user,id=net0 \
 		-device rtl8139,netdev=net0
+endif
 
 
 debug: $(TARGET)
