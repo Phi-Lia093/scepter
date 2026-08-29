@@ -151,6 +151,12 @@
 #define SYS_SETRESGID 170
 #define SYS_GETRESGID 171
 
+/* Custom networking extensions (900+, off the Linux i386 range) */
+#define SYS_NET_IFCONFIG 900
+#define SYS_NET_SEND     901
+#define SYS_NET_RECV     902
+#define SYS_NET_SETIP    903
+
 /* Standard file descriptors (compat) */
 #ifndef STDIN_FILENO
 #define STDIN_FILENO  0

@@ -3,7 +3,7 @@
 # ============================================================================
 
 # Subdirectories
-SUBDIRS = pci apic char block acpi video
+SUBDIRS = pci apic char block acpi video net
 
 # Root driver files (pic.c in driver/)
 SRCS = pic.c

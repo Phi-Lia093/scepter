@@ -58,6 +58,9 @@
 #define PCI_SUBCLASS_ATA        0x05  /* ATA Controller */
 #define PCI_SUBCLASS_SATA       0x06  /* SATA Controller */
 
+/* PCI Network Subclass Codes */
+#define PCI_SUBCLASS_ETHERNET   0x00  /* Ethernet Controller */
+
 /* PCI Simple Communication Subclass Codes */
 #define PCI_SUBCLASS_SERIAL     0x00  /* Serial Controller (16550-compatible) */
 #define PCI_SUBCLASS_PARALLEL   0x01  /* Parallel Port */

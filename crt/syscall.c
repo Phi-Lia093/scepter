@@ -30,6 +30,7 @@
 #include "sys/sysinfo.h"
 #include "sys/prctl.h"
 #include "sys/reboot.h"
+#include "sys/net.h"
 #include "dirent.h"
 #include "fcntl.h"
 
@@ -1340,6 +1341,39 @@ int chroot(const char *path)
 int flock(int fd, int operation)
 {
     long ret = syscall2(SYS_FLOCK, fd, operation);
+    if (ret < 0) { errno = -ret; return -1; }
+    return 0;
+}
+
+/* ---- Networking (custom SYS_NET_* extensions) ---- */
+
+int net_ifconfig(int index, net_ifconfig_t *out)
+{
+    long ret = syscall2(SYS_NET_IFCONFIG, index, (int)out);
+    if (ret < 0) { errno = -ret; return -1; }
+    return 0;
+}
+
+int net_send(const char *name, const void *frame, unsigned int len)
+{
+    long ret = syscall3(SYS_NET_SEND, (int)name, (int)frame, (int)len);
+    if (ret < 0) { errno = -ret; return -1; }
+    return (int)ret;
+}
+
+int net_recv(const char *name, void *buf, unsigned int buflen, int block)
+{
+    long ret = syscall4(SYS_NET_RECV, (int)name, (int)buf,
+                        (int)buflen, block);
+    if (ret < 0) { errno = -ret; return -1; }
+    return (int)ret;
+}
+
+int net_setip(const char *name, const void *ip,
+              const void *netmask, const void *gw)
+{
+    long ret = syscall4(SYS_NET_SETIP, (int)name, (int)ip,
+                        (int)netmask, (int)gw);
     if (ret < 0) { errno = -ret; return -1; }
     return 0;
 }

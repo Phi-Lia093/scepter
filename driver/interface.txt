@@ -655,6 +655,84 @@ Device Mapping:
   15 = sddX
 
 ================================================================================
+NETWORK DEVICES
+================================================================================
+
+--------------------------------------------------------------------------------
+Networking Core
+--------------------------------------------------------------------------------
+File: net/net.c, net/loopback.c, net/proto.c
+Headers: include/net/net.h
+
+Description:
+  Small network subsystem consisting of an interface registry, per-interface
+  receive queues, a static packet pool (safe for IRQ context) and a minimal
+  in-kernel protocol layer:
+
+    - net_rx()      - driver IRQ path: offer frames to the protocol layer,
+                      then queue leftovers for userspace
+    - net_transmit() - send a raw frame on an interface
+    - net_recv()    - dequeue the next raw frame for userspace
+    - net_poll()    - non-blocking readiness check
+    - net_proto_rx() - ARP (replies to requests for our IP) + IPv4/ICMP
+                      (replies to echo requests); everything else passes
+                      through to userspace
+
+Interfaces:
+  lo  - loopback, 127.0.0.1/8, always up (registered by net/loopback.c)
+  eth0 - RTL8139 NIC (registered by driver/net/rtl8139.c)
+
+Userspace API:
+  Custom SYS_NET_* syscalls (kernel/syscalls_net.c, numbers 900-903):
+    - net_ifconfig(index, &net_ifconfig_t)  - query interface info/stats
+    - net_send(name, frame, len)            - transmit a raw frame
+    - net_recv(name, buf, buflen, block)    - receive the next raw frame
+    - net_setip(name, ip, netmask, gw)      - set static IPv4 config
+  Tools: /bin/ifconfig, /bin/ping
+
+--------------------------------------------------------------------------------
+Device: RTL8139 Fast Ethernet Controller
+--------------------------------------------------------------------------------
+Type: Network Device (PCI)
+File: driver/net/rtl8139.c
+Header: include/driver/net/rtl8139.h
+Registration: rtl8139_init() (PCI class 0x02, subclass 0x00; 10EC:8139)
+
+Description:
+  PCI bus-mastering Ethernet driver for the Realtek RTL8139 as emulated by
+  QEMU.  Uses BAR0 as an I/O register block, an 8K DMA RX ring plus four
+  2048-byte TX buffers allocated from the buddy allocator (page-aligned,
+  physically contiguous, direct-mapped).  Interrupts are registered through
+  irq_register() on the PCI interrupt line (IRQ 11 under QEMU).
+
+  Register semantics (ChipCmd=0x37, IntrMask=0x3C, IntrStatus=0x3E,
+  CAPR=0x38, TxStatus0=0x10, BMSR=0x64, ...) follow the QEMU emulation
+  (hw/net/rtl8139.c) and were verified on QEMU 10.2.
+
+Initialization:
+  - Read MAC from IDR0-5, software reset, unlock Cfg9346
+  - Program TxConfig/RxConfig (AcceptMyPhys|AcceptMulticast|AcceptBroadcast,
+    8K ring), lock Cfg9346
+  - Write RX ring base (RBSTART), enable RX+TX, set IMR, register IRQ
+
+Transmit:
+  Copy frame to a TX buffer, write its physical address to TxAddr[n], then
+  write the length to TxStatus[n] (clearing the OWN bit triggers DMA).
+
+Receive:
+  Packets are written to the ring as [2-byte status][2-byte length][data]
+  [CRC]; the driver reads from its CAPR position, reassembles packets that
+  wrap around the ring end, and advances CAPR by writing (pos - 16).
+
+QEMU setup:
+  -netdev user,id=net0 -device rtl8139,netdev=net0
+  (see 'make run'; static config 10.0.2.15/24, gateway 10.0.2.2)
+
+================================================================================
+INFRASTRUCTURE DRIVERS
+================================================================================
+
+================================================================================
 INFRASTRUCTURE DRIVERS
 ================================================================================
 
@@ -824,6 +902,11 @@ The following drivers use DYNAMIC DISCOVERY (no hardcoded addresses):
    - Detected via ACPI MADT table
    - Local APIC and I/O APIC addresses from MADT
    - Automatic fallback to PIC
+
+✅ RTL8139 NIC (driver/net/rtl8139.c)
+   - PCI network controller scan (class 0x02, subclass 0x00)
+   - BAR0 (I/O) register base + interrupt line from PCI config space
+   - DMA buffers from the buddy allocator (VIRT_TO_PHYS)
 
 The following drivers use HARDCODED addresses (by design):
 

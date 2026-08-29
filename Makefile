@@ -9,7 +9,7 @@ include common.mk
 TARGET = $(BUILD_DIR)/kernel.elf
 
 # Modules to build
-MODULES = kernel mm lib driver fs
+MODULES = kernel mm lib driver fs net
 
 # Automatically collect all .o files from build directory
 # This is much cleaner than listing every single object file
@@ -103,12 +103,13 @@ run: $(TARGET)
 	@sync
 	@echo "Unmounting disk..."
 	@$(MAKE) umount
-	@echo "Starting QEMU (IDE root disk)..."
+	@echo "Starting QEMU (IDE root disk + RTL8139 NIC)..."
 	@rm -f kernel.log
 	@qemu-system-i386 -m 128 \
 		-drive file=root.img,format=raw,if=ide,index=0 \
-		-serial file:kernel.log
-
+		-serial file:kernel.log \
+		-netdev user,id=net0 \
+		-device rtl8139,netdev=net0
 
 
 debug: $(TARGET)

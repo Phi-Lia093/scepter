@@ -33,6 +33,8 @@
 #include "driver/acpi/acpi.h"
 #include "driver/video/video.h"
 #include "kernel/exec.h"
+#include "net/net.h"
+#include "driver/net/rtl8139.h"
 
 
 /* =========================================================================
@@ -100,6 +102,12 @@ void kernel_main(void)
      * PCI Bus Enumeration
      * ------------------------------------------------------------------ */
     pci_init();            /* Scan PCI bus and enumerate devices */
+
+    /* ------------------------------------------------------------------
+     * Networking core + NIC driver (RTL8139 via PCI)
+     * ------------------------------------------------------------------ */
+    net_init();            /* Loopback interface + packet pool */
+    rtl8139_init();        /* Probe PCI for 10EC:8139, register eth0 */
 
     /* ------------------------------------------------------------------
      * Block drivers + partition scan

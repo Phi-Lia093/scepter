@@ -71,7 +71,7 @@ COREUTILS = sh ls cat echo mkdir rm rmdir mv cp pwd clear uname \
             touch ln chmod chown readlink basename dirname test [ printf \
             yes sort uniq grep find cut tr dd df du od strings cksum xargs file \
             kill killall time hostname whoami id reboot poweroff halt \
-            mount umount top watch stty dmesg
+            mount umount top watch stty dmesg ifconfig ping
 INIT_BIN  = $(ROOT_DIR)/init
 CORE_BINS = $(addprefix $(BIN_DIR)/, $(COREUTILS))
 

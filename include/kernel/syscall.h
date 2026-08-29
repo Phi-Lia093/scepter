@@ -236,6 +236,12 @@ typedef struct registers {
 /* ---- close_range (436) ---- */
 #define SYS_CLOSE_RANGE 436
 
+/* ---- Custom networking extensions (900+, off the Linux i386 range) ---- */
+#define SYS_NET_IFCONFIG 900   /* ifconfig(index, struct net_ifconfig *) */
+#define SYS_NET_SEND     901   /* net_send(name, frame, len)             */
+#define SYS_NET_RECV     902   /* net_recv(name, buf, buflen, block)     */
+#define SYS_NET_SETIP    903   /* net_setip(name, ip, netmask, gw)       */
+
 /* =========================================================================
  * waitpid() options
  * ========================================================================= */

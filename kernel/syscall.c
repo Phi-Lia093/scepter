@@ -4,6 +4,7 @@
 
 #include "kernel/syscall.h"
 #include "kernel/syscall_new.h"
+#include "kernel/syscalls_net.h"
 #include "kernel/sched.h"
 #include "kernel/process.h"
 #include "mm/vma.h"
@@ -2150,6 +2151,22 @@ int syscall_handler(registers_t *regs, int num, uint32_t arg1, uint32_t arg2,
 
         case SYS_CHOWN:
             return sys_chown((const char *)arg1, arg2, arg3);
+
+        /* ---- Networking extensions (SYS_NET_*, kernel/syscalls_net.c) ---- */
+        case SYS_NET_IFCONFIG:
+            return sys_net_ifconfig((int)arg1, (void *)arg2);
+
+        case SYS_NET_SEND:
+            return sys_net_send((const char *)arg1, (const void *)arg2,
+                                (uint32_t)arg3);
+
+        case SYS_NET_RECV:
+            return sys_net_recv((const char *)arg1, (void *)arg2,
+                                (uint32_t)arg3, (int)arg4);
+
+        case SYS_NET_SETIP:
+            return sys_net_setip((const char *)arg1, (const void *)arg2,
+                                 (const void *)arg3, (const void *)arg4);
 
         default:
             printk("[SYSCALL] Unknown syscall number: %d\n", num);
