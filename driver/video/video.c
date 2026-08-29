@@ -7,6 +7,7 @@
 #include "driver/char/vga.h"
 #include "driver/pci/pci.h"
 #include "mm/vmalloc.h"
+#include "arch/paging.h"
 #include "lib/printk.h"
 #include <stddef.h>
 
@@ -30,7 +31,7 @@ void video_init(void)
     }
 
     /* Snapshot the boot log and hardware cursor while still in text mode. */
-    volatile uint16_t *text = (volatile uint16_t *)0xC00B8000;
+    volatile uint16_t *text = (volatile uint16_t *)PHYS_TO_VIRT(0xB8000);
     for (int i = 0; i < 80 * 25; i++)
         boot_text_snapshot[i] = text[i];
     uint8_t tcol = 0, trow = 0;

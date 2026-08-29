@@ -550,9 +550,9 @@ int copy_exec_strings(char **user_ptrs, exec_strings_t *out)
  * @param esp         Out: initial user ESP pointing at argc
  * @return 0 on success, -1 if the block does not fit
  */
-int setup_initial_stack(void *stack_pages, uint32_t stack_vaddr,
+int setup_initial_stack(void *stack_pages, uintptr_t stack_vaddr,
                         exec_strings_t *argv, exec_strings_t *envp,
-                        uint32_t *esp)
+                        uintptr_t *esp)
 {
     uint32_t argc = argv ? argv->count : 0;
     uint32_t envc = envp ? envp->count : 0;
@@ -561,16 +561,17 @@ int setup_initial_stack(void *stack_pages, uint32_t stack_vaddr,
 
     uint32_t str_bytes = argv_len + envp_len;
     /* Slots: argc + argv[0..argc-1] + argv-NULL + envp[0..envc-1] + envp-NULL
-     *       = 1 + argc + 1 + envc + 1 = argc + envc + 3 slots. */
-    uint32_t ptr_bytes = 4 * (argc + envc + 3);
+     *       = 1 + argc + 1 + envc + 1 = argc + envc + 3 slots.
+     * Each slot is one user-space pointer (arch-sized). */
+    uint32_t ptr_bytes = (uint32_t)sizeof(uintptr_t) * (argc + envc + 3);
 
     /* Must fit inside the 8KB (2-page) stack mapping */
     if (str_bytes + ptr_bytes + 16 > 8192)
         return -1;
 
-    uint32_t top = USER_STACK_TOP;              /* 0xC0000000, exclusive */
-    uint32_t str_va = top - str_bytes;          /* strings at the top    */
-    uint32_t esp0  = (str_va - ptr_bytes) & ~15U; /* pointer block below  */
+    uintptr_t top = USER_STACK_TOP;            /* user stack top, exclusive */
+    uintptr_t str_va = top - str_bytes;        /* strings at the top        */
+    uintptr_t esp0  = (str_va - ptr_bytes) & ~(uintptr_t)15U; /* ptr block */
 
     char *direct = (char *)stack_pages;
 
@@ -581,16 +582,16 @@ int setup_initial_stack(void *stack_pages, uint32_t stack_vaddr,
         memcpy(direct + (str_va - stack_vaddr) + argv_len,
                envp->data, envp_len);
 
-    /* Build the pointer block */
-    uint32_t *q = (uint32_t *)(direct + (esp0 - stack_vaddr));
+    /* Build the pointer block (arch-sized slots) */
+    uintptr_t *q = (uintptr_t *)(direct + (esp0 - stack_vaddr));
     uint32_t idx = 0;
-    q[idx++] = argc;
+    q[idx++] = (uintptr_t)argc;
     for (uint32_t i = 0; i < argc; i++)
-        q[idx++] = str_va + (uint32_t)(argv->ptrs[i] - argv->data);
+        q[idx++] = str_va + (uintptr_t)(argv->ptrs[i] - argv->data);
     q[idx++] = 0;                    /* argv NULL terminator */
     for (uint32_t i = 0; i < envc; i++)
         q[idx++] = str_va + argv_len +
-                   (uint32_t)(envp->ptrs[i] - envp->data);
+                   (uintptr_t)(envp->ptrs[i] - envp->data);
     q[idx++] = 0;                    /* envp NULL terminator */
 
     if (esp)

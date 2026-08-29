@@ -44,9 +44,9 @@ int copy_exec_strings(char **user_ptrs, exec_strings_t *out);
  * @param esp          Out: initial user ESP pointing at argc
  * @return 0 on success, -1 if the block does not fit
  */
-int setup_initial_stack(void *stack_pages, uint32_t stack_vaddr,
+int setup_initial_stack(void *stack_pages, uintptr_t stack_vaddr,
                         exec_strings_t *argv, exec_strings_t *envp,
-                        uint32_t *esp);
+                        uintptr_t *esp);
 
 /* =========================================================================
  * Process Management System Calls

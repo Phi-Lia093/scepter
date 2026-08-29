@@ -2,6 +2,7 @@
 #include "driver/char/char.h"
 #include "fs/devfs.h"
 #include "arch/io.h"
+#include "arch/paging.h"
 
 /* =========================================================================
  * VGA text-mode constants
@@ -9,7 +10,7 @@
 
 #define VGA_WIDTH   80
 #define VGA_HEIGHT  25
-#define VGA_BUFFER  ((volatile uint16_t *)0xC00B8000)
+#define VGA_BUFFER  ((volatile uint16_t *)PHYS_TO_VIRT(0xB8000))
 
 /* VGA CRT controller I/O ports */
 #define VGA_CTRL_REG  0x3D4

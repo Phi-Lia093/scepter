@@ -1,4 +1,5 @@
 #include "mm/buddy.h"
+#include "mm/mm.h"
 #include "lib/printk.h"
 #include <stdint.h>
 #include <stddef.h>
@@ -10,14 +11,13 @@
  * represents one page (0=free, 1=allocated). Simple, fast, and bulletproof.
  * ========================================================================= */
 
-#define KERNEL_VMA  0xC0000000U
 
 /* Maximum pages we can track (1GB / 4KB = 256K pages = 32KB bitmap) */
 #define MAX_PAGES 262144
 
 /* Page allocator state */
 typedef struct {
-    uint32_t base_phys;       /* Starting physical address */
+    uintptr_t base_phys;      /* Starting physical address */
     uint32_t total_pages;     /* Total pages available */
     uint32_t free_pages;      /* Currently free pages */
     uint32_t bitmap[MAX_PAGES / 32];  /* Bitmap: 32 pages per uint32_t */
@@ -30,15 +30,15 @@ static page_allocator_t allocator;
  * ========================================================================= */
 
 /* Convert physical address to virtual address */
-static inline void *phys_to_virt(uint32_t phys)
+static inline void *phys_to_virt(uintptr_t phys)
 {
-    return (void *)(phys + KERNEL_VMA);
+    return PHYS_TO_VIRT(phys);
 }
 
 /* Convert virtual address to physical address */
-static inline uint32_t virt_to_phys(void *virt)
+static inline uintptr_t virt_to_phys(void *virt)
 {
-    return (uint32_t)virt - KERNEL_VMA;
+    return VIRT_TO_PHYS(virt);
 }
 
 /* Set a bit in the bitmap (mark page as allocated) */
@@ -117,7 +117,7 @@ void buddy_init(uintptr_t base_phys, uint32_t total_kb)
     
     allocator.free_pages = allocator.total_pages;
     
-    printk("[ALLOCATOR] Initialized: %u pages (%u MB) from phys 0x%08x\n",
+    printk("[ALLOCATOR] Initialized: %u pages (%u MB) from phys 0x%08lx\n",
            allocator.total_pages, 
            (allocator.total_pages * PAGE_SIZE) / (1024 * 1024),
            base_phys);
@@ -154,7 +154,7 @@ void *page_alloc_flags(size_t size, uint32_t flags)
     allocator.free_pages -= pages_needed;
     
     /* Calculate physical address */
-    uint32_t phys = allocator.base_phys + (start_idx << PAGE_SHIFT);
+    uintptr_t phys = allocator.base_phys + (start_idx << PAGE_SHIFT);
     
     /* Return based on flags */
     if (flags & MEM_PHY) {
@@ -177,21 +177,21 @@ void page_free(void *addr)
         return;
     }
     
-    uint32_t phys;
+    uintptr_t phys;
     
-    /* Handle both virtual addresses (>= 0xC0000000) and physical addresses */
-    if ((uint32_t)addr >= KERNEL_VMA) {
+    /* Handle both virtual addresses (>= KERNEL_VMA) and physical addresses */
+    if ((uintptr_t)addr >= KERNEL_VMA) {
         /* Virtual address - convert to physical */
         phys = virt_to_phys(addr);
     } else {
         /* Physical address - use directly */
-        phys = (uint32_t)addr;
+        phys = (uintptr_t)addr;
     }
     
     /* Validate address is within our range */
     if (phys < allocator.base_phys) {
-        printk("[ALLOCATOR] ERROR: Free 0x%08x below base 0x%08x\n",
-               phys, allocator.base_phys);
+        printk("[ALLOCATOR] ERROR: Free 0x%08lx below base 0x%08lx\n",
+               (unsigned long)phys, (unsigned long)allocator.base_phys);
         return;
     }
     
@@ -199,15 +199,15 @@ void page_free(void *addr)
     uint32_t page_idx = offset >> PAGE_SHIFT;
     
     if (page_idx >= allocator.total_pages) {
-        printk("[ALLOCATOR] ERROR: Free 0x%08x beyond range (page %u >= %u)\n",
-               phys, page_idx, allocator.total_pages);
+        printk("[ALLOCATOR] ERROR: Free 0x%08lx beyond range (page %u >= %u)\n",
+               (unsigned long)phys, page_idx, allocator.total_pages);
         return;
     }
     
     /* Check if page was actually allocated */
     if (!bitmap_test(page_idx)) {
-        printk("[ALLOCATOR] WARNING: Double free of page %u (phys 0x%08x)\n",
-               page_idx, phys);
+        printk("[ALLOCATOR] WARNING: Double free of page %u (phys 0x%08lx)\n",
+               page_idx, (unsigned long)phys);
         return;
     }
     
