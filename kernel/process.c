@@ -113,7 +113,7 @@ void do_exit(int status)
      * semantics; lets userland detect thread death). */
     if (task->cleartid) {
         uint32_t zero = 0;
-        copy_to_user((void *)(uint32_t)task->cleartid, &zero, sizeof(zero));
+        copy_to_user((void *)task->cleartid, &zero, sizeof(zero));
     }
     
     /* Wake up parent if it's waiting in wait() and notify it (SIGCHLD). */

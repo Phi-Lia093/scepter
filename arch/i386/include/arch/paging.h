@@ -53,7 +53,7 @@ uint32_t arch_kernel_pgdir_phys(void);
  * Get the Page Table Entry (PTE) for a virtual address.
  * @return Pointer to PTE, or NULL if page table not present
  */
-uint32_t* get_pte(uint32_t virt_addr);
+uint32_t* get_pte(uintptr_t virt_addr);
 
 /* =========================================================================
  * Page Mapping Operations
@@ -64,17 +64,17 @@ uint32_t* get_pte(uint32_t virt_addr);
  * @param pgdir Page directory to map in (NULL = current/boot)
  * @return 0 on success, -1 on error
  */
-int map_page(uint32_t *pgdir, uint32_t virt_addr, uint32_t phys_addr, uint32_t flags);
+int map_page(uint32_t *pgdir, uintptr_t virt_addr, uintptr_t phys_addr, uint32_t flags);
 
 /**
  * Invalidate (unmap) a single virtual page.
  */
-void unmap_page(uint32_t virt_addr);
+void unmap_page(uintptr_t virt_addr);
 
 /**
  * Invalidate (unmap) a range of virtual pages.
  */
-void unmap_range(uint32_t virt_start, uint32_t virt_end);
+void unmap_range(uintptr_t virt_start, uintptr_t virt_end);
 
 /**
  * Flush the entire TLB.
@@ -84,7 +84,7 @@ void flush_tlb(void);
 /**
  * Count mapped pages in a virtual address range.
  */
-uint32_t count_mapped_pages(uint32_t virt_start, uint32_t virt_end);
+uint32_t count_mapped_pages(uintptr_t virt_start, uintptr_t virt_end);
 
 /* =========================================================================
  * Page Directory Management

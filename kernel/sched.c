@@ -110,7 +110,7 @@ task_struct_t *alloc_task(void)
     task->next_fd = 0;
     
     /* Allocate kernel stack (16KB = 4 pages, from direct-mapped region) */
-    task->kernel_stack = (uint32_t)page_alloc(KERNEL_STACK_SIZE);
+    task->kernel_stack = (uintptr_t)page_alloc(KERNEL_STACK_SIZE);
     if (!task->kernel_stack) {
         printk("[SCHED] Failed to allocate kernel stack\n");
         kfree(task);

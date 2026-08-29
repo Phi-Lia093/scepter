@@ -25,16 +25,16 @@
 /* VMA structure */
 typedef struct vma {
     list_head_t list;           /* Linked list node */
-    uint32_t    vm_start;       /* Start address (page-aligned) */
-    uint32_t    vm_end;         /* End address (exclusive, page-aligned) */
-    uint32_t    vm_flags;       /* Permissions: VM_READ|VM_WRITE|VM_EXEC */
-    uint32_t    vm_type;        /* VMA_HEAP, VMA_STACK, VMA_MMAP, VMA_CODE */
+    uintptr_t vm_start;       /* Start address (page-aligned) */
+    uintptr_t vm_end;         /* End address (exclusive, page-aligned) */
+    uintptr_t vm_flags;       /* Permissions: VM_READ|VM_WRITE|VM_EXEC */
+    uintptr_t vm_type;        /* VMA_HEAP, VMA_STACK, VMA_MMAP, VMA_CODE */
 
     /* ---- File-backed mmap support ---- */
     int         vm_fd;          /* backing fd for VMA_MMAP (-1 = anonymous) */
-    uint32_t    vm_file_off;    /* base offset in the backing file          */
+    uintptr_t vm_file_off;    /* base offset in the backing file          */
     int         vm_shared;      /* 1 = MAP_SHARED (write-back on unmap)     */
-    uint32_t    vm_phys_base;   /* physical base for VM_IO device maps      */
+    uintptr_t vm_phys_base;   /* physical base for VM_IO device maps      */
 } vma_t;
 
 /* Forward declaration */
@@ -52,7 +52,7 @@ struct task_struct;
  * @param type VMA_CODE|VMA_HEAP|VMA_STACK|VMA_MMAP
  * @return Pointer to VMA, or NULL on failure
  */
-vma_t *vma_create(uint32_t start, uint32_t end, uint32_t flags, uint32_t type);
+vma_t *vma_create(uintptr_t start, uintptr_t end, uint32_t flags, uint32_t type);
 
 /**
  * Destroy a VMA and free its memory

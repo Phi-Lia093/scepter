@@ -2,6 +2,7 @@
 #define VMALLOC_H
 
 #include <stdint.h>
+#include "arch/paging.h"
 
 /* ============================================================================
  * Virtual Memory Allocator (vmalloc/ioremap)
@@ -16,8 +17,8 @@
  * ============================================================================ */
 
 /* vmalloc region constants */
-#define VMALLOC_START  0xF8000000U
-#define VMALLOC_END    0xFFBFFFFFU
+#define VMALLOC_START  KERNEL_VMALLOC_BASE
+#define VMALLOC_END    KERNEL_VMALLOC_END
 #define VMALLOC_SIZE   (VMALLOC_END - VMALLOC_START + 1)
 
 /* Page flags for ioremap */
@@ -50,7 +51,7 @@ void vmalloc_init(void);
  *   // Access the table at acpi_table
  *   iounmap(acpi_table);
  */
-void *ioremap(uint32_t phys_addr, uint32_t size);
+void *ioremap(uintptr_t phys_addr, uintptr_t size);
 
 /**
  * Unmap physical memory from virtual address space

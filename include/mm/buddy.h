@@ -28,7 +28,7 @@
  * base_phys:  starting physical address (page-aligned)
  * total_kb:   total memory available in kilobytes
  * Must be called once during kernel initialization. */
-void buddy_init(uint32_t base_phys, uint32_t total_kb);
+void buddy_init(uintptr_t base_phys, uint32_t total_kb);
 
 /* =========================================================================
  * Allocation Flags

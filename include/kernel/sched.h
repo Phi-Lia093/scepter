@@ -41,17 +41,17 @@ typedef struct mm_struct {
     arch_mm_t arch;
 
     /* Memory regions (legacy, for compatibility) */
-    uint32_t code_start;       /* Code segment start (e.g., 0x08000000) */
-    uint32_t code_end;         /* Code segment end */
-    uint32_t brk_start;        /* Heap start */
-    uint32_t brk_end;          /* Current heap end (for sbrk/brk) */
-    uint32_t stack_start;      /* User stack bottom */
-    uint32_t stack_end;        /* User stack top (e.g., 0xC0000000) */
+    uintptr_t code_start;       /* Code segment start (e.g., 0x08000000) */
+    uintptr_t code_end;         /* Code segment end */
+    uintptr_t brk_start;        /* Heap start */
+    uintptr_t brk_end;          /* Current heap end (for sbrk/brk) */
+    uintptr_t stack_start;      /* User stack bottom */
+    uintptr_t stack_end;        /* User stack top (e.g., 0xC0000000) */
     
     /* VMA management */
     list_head_t vma_list;      /* List of all VMAs */
-    uint32_t mmap_base;        /* Start of mmap region (0x40000000) */
-    uint32_t mmap_end;         /* End of mmap region (0xBF000000) */
+    uintptr_t mmap_base;        /* Start of mmap region (0x40000000) */
+    uintptr_t mmap_end;         /* End of mmap region (0xBF000000) */
 } mm_struct_t;
 
 /* =========================================================================
@@ -103,7 +103,7 @@ typedef struct task_struct {
     uint32_t      personality;   /* execution domain (PER_LINUX=0)   */
     uint32_t      rlimit_cur[RLIM_NLIMITS];   /* soft limits         */
     uint32_t      rlimit_max[RLIM_NLIMITS];   /* hard limits         */
-    uint32_t      cleartid;      /* set_tid_address pointer (0=none) */
+    uintptr_t cleartid;      /* set_tid_address pointer (0=none) */
     char          name[32];
     int           priority;        /* nice value; lower = higher priority */
     task_state_t  state;
@@ -115,16 +115,16 @@ typedef struct task_struct {
     wait_queue_head_t wait;      /* Wait queue (for wait()/blocking) */
     
     /* ---- CPU Context (saved on context switch) ---- */
-    uint32_t      kernel_esp;    /* Kernel stack pointer */
-    uint32_t      esp;           /* User stack pointer */
-    uint32_t      eip;           /* Instruction pointer */
-    uint32_t      eflags;        /* Flags register */
-    uint32_t      eax, ebx, ecx, edx;
-    uint32_t      esi, edi, ebp;
+    uintptr_t kernel_esp;    /* Kernel stack pointer */
+    uintptr_t esp;           /* User stack pointer */
+    uintptr_t eip;           /* Instruction pointer */
+    uintptr_t eflags;        /* Flags register */
+    uintptr_t eax, ebx, ecx, edx;
+    uintptr_t esi, edi, ebp;
     
     /* ---- Memory Management (EMBEDDED!) ---- */
     mm_struct_t   mm;            /* Page directory + tables + regions */
-    uint32_t      kernel_stack;  /* Kernel stack base (direct-mapped) */
+    uintptr_t kernel_stack;  /* Kernel stack base (direct-mapped) */
     
     /* ---- File System ---- */
     list_head_t   files;
@@ -143,9 +143,9 @@ typedef struct task_struct {
     uint32_t      sig_hflags[NSIG];   /* SA_* flags for each signal             */
     int           sig_active;         /* 1 while a catchable handler is running */
     int           sig_delivered;      /* the signal being handled               */
-    uint32_t      sig_saved_eip;      /* saved user context (handler entry)     */
-    uint32_t      sig_saved_esp;
-    uint32_t      sig_saved_eflags;
+    uintptr_t sig_saved_eip;      /* saved user context (handler entry)     */
+    uintptr_t sig_saved_esp;
+    uintptr_t sig_saved_eflags;
     uint32_t      sig_saved_blocked;  /* blocked mask before handler entry      */
 
     /* ---- Stop / Continue (job control) ---- */
@@ -279,6 +279,6 @@ void wake_up(wait_queue_head_t *wq);
  * @param new_esp New ESP to load
  * @param new_cr3 New CR3 (page directory physical address)
  */
-void switch_to(uint32_t *old_esp, uint32_t new_esp, uint32_t new_cr3);
+void switch_to(uintptr_t *old_esp, uintptr_t new_esp, uintptr_t new_cr3);
 
 #endif /* SCHED_H */

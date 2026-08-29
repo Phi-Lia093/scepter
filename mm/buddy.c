@@ -95,7 +95,7 @@ static int find_free_pages(uint32_t count)
  * Public API - Initialization
  * ========================================================================= */
 
-void buddy_init(uint32_t base_phys, uint32_t total_kb)
+void buddy_init(uintptr_t base_phys, uint32_t total_kb)
 {
     allocator.base_phys = base_phys;
     

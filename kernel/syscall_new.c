@@ -372,7 +372,7 @@ int sys_set_tid_address(void *cleartid_ptr)
 {
     if (cleartid_ptr && !valid_user_pointer(cleartid_ptr, sizeof(int)))
         return -EFAULT;
-    current->cleartid = (uint32_t)cleartid_ptr;
+    current->cleartid = (uintptr_t)cleartid_ptr;
     return (int)current->pid;
 }
 

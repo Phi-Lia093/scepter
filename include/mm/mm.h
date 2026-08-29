@@ -11,8 +11,8 @@
 
 /* Global memory information (set by mm_init) */
 extern uint32_t mem_total_kb;          /* Total detected RAM in KB */
-extern uint32_t mem_first_free_phys;   /* First free physical page after kernel */
-extern uint32_t mem_direct_map_size;   /* Size of direct-mapped region (1/4 RAM) */
+extern uintptr_t mem_first_free_phys;   /* First free physical page after kernel */
+extern uintptr_t mem_direct_map_size;   /* Size of direct-mapped region (1/4 RAM) */
 
 /**
  * Initialize memory management subsystem

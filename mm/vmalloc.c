@@ -28,8 +28,8 @@ static uint32_t vmalloc_used_page_count = 0;
  * ============================================================================ */
 
 typedef struct {
-    uint32_t virt_addr;    /* Virtual address (page-aligned) */
-    uint32_t phys_addr;    /* Physical address (page-aligned) */
+    uintptr_t virt_addr;   /* Virtual address (page-aligned) */
+    uintptr_t phys_addr;   /* Physical address (page-aligned) */
     uint32_t num_pages;    /* Number of pages mapped */
     uint32_t in_use;       /* 1 if allocated, 0 if free */
 } vmalloc_region_t;
@@ -94,7 +94,7 @@ static uint32_t vmalloc_find_free(uint32_t num_pages)
 /**
  * Mark pages as allocated in bitmap
  */
-static void vmalloc_mark_used(uint32_t virt_addr, uint32_t num_pages)
+static void vmalloc_mark_used(uintptr_t virt_addr, uint32_t num_pages)
 {
     uint32_t start_page = (virt_addr - VMALLOC_START) / PAGE_SIZE;
     
@@ -108,7 +108,7 @@ static void vmalloc_mark_used(uint32_t virt_addr, uint32_t num_pages)
 /**
  * Mark pages as free in bitmap
  */
-static void vmalloc_mark_free(uint32_t virt_addr, uint32_t num_pages)
+static void vmalloc_mark_free(uintptr_t virt_addr, uint32_t num_pages)
 {
     uint32_t start_page = (virt_addr - VMALLOC_START) / PAGE_SIZE;
     
@@ -123,7 +123,7 @@ static void vmalloc_mark_free(uint32_t virt_addr, uint32_t num_pages)
  * Region Tracking
  * ============================================================================ */
 
-static vmalloc_region_t* vmalloc_add_region(uint32_t virt_addr, uint32_t phys_addr, 
+static vmalloc_region_t* vmalloc_add_region(uintptr_t virt_addr, uintptr_t phys_addr, 
                                              uint32_t num_pages)
 {
     for (int i = 0; i < MAX_VMALLOC_REGIONS; i++) {
@@ -138,7 +138,7 @@ static vmalloc_region_t* vmalloc_add_region(uint32_t virt_addr, uint32_t phys_ad
     return NULL;
 }
 
-static vmalloc_region_t* vmalloc_find_region(uint32_t virt_addr)
+static vmalloc_region_t* vmalloc_find_region(uintptr_t virt_addr)
 {
     uint32_t virt_base = virt_addr & ~0xFFF;
     
@@ -172,7 +172,7 @@ void vmalloc_init(void)
     
     vmalloc_used_page_count = 0;
     
-    printk("[VMALLOC] Region: 0x%08x-0x%08x (%u MB, %u pages)\n",
+    printk("[VMALLOC] Region: 0x%08lx-0x%08lx (%u MB, %u pages)\n",
            VMALLOC_START, VMALLOC_END, 
            VMALLOC_SIZE / (1024 * 1024),
            VMALLOC_PAGES);
@@ -183,7 +183,7 @@ void vmalloc_init(void)
  * ioremap/iounmap Implementation
  * ============================================================================ */
 
-void *ioremap(uint32_t phys_addr, uint32_t size)
+void *ioremap(uintptr_t phys_addr, uintptr_t size)
 {
     if (size == 0) {
         return NULL;
@@ -224,8 +224,9 @@ void *ioremap(uint32_t phys_addr, uint32_t size)
         printk("[IOREMAP] WARNING: Region tracking full\n");
     }
     
-    printk("[IOREMAP] Mapped phys 0x%08x (%u KB) → virt 0x%08x\n",
-           phys_addr, (num_pages * PAGE_SIZE) / 1024, virt_base + offset);
+    printk("[IOREMAP] Mapped phys 0x%08lx (%u KB) -> virt 0x%08lx\n",
+           (unsigned long)phys_addr, (num_pages * PAGE_SIZE) / 1024,
+           (unsigned long)(virt_base + offset));
     
     return (void *)(virt_base + offset);
 }
@@ -241,7 +242,7 @@ void iounmap(void *virt_addr)
     /* Find the region */
     vmalloc_region_t *region = vmalloc_find_region(virt_base);
     if (!region) {
-        printk("[IOUNMAP] WARNING: Address 0x%08x not found\n", virt_base);
+        printk("[IOUNMAP] WARNING: Address 0x%08lx not found\n", (unsigned long)virt_base);
         return;
     }
     
@@ -253,8 +254,8 @@ void iounmap(void *virt_addr)
     /* Mark as free in bitmap */
     vmalloc_mark_free(virt_base, region->num_pages);
     
-    printk("[IOUNMAP] Unmapped virt 0x%08x (%u pages)\n",
-           virt_base, region->num_pages);
+    printk("[IOUNMAP] Unmapped virt 0x%08lx (%u pages)\n",
+           (unsigned long)virt_base, region->num_pages);
     
     /* Remove from tracking */
     vmalloc_remove_region(region);

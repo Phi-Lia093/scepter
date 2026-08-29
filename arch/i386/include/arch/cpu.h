@@ -65,7 +65,7 @@ void arch_cpu_init(void);
  * user -> kernel privilege transitions (TSS.esp0 on i386).
  * @param esp0  Top of the kernel stack
  */
-void arch_set_kernel_stack(uint32_t esp0);
+void arch_set_kernel_stack(uintptr_t esp0);
 
 /* =========================================================================
  * Context switching (implemented in arch/<arch>/context.s)
@@ -77,7 +77,7 @@ void arch_set_kernel_stack(uint32_t esp0);
  * @param new_esp New ESP to load
  * @param new_cr3 New CR3 (page directory physical address)
  */
-void switch_to(uint32_t *old_esp, uint32_t new_esp, uint32_t new_cr3);
+void switch_to(uintptr_t *old_esp, uintptr_t new_esp, uintptr_t new_cr3);
 
 /**
  * enter_userspace - Switch from kernel mode to user mode.  Never returns.
@@ -85,7 +85,7 @@ void switch_to(uint32_t *old_esp, uint32_t new_esp, uint32_t new_cr3);
  * @param entry    User entry point
  * @param user_esp Initial user stack pointer
  */
-void enter_userspace(uint32_t cr3, uint32_t entry, uint32_t user_esp);
+void enter_userspace(uintptr_t cr3, uintptr_t entry, uintptr_t user_esp);
 
 /**
  * Trampoline executed (via ret from switch_to) when a task is scheduled
