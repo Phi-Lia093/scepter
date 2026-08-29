@@ -2,6 +2,10 @@
 #define ARCH_CPU_H
 
 #include <stdint.h>
+#include "arch/abi.h"
+
+/* Forward declaration (kernel/sched.h) */
+struct task_struct;
 
 /* =========================================================================
  * CPU control + context switching – arch-neutral API provided by the
@@ -89,5 +93,21 @@ void enter_userspace(uint32_t cr3, uint32_t entry, uint32_t user_esp);
  * frame; this stub loads user segments and IRETs to user mode.
  */
 void first_entry_trampoline(void);
+
+/**
+ * arch_setup_first_stack - Build the initial kernel stack frame for a task
+ * being scheduled for the first time: the switch_to() popa/popfl frame +
+ * the return address + the ring-3 IRET frame (so first_entry_trampoline
+ * can IRET into user mode).
+ *
+ * @param task       Task whose kernel_esp is set; must already point at
+ *                   the top of the task's kernel stack
+ * @param user_entry User entry point (fresh start only; ignored for fork)
+ * @param user_esp   Initial user stack pointer (fresh start only)
+ * @param regs       Parent's trap frame to clone (fork), or NULL for a
+ *                   fresh start
+ */
+void arch_setup_first_stack(struct task_struct *task, uintptr_t user_entry,
+                            uintptr_t user_esp, const registers_t *regs);
 
 #endif /* ARCH_CPU_H */

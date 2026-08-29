@@ -32,6 +32,21 @@ typedef struct registers {
 } registers_t;
 
 /* =========================================================================
+ * Trap-frame accessors used by GENERIC kernel code.
+ *
+ * Generic code (fork, signal delivery, syscall return) must only touch the
+ * register frame through these macros; each arch maps them to its own
+ * trap-frame layout (arch/i386: eax/eip/user_esp/eflags/cs/ss).
+ * ========================================================================= */
+
+#define REGS_RET(r)      ((r)->eax)       /* syscall return value slot  */
+#define REGS_IP(r)       ((r)->eip)       /* user instruction pointer   */
+#define REGS_USER_SP(r)  ((r)->user_esp)  /* user stack pointer         */
+#define REGS_FLAGS(r)    ((r)->eflags)    /* flags register             */
+#define REGS_CS(r)       ((r)->cs)        /* user code segment          */
+#define REGS_SS(r)       ((r)->ss)        /* user stack segment         */
+
+/* =========================================================================
  * User Space Memory Layout
  * ========================================================================= */
 

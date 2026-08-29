@@ -364,77 +364,14 @@ int sys_fork(registers_t *regs)
     child->mm.mmap_base = parent->mm.mmap_base;
     child->mm.mmap_end = parent->mm.mmap_end;
     
-    /* Set up child's kernel stack for first execution
-     * When syscall returns, child should get EAX=0 (return value for child)
-     * 
-     * The parent is currently in syscall context. After fork returns,
-     * both parent and child will return to user mode via iret.
-     * 
-     * We need to set up child's kernel stack to mirror parent's stack
-     * so it can also iret back to user mode (to the instruction after int 0x80).
-     */
-    
-    extern void first_entry_trampoline(void);
-    
-    /* Get parent's current kernel ESP - it has the syscall frame
-     * When int 0x80 was invoked, the following was pushed:
-     * 1. CPU pushed SS, ESP, EFLAGS, CS, EIP (if from ring 3)
-     * 2. isr128 pushed: GS, FS, ES, DS, CR3
-     * 3. isr128 pushed: pusha (EDI, ESI, EBP, ESP, EBX, EDX, ECX, EAX)
-     * 4. isr128 pushed: 6 syscall arguments
-     * 
-     * We need to find the user's EIP and ESP from the IRET frame */
-    
-    /* For now, use a simpler approach: parent will continue execution,
-     * and child will be set up to return to the same point with EAX=0.
-     * 
-     * The challenge is we don't have the parent's user EIP/ESP easily accessible.
-     * WORKAROUND: Copy parent's entire kernel stack frame and modify EAX */
-    
-    uint32_t *kstack = (uint32_t *)(child->kernel_esp);
-    
-    /* Build child's kernel stack for switch_to + first_entry_trampoline
-     * Stack grows downward, so we push in REVERSE order:
-     * 
-     * High address (top of stack)
-     *   [IRET frame for first_entry_trampoline to use]
-     *   [Return address = first_entry_trampoline]
-     *   [EFLAGS for switch_to popfl]
-     *   [POPA frame for switch_to]
-     * Low address (ESP points here)
-     *
-     * switch_to will: popa, popfl, ret (to first_entry_trampoline)
-     * first_entry_trampoline will: set segments, iret (to user mode)
-     */
-    
-    /* IRET frame (top of stack, high addresses) */
-    kstack--; *kstack = regs->ss;          /* SS */
-    kstack--; *kstack = regs->user_esp;    /* User ESP */
-    kstack--; *kstack = regs->eflags;      /* EFLAGS */
-    kstack--; *kstack = regs->cs;          /* CS */
-    kstack--; *kstack = regs->eip;         /* EIP */
-    
-    /* Return address for switch_to's ret instruction */
-    kstack--; *kstack = (uint32_t)first_entry_trampoline;
-    
-    /* EFLAGS for switch_to's popfl (IF=0, will be enabled by iret) */
-    kstack--; *kstack = 0x002;
-    
-    /* POPA frame for switch_to.
-     * popa() loads: EDI, ESI, EBP, (skip ESP), EBX, EDX, ECX, EAX.
-     * So we must push in REVERSE: EAX first (highest address),
-     * EDI last (lowest address = new ESP), exactly like spawn.c does. */
-    kstack--; *kstack = 0;                 /* EAX = 0 (child's return value) */
-    kstack--; *kstack = regs->ecx;         /* ECX */
-    kstack--; *kstack = regs->edx;         /* EDX */
-    kstack--; *kstack = regs->ebx;         /* EBX */
-    kstack--; *kstack = regs->esp_dummy;   /* dummy ESP (ignored by popa) */
-    kstack--; *kstack = regs->ebp;         /* EBP */
-    kstack--; *kstack = regs->esi;         /* ESI */
-    kstack--; *kstack = regs->edi;         /* EDI (popa reads this first) */
-    
-    /* Update child's ESP to point to start of POPA frame */
-    child->kernel_esp = (uint32_t)kstack;
+    /* Set up child's kernel stack for first execution.
+     * When fork returns, the child should get EAX=0 (return value for
+     * child) and resume at the same user point as the parent.
+     * The arch builds the switch_to() popa/popfl frame + a ring-3 IRET
+     * frame cloned from the parent's trap frame (see arch/i386/context.c),
+     * so the child iret's back to user mode at the instruction after
+     * the syscall. */
+    arch_setup_first_stack(child, 0, 0, regs);
     
     /* Add child to scheduler */
     child->state = TASK_READY;

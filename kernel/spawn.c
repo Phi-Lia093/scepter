@@ -252,56 +252,11 @@ int spawn_init(const char *path)
     
     /* Set up initial kernel stack for this task.
      *
-     * switch_to() does: popa, popfl, ret
-     * Stack must be laid out so that:
-     *   ESP+0  = EDI  (popa reads first)
-     *   ESP+4  = ESI
-     *   ESP+8  = EBP
-     *   ESP+12 = dummy (popa skips ESP)
-     *   ESP+16 = EBX
-     *   ESP+20 = EDX
-     *   ESP+24 = ECX
-     *   ESP+28 = EAX  (popa reads last, ESP now +32)
-     *   ESP+32 = EFLAGS  (popfl reads, ESP now +36)
-     *   ESP+36 = first_entry_trampoline  (ret jumps here, ESP +40)
-     *   ESP+40 = EIP=USER_TEXT_START  \
-     *   ESP+44 = CS=0x1B               |  IRET frame
-     *   ESP+48 = EFLAGS=0x202          |
-     *   ESP+52 = ESP=USER_STACK_TOP    |
-     *   ESP+56 = SS=0x23              /
-     *
-     * Since kstack-- goes to lower addresses, push HIGH-address items first:
+     * switch_to() does: popa, popfl, ret  (see arch/i386/context.s and
+     * arch/i386/context.c).  The arch builds the popa/popfl frame + a
+     * ring-3 IRET frame so first_entry_trampoline() can iret to init.
      */
-    /* first_entry_trampoline is declared in arch/cpu.h */
-    uint32_t *kstack = (uint32_t *)(task->kernel_esp);
-    
-    /* IRET frame (highest address = pushed first) */
-    kstack--; *kstack = 0x23;            /* SS            ESP+56 */
-    kstack--; *kstack = user_esp;        /* user ESP      ESP+52 */
-    kstack--; *kstack = 0x202;           /* EFLAGS (iret) ESP+48 */
-    kstack--; *kstack = 0x1B;            /* CS            ESP+44 */
-    kstack--; *kstack = USER_TEXT_START; /* EIP           ESP+40 */
-    
-    /* Return address for switch_to's ret */
-    kstack--; *kstack = (uint32_t)first_entry_trampoline; /* ESP+36 */
-    
-    /* EFLAGS for switch_to's popfl: IF=0 (keep interrupts disabled).
-     * Interrupts will be enabled atomically by the iret in first_entry_trampoline.
-     * Enabling IF here (inside the interrupt handler) would risk a nested timer
-     * interrupt corrupting the ring-3 IRET frame still on the kernel stack. */
-    kstack--; *kstack = 0x002;           /* EFLAGS        ESP+32  (IF=0!) */
-    
-    /* popa frame: push in REVERSE order (EAX first, EDI last) */
-    kstack--; *kstack = 0;  /* EAX   ESP+28 */
-    kstack--; *kstack = 0;  /* ECX   ESP+24 */
-    kstack--; *kstack = 0;  /* EDX   ESP+20 */
-    kstack--; *kstack = 0;  /* EBX   ESP+16 */
-    kstack--; *kstack = 0;  /* dummy ESP+12 */
-    kstack--; *kstack = 0;  /* EBP   ESP+8  */
-    kstack--; *kstack = 0;  /* ESI   ESP+4  */
-    kstack--; *kstack = 0;  /* EDI   ESP+0  (popa reads this first!) */
-    
-    task->kernel_esp = (uint32_t)kstack;
+    arch_setup_first_stack(task, USER_TEXT_START, user_esp, NULL);
     
     /* Set the ring-0 stack for ring3→ring0 transitions (TSS.esp0) */
     arch_set_kernel_stack(task->kernel_stack + KERNEL_STACK_SIZE);

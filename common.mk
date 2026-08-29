@@ -5,11 +5,12 @@
 
 # Directories
 TOP_DIR    := $(shell pwd)
-BUILD_DIR  := $(TOP_DIR)/build
 
-# Architecture selection (only arch/i386 is implemented for now)
+# Architecture selection (i386 default; x86_64 in progress)
 ARCH      ?= i386
 ARCH_DIR  := $(TOP_DIR)/arch/$(ARCH)
+
+BUILD_DIR  := $(TOP_DIR)/build-$(ARCH)
 
 # Include architecture-specific toolchain flags
 include $(ARCH_DIR)/arch.mk

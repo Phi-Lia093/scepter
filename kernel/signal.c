@@ -349,10 +349,10 @@ int sys_sigreturn(registers_t *regs)
 
     task->sig_active = 0;
     task->blocked    = task->sig_saved_blocked;
-    regs->eip        = task->sig_saved_eip;
-    regs->user_esp   = task->sig_saved_esp;
-    regs->eflags     = task->sig_saved_eflags;
-    regs->eax        = 0;
+    REGS_IP(regs)        = task->sig_saved_eip;
+    REGS_USER_SP(regs)   = task->sig_saved_esp;
+    REGS_FLAGS(regs)     = task->sig_saved_eflags;
+    REGS_RET(regs)        = 0;
     return 0;
 }
 
@@ -469,9 +469,9 @@ void do_signal(registers_t *regs)
             add |= mask;
         task->blocked |= add;
 
-        task->sig_saved_eip     = regs->eip;
-        task->sig_saved_esp     = regs->user_esp;
-        task->sig_saved_eflags  = regs->eflags;
+        task->sig_saved_eip     = REGS_IP(regs);
+        task->sig_saved_esp     = REGS_USER_SP(regs);
+        task->sig_saved_eflags  = REGS_FLAGS(regs);
         task->sig_saved_blocked = old_blocked;
         task->sig_active        = 1;
         task->sig_delivered     = sig;
@@ -481,7 +481,7 @@ void do_signal(registers_t *regs)
          *   [esp+4] arg = signum
          * The handler is a C function void f(int); its ret pops the
          * trampoline address, which then syscalls sigreturn. */
-        uint32_t new_esp = regs->user_esp - 8;
+        uint32_t new_esp = REGS_USER_SP(regs) - 8;
         uint32_t frame[2] = { SIGNAL_TRAMPOLINE_VA, (uint32_t)sig };
         if (copy_to_user((void *)new_esp, frame, sizeof(frame)) < 0) {
             task->sig_active = 0;
@@ -489,9 +489,9 @@ void do_signal(registers_t *regs)
             continue;
         }
 
-        regs->user_esp = new_esp;
-        regs->eip      = handler;
-        regs->eax      = 0;
+        REGS_USER_SP(regs) = new_esp;
+        REGS_IP(regs)      = handler;
+        REGS_RET(regs)      = 0;
         return;
     }
 }
