@@ -76,14 +76,23 @@ kernel↔libc byte layout works on both arches.
 
 ## One-command build & run
 
-    ./run_i386.sh        # clean everything -> build i386 kernel+userspace ->
-                         # create root.img (GRUB MBR + ext2) -> qemu-system-i386
-    ./run_x86_64.sh      # clean everything -> build x86_64 kernel+userspace ->
-                         # create root64.img + efi.img (EFI GRUB ESP) ->
-                         # qemu-system-x86_64 with OVMF
+    ./clean.sh           # remove EVERYTHING (build dirs, disk images, logs,
+                         # symbols, mount point) — optional, before a full rebuild
+    ./build_i386.sh      # build the i386 kernel + userspace only (no clean;
+                         # make's dependency tracking rebuilds just what changed)
+    ./build_x86_64.sh    # same for x86_64
+    ./run_i386.sh        # build -> use/create root.img -> install userspace ->
+                         # qemu-system-i386
+    ./run_x86_64.sh      # build -> use/create root64.img + efi.img -> install
+                         # userspace -> qemu-system-x86_64 with OVMF
 
-Both scripts start from a clean tree: `make clean`, then remove every
-`*.img`, `*.log`, `*.sym` and the `mnt/` mount point before rebuilding.
+The run scripts never clean: they build incrementally (`make` decides what
+to remake), use the **current** disk image(s) if present (creating them only
+when missing), refresh the userspace + kernel, then boot.  `./clean.sh` is
+the only thing that removes artifacts, so the typical cycle is:
+
+    ./run_i386.sh        # iterate (fast: only changed files rebuild)
+    ./clean.sh           # occasionally, for a from-scratch rebuild
 
 For incremental work:
 
