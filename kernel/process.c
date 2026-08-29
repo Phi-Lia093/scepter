@@ -807,7 +807,7 @@ static int do_exec(const char *user_path, char **user_argv, char **user_envp)
     }
     
     /* Build the argc/argv/envp block on the new stack and jump to userspace */
-    uint32_t user_esp;
+    uintptr_t user_esp;
     if (setup_initial_stack(stack_pages, stack_vaddr, &argv, &envp,
                             &user_esp) < 0) {
         printk("[EXEC] Initial stack too small for argv/envp\n");

@@ -17,7 +17,7 @@
  * VMA Creation and Destruction
  * ============================================================================ */
 
-vma_t *vma_create(uint32_t start, uint32_t end, uint32_t flags, uint32_t type)
+vma_t *vma_create(uintptr_t start, uintptr_t end, uint32_t flags, uint32_t type)
 {
     /* Allocate VMA structure */
     vma_t *vma = (vma_t *)kalloc(sizeof(vma_t));

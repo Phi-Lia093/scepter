@@ -64,7 +64,7 @@ uint32_t* get_pte(uintptr_t virt_addr);
  * @param pgdir Page directory to map in (NULL = current/boot)
  * @return 0 on success, -1 on error
  */
-int map_page(uint32_t *pgdir, uintptr_t virt_addr, uintptr_t phys_addr, uint32_t flags);
+int map_page(void *pgdir, uintptr_t virt_addr, uintptr_t phys_addr, uint32_t flags);
 
 /**
  * Invalidate (unmap) a single virtual page.
@@ -94,7 +94,7 @@ uint32_t count_mapped_pages(uintptr_t virt_start, uintptr_t virt_end);
  * Create a new user page directory with kernel mappings (supervisor-only).
  * @return Physical address of new page directory, or NULL on error
  */
-uint32_t* create_user_pgdir(void);
+void *create_user_pgdir(void);
 
 /* =========================================================================
  * Per-process address space (arch_mm) API

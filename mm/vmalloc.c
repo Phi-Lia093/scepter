@@ -65,7 +65,7 @@ static inline int bitmap_test_bit(uint32_t bit)
  * @param num_pages Number of consecutive pages needed
  * @return Virtual address of first page, or 0 if not found
  */
-static uint32_t vmalloc_find_free(uint32_t num_pages)
+static uintptr_t vmalloc_find_free(uint32_t num_pages)
 {
     uint32_t consecutive = 0;
     uint32_t start_page = 0;
@@ -80,7 +80,7 @@ static uint32_t vmalloc_find_free(uint32_t num_pages)
             
             if (consecutive == num_pages) {
                 /* Found enough consecutive pages */
-                return VMALLOC_START + (start_page * PAGE_SIZE);
+                return VMALLOC_START + ((uintptr_t)start_page * PAGE_SIZE);
             }
         } else {
             /* Used page, reset counter */
@@ -190,12 +190,12 @@ void *ioremap(uintptr_t phys_addr, uintptr_t size)
     }
     
     /* Page-align address and size */
-    uint32_t phys_base = phys_addr & ~0xFFF;
-    uint32_t offset = phys_addr & 0xFFF;
-    uint32_t num_pages = (size + offset + PAGE_SIZE - 1) / PAGE_SIZE;
+    uintptr_t phys_base = phys_addr & ~(uintptr_t)0xFFF;
+    uintptr_t offset = phys_addr & 0xFFF;
+    uint32_t num_pages = (uint32_t)((size + offset + PAGE_SIZE - 1) / PAGE_SIZE);
     
     /* Find free virtual address range */
-    uint32_t virt_base = vmalloc_find_free(num_pages);
+    uintptr_t virt_base = vmalloc_find_free(num_pages);
     if (virt_base == 0) {
         printk("[IOREMAP] ERROR: No virtual space for %u pages\n", num_pages);
         return NULL;
@@ -203,8 +203,8 @@ void *ioremap(uintptr_t phys_addr, uintptr_t size)
     
     /* Map each page (NULL = use boot page directory for kernel mappings) */
     for (uint32_t i = 0; i < num_pages; i++) {
-        uint32_t virt = virt_base + (i * PAGE_SIZE);
-        uint32_t phys = phys_base + (i * PAGE_SIZE);
+        uintptr_t virt = virt_base + (i * PAGE_SIZE);
+        uintptr_t phys = phys_base + (i * PAGE_SIZE);
         
         if (map_page(NULL, virt, phys, 0x3) < 0) {  /* Present | Writable */
             printk("[IOREMAP] ERROR: Failed to map page %u\n", i);
@@ -237,7 +237,7 @@ void iounmap(void *virt_addr)
         return;
     }
     
-    uint32_t virt_base = (uint32_t)virt_addr & ~0xFFF;
+    uintptr_t virt_base = (uintptr_t)virt_addr & ~(uintptr_t)0xFFF;
     
     /* Find the region */
     vmalloc_region_t *region = vmalloc_find_region(virt_base);

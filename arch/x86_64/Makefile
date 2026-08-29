@@ -3,8 +3,8 @@
 # Builds all arch-specific objects into the top-level build directory.
 # ============================================================================
 
-# Source files (populated as the port progresses)
-SRCS_C = cpu.c irq.c pic.c lapic.c ioapic.c paging.c mem.c timer.c trap.c uaccess.c
+# Source files
+SRCS_C = cpu.c stackframe.c irq.c pic.c lapic.c ioapic.c paging.c mem.c timer.c trap.c uaccess.c
 SRCS_S = boot.s context.s isr.s
 
 # Object files (in build directory)

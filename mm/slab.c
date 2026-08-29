@@ -63,7 +63,7 @@ static uint16_t round_up_pow2(size_t size)
 /* Return the slab_t for the page that contains addr */
 static inline slab_t *addr_to_slab(void *addr)
 {
-    return (slab_t *)((uint32_t)addr & ~(uint32_t)(PAGE_SIZE - 1));
+    return (slab_t *)((uintptr_t)addr & ~(uintptr_t)(PAGE_SIZE - 1));
 }
 
 static inline int is_slab_page(void *addr)

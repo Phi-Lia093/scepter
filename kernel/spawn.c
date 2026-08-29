@@ -200,7 +200,7 @@ int spawn_init(const char *path)
     envp.count = 2;
     envp.data_len += 7;
     
-    uint32_t user_esp = USER_STACK_TOP - 4;
+    uintptr_t user_esp = USER_STACK_TOP - 4;
     if (setup_initial_stack(stack_pages, stack_vaddr, &argv, &envp,
                             &user_esp) < 0) {
         printk("[SPAWN] Failed to build initial stack\n");

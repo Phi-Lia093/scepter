@@ -41,7 +41,7 @@ int exec_flat(const char *path)
     printk("[EXEC] File size: %u bytes\n", file_size);
     
     /* Create user page directory (kernel mapped as supervisor) */
-    uint32_t *pgdir_phys = create_user_pgdir();
+    void *pgdir_phys = create_user_pgdir();
     if (!pgdir_phys) {
         printk("[EXEC] Failed to create page directory\n");
         fs_close(fd);
@@ -49,7 +49,7 @@ int exec_flat(const char *path)
     }
     
     /* Get virtual address to access page directory */
-    uint32_t *pgdir_virt = (uint32_t*)PHYS_TO_VIRT((uint32_t)pgdir_phys);
+    void *pgdir_virt = PHYS_TO_VIRT((uintptr_t)pgdir_phys);
     
     /* Calculate number of pages needed */
     uint32_t num_pages = (file_size + PAGE_SIZE - 1) / PAGE_SIZE;

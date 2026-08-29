@@ -28,7 +28,7 @@ void mm_init(void)
     /* Detect total memory via the arch (CMOS on i386) */
     mem_total_kb = arch_mem_detect_kb();
     uint32_t total_phys = mem_total_kb * 1024;
-    printk("[MM] Detected %u KB (%u MB) via CMOS\n",
+    printk("[MM] Detected %u KB (%u MB)\n",
            mem_total_kb, mem_total_kb / 1024);
 
     /* Calculate first free physical page after kernel */
@@ -75,16 +75,19 @@ void mm_init(void)
     uintptr_t direct_map_end_virt = KERNEL_VMA + mem_direct_map_size;
 
     printk("\n[MM] Memory Layout (Linux-style):\n");
-    printk("[MM]   Direct-mapped:  0xC0000000-0x%08lx (%u MB)\n",
-           (unsigned long)(direct_map_end_virt - 1), mem_direct_map_size / (1024 * 1024));
+    printk("[MM]   Direct-mapped:  0x%08lx-0x%08lx (%u MB)\n",
+           (unsigned long)KERNEL_VMA, (unsigned long)(direct_map_end_virt - 1),
+           mem_direct_map_size / (1024 * 1024));
     printk("[MM]   ├─ maps phys:   0x00000000-0x%08lx\n",
            (unsigned long)(mem_direct_map_size - 1));
-    printk("[MM]   ├─ kernel code: 0xC0000000-0x%08lx\n",
-           (unsigned long)((uintptr_t)kernel_end - 1));
+    printk("[MM]   ├─ kernel code: 0x%08lx-0x%08lx\n",
+           (unsigned long)KERNEL_VMA, (unsigned long)((uintptr_t)kernel_end - 1));
     printk("[MM]   └─ buddy pages: 0x%08lx-0x%08lx\n",
            (unsigned long)(KERNEL_VMA + mem_first_free_phys), (unsigned long)(direct_map_end_virt - 1));
-    printk("[MM]   Reserved high:  0xF8000000-0xFFBFFFFF (128 MB, vmalloc/ioremap)\n");
-    printk("[MM]   Fixed mappings: 0xFFC00000-0xFFFFFFFF (4 MB, future)\n");
+    printk("[MM]   Reserved high:  0x%08lx-0x%08lx (vmalloc/ioremap)\n",
+           (unsigned long)KERNEL_VMALLOC_BASE, (unsigned long)KERNEL_VMALLOC_END);
+    printk("[MM]   Fixed mappings: 0x%08lx-0xFFFFFFFF (future)\n",
+           (unsigned long)KERNEL_FIXMAP_BASE);
     
     printk("\n[MM] Buddy allocator: %u KB (%u MB) from phys 0x%08lx\n",
            buddy_mem_kb, buddy_mem_kb / 1024, (unsigned long)mem_first_free_phys);
@@ -99,8 +102,9 @@ void mm_init(void)
      * the upper region (0xF8000000+) for future vmalloc/ioremap */
     
     printk("\n[MM] Updating page tables:\n");
-    printk("[MM]   Keeping mapped:   0xC0000000-0x%08lx (%u MB)\n",
-           (unsigned long)(direct_map_end_virt - 1), mem_direct_map_size / (1024 * 1024));
+    printk("[MM]   Keeping mapped:   0x%08lx-0x%08lx (%u MB)\n",
+           (unsigned long)KERNEL_VMA, (unsigned long)(direct_map_end_virt - 1),
+           mem_direct_map_size / (1024 * 1024));
     
     /* Unmap everything from end of direct-map to end of address space
      * This includes both the gap and the vmalloc region */

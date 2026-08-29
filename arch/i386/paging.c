@@ -51,20 +51,21 @@ uint32_t* get_pte(uint32_t virt_addr)
  * @param flags Page flags (Present | Writable | User | etc.)
  * @return 0 on success, -1 on error
  */
-int map_page(uint32_t *pgdir, uint32_t virt_addr, uint32_t phys_addr, uint32_t flags)
+int map_page(void *pgdir, uintptr_t virt_addr, uintptr_t phys_addr, uint32_t flags)
 {
     /* Use boot page directory if none specified */
     if (!pgdir) {
         pgdir = boot_page_directory;
     }
+    uint32_t *pgdir32 = (uint32_t *)pgdir;
     
     /* Page-align addresses */
     virt_addr &= ~0xFFF;
     phys_addr &= ~0xFFF;
     
     /* Get page directory entry */
-    uint32_t pde_idx = virt_addr >> 22;
-    uint32_t *pde = &pgdir[pde_idx];
+    uint32_t pde_idx = (uint32_t)virt_addr >> 22;
+    uint32_t *pde = &pgdir32[pde_idx];
     
     /* Allocate page table if not present */
     if (!(*pde & 0x1)) {
@@ -169,7 +170,7 @@ void flush_tlb(void)
  * 
  * @return Physical address of new page directory, or NULL on error
  */
-uint32_t* create_user_pgdir(void)
+void *create_user_pgdir(void)
 {
     /* Allocate page directory (must be page-aligned) */
     uint32_t *pgdir_phys = (uint32_t*)page_alloc_flags(PAGE_SIZE, MEM_PHY);
