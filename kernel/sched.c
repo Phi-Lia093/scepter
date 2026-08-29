@@ -43,14 +43,9 @@ void init_task_mm(task_struct_t *task)
     /* Clear entire mm structure */
     memset(&task->mm, 0, sizeof(mm_struct_t));
     
-    /* Clear user space page directory entries (0-767) */
-    memset(&task->mm.pgdir[0], 0, 768 * sizeof(uint32_t));
-    
-    /* Copy kernel space page directory entries (768-1023) from actual page directory */
-    memcpy(&task->mm.pgdir[768], &arch_kernel_pgdir()[768], 256 * sizeof(uint32_t));
-    
-    /* Initialize page table pointers (all NULL initially) */
-    memset(task->mm.page_tables, 0, sizeof(task->mm.page_tables));
+    /* Set up architecture-specific MMU state (zero user half, map kernel
+     * half of the page directory). */
+    arch_mm_init(task);
     
     /* Set up memory region defaults */
     task->mm.code_start = USER_TEXT_START;
@@ -146,26 +141,12 @@ void free_task(task_struct_t *task)
             page_free((void *)(task->kernel_stack + i * PAGE_SIZE));
     }
     
-    /* Free user data pages mapped in each user page table.
-     * (sys_exec keeps task->mm.page_tables in sync with the active CR3,
-     * so this walks the process's real, current mappings.) */
-    for (int i = 0; i < 768; i++) {
-        uint32_t *pt = task->mm.page_tables[i];
-        if (!pt) continue;
-        for (int j = 0; j < 1024; j++) {
-            uint32_t pte = pt[j];
-            if (pte & 0x1) {  /* Present */
-                page_free((void *)PHYS_TO_VIRT(pte & ~0xFFF));
-            }
-        }
-    }
-    
-    /* Free user page tables */
-    for (int i = 0; i < 768; i++) {
-        if (task->mm.page_tables[i]) {
-            page_free(task->mm.page_tables[i]);
-        }
-    }
+    /* Free user data pages mapped in the task's page tables, then free the
+     * user page tables themselves.  (sys_exec keeps the arch_mm state in
+     * sync with the active CR3, so this walks the process's real, current
+     * mappings.) */
+    arch_mm_free_user_pages(task, 0, USER_STACK_TOP);
+    arch_mm_free_user_tables(task);
     
     /* Free task structure itself.
      * task_struct is kalloc'd directly from the buddy allocator (its size
@@ -436,7 +417,7 @@ void schedule(void)
         /* Kernel task: use stored physical address directly */
         new_cr3 = arch_kernel_pgdir_phys();
     } else {
-        new_cr3 = VIRT_TO_PHYS((uint32_t)&next->mm.pgdir[0]);
+        new_cr3 = arch_mm_get_pgd_phys(next);
     }
     
     /* Perform context switch */

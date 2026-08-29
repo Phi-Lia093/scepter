@@ -3,6 +3,9 @@
 
 #include <stdint.h>
 
+/* Forward declaration (kernel/sched.h) */
+struct task_struct;
+
 /* =========================================================================
  * Paging / address-space API – arch-neutral interface.
  *
@@ -92,5 +95,45 @@ uint32_t count_mapped_pages(uint32_t virt_start, uint32_t virt_end);
  * @return Physical address of new page directory, or NULL on error
  */
 uint32_t* create_user_pgdir(void);
+
+/* =========================================================================
+ * Per-process address space (arch_mm) API
+ *
+ * Every task embeds an arch_mm_t (mm_struct_t.arch).  Generic kernel code
+ * (sched/process/spawn/pagefault/vma/syscall) manipulates a task's user
+ * mappings only through these functions; the arch decides the page-table
+ * format (arch/i386: two-level paging).
+ * ========================================================================= */
+
+/** Initialize the task's MMU state (zero user half, map kernel half). */
+void arch_mm_init(struct task_struct *task);
+
+/** Free all physical pages mapped in [start, end) of the task's user space. */
+void arch_mm_free_user_pages(struct task_struct *task, uintptr_t start, uintptr_t end);
+
+/** Free all user page tables and clear the user half of the page directory. */
+void arch_mm_free_user_tables(struct task_struct *task);
+
+/**
+ * Duplicate the parent's user address space into the child (eager copy:
+ * every present user page is copied).  Used by fork().
+ * @return 0 on success, -1 on out-of-memory
+ */
+int arch_mm_copy_user(struct task_struct *parent, struct task_struct *child);
+
+/** Map one user page in the task's address space. */
+int arch_mm_map_user(struct task_struct *task, uintptr_t vaddr, uintptr_t phys, uint32_t flags);
+
+/** Physical address (CR3 value) of the task's page directory. */
+uint32_t arch_mm_get_pgd_phys(struct task_struct *task);
+
+/** Is the user page at vaddr present in the task's page tables? */
+int arch_mm_user_present(struct task_struct *task, uintptr_t vaddr);
+
+/** Set/clear write permission on one already-present user page (mprotect). */
+void arch_mm_set_user_writable(struct task_struct *task, uintptr_t vaddr, int writable);
+
+/** Clear (unmap) user PTEs in [start, end) and invalidate the TLB. */
+void arch_mm_unmap_user_range(struct task_struct *task, uintptr_t start, uintptr_t end);
 
 #endif /* ARCH_PAGING_H */

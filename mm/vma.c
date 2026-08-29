@@ -250,10 +250,7 @@ void mm_writeback_shared(task_struct_t *task)
             continue;
 
         for (uint32_t a = vma->vm_start; a < vma->vm_end; a += 0x1000) {
-            uint32_t pdi = a >> 22;
-            uint32_t pti = (a >> 12) & 0x3FF;
-            uint32_t *pt = task->mm.page_tables[pdi];
-            if (!pt || !(pt[pti] & 0x1))
+            if (!arch_mm_user_present(task, a))
                 continue;
 
             uint32_t file_off = vma->vm_file_off + (a - vma->vm_start);

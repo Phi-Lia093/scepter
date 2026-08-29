@@ -47,6 +47,23 @@ typedef struct registers {
 #define REGS_SS(r)       ((r)->ss)        /* user stack segment         */
 
 /* =========================================================================
+ * Per-process MMU state (arch_mm_t)
+ *
+ * Embedded in mm_struct_t.  Generic kernel code must NEVER touch these
+ * fields directly; it uses the arch_mm_* API declared in arch/paging.h.
+ * ========================================================================= */
+
+typedef struct arch_mm {
+    /* Page directory (embedded, aligned to 4KB).  Its physical address is
+     * used as the task's CR3. */
+    uint32_t pgdir[1024] __attribute__((aligned(4096)));
+
+    /* Kernel-virtual pointers to the task's user page tables
+     * (indices 0-767 map to the 3 GB user space; 768-1023 are kernel). */
+    uint32_t *page_tables[768];
+} arch_mm_t;
+
+/* =========================================================================
  * User Space Memory Layout
  * ========================================================================= */
 

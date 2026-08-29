@@ -3,8 +3,11 @@
  * ============================================================================ */
 
 #include "arch/paging.h"
+#include "arch/abi.h"
+#include "kernel/sched.h"
 #include "mm/buddy.h"
 #include "lib/printk.h"
+#include "lib/string.h"
 #include <stdint.h>
 #include <stddef.h>
 
@@ -220,4 +223,165 @@ uint32_t count_mapped_pages(uint32_t virt_start, uint32_t virt_end)
     }
     
     return mapped;
+}
+
+/* ============================================================================
+ * Per-process address space (arch_mm) API
+ *
+ * Implements the arch_mm_* contract for i386 two-level paging.
+ * ============================================================================ */
+
+void arch_mm_init(struct task_struct *task)
+{
+    /* Zero the whole MMU state, then copy the kernel half of the page
+     * directory (entries 768-1023) from the boot page directory. */
+    memset(&task->mm.arch, 0, sizeof(task->mm.arch));
+    memcpy(&task->mm.arch.pgdir[768], &boot_page_directory[768],
+           256 * sizeof(uint32_t));
+}
+
+int arch_mm_map_user(struct task_struct *task, uintptr_t vaddr, uintptr_t phys, uint32_t flags)
+{
+    uint32_t pdi = (uint32_t)vaddr >> 22;
+    uint32_t pti = ((uint32_t)vaddr >> 12) & 0x3FF;
+
+    if (pdi >= 768) {
+        printk("[MM] ERROR: arch_mm_map_user on kernel address 0x%08x\n",
+               (uint32_t)vaddr);
+        return -1;
+    }
+
+    /* Allocate the page table on demand. */
+    if (!task->mm.arch.page_tables[pdi]) {
+        uint32_t *pt = (uint32_t *)page_alloc(PAGE_SIZE);
+        if (!pt) {
+            printk("[MM] arch_mm_map_user: cannot allocate page table\n");
+            return -1;
+        }
+        memset(pt, 0, PAGE_SIZE);
+        task->mm.arch.page_tables[pdi] = pt;
+        task->mm.arch.pgdir[pdi] = VIRT_TO_PHYS((uint32_t)pt) | 0x7; /* P|RW|U */
+    }
+
+    task->mm.arch.page_tables[pdi][pti] = ((uint32_t)phys & ~0xFFF) | flags;
+    return 0;
+}
+
+uint32_t arch_mm_get_pgd_phys(struct task_struct *task)
+{
+    return VIRT_TO_PHYS((uint32_t)&task->mm.arch.pgdir[0]);
+}
+
+int arch_mm_user_present(struct task_struct *task, uintptr_t vaddr)
+{
+    uint32_t pdi = (uint32_t)vaddr >> 22;
+    uint32_t pti = ((uint32_t)vaddr >> 12) & 0x3FF;
+
+    if (pdi >= 768)
+        return 0;
+    uint32_t *pt = task->mm.arch.page_tables[pdi];
+    if (!pt)
+        return 0;
+    return (pt[pti] & 0x1) ? 1 : 0;
+}
+
+void arch_mm_free_user_pages(struct task_struct *task, uintptr_t start, uintptr_t end)
+{
+    uint32_t a = (uint32_t)start & ~0xFFF;
+    uint32_t e = (uint32_t)end;
+
+    while (a < e) {
+        uint32_t pdi = a >> 22;
+        uint32_t pti = (a >> 12) & 0x3FF;
+
+        uint32_t *pt = task->mm.arch.page_tables[pdi];
+        if (pt && (pt[pti] & 0x1)) {
+            uint32_t phys = pt[pti] & ~0xFFF;
+            page_free(PHYS_TO_VIRT(phys));
+        }
+        a += PAGE_SIZE;
+    }
+}
+
+void arch_mm_free_user_tables(struct task_struct *task)
+{
+    for (int i = 0; i < 768; i++) {
+        if (task->mm.arch.page_tables[i]) {
+            page_free(task->mm.arch.page_tables[i]);
+            task->mm.arch.page_tables[i] = NULL;
+            task->mm.arch.pgdir[i] = 0;
+        }
+    }
+}
+
+int arch_mm_copy_user(struct task_struct *parent, struct task_struct *child)
+{
+    for (int pdi = 0; pdi < 768; pdi++) {
+        uint32_t *parent_pt = parent->mm.arch.page_tables[pdi];
+        if (!parent_pt)
+            continue;
+
+        for (int pti = 0; pti < 1024; pti++) {
+            uint32_t parent_pte = parent_pt[pti];
+            if (!(parent_pte & 0x1))   /* not present */
+                continue;
+
+            /* Allocate child page table on demand. */
+            if (!child->mm.arch.page_tables[pdi]) {
+                uint32_t *pt = (uint32_t *)page_alloc(PAGE_SIZE);
+                if (!pt)
+                    return -1;
+                memset(pt, 0, PAGE_SIZE);
+                child->mm.arch.page_tables[pdi] = pt;
+                child->mm.arch.pgdir[pdi] = VIRT_TO_PHYS((uint32_t)pt) | 0x7;
+            }
+
+            /* Copy the page content (eager copy; no COW). */
+            void *child_page = page_alloc(PAGE_SIZE);
+            if (!child_page)
+                return -1;
+
+            memcpy(child_page, PHYS_TO_VIRT(parent_pte & ~0xFFF), PAGE_SIZE);
+
+            uint32_t flags = parent_pte & 0xFFF;   /* copy page flags */
+            uint32_t child_phys = VIRT_TO_PHYS((uint32_t)child_page);
+            child->mm.arch.page_tables[pdi][pti] = child_phys | flags;
+        }
+    }
+    return 0;
+}
+
+void arch_mm_set_user_writable(struct task_struct *task, uintptr_t vaddr, int writable)
+{
+    uint32_t pdi = (uint32_t)vaddr >> 22;
+    uint32_t pti = ((uint32_t)vaddr >> 12) & 0x3FF;
+
+    uint32_t *pt = task->mm.arch.page_tables[pdi];
+    if (!pt)
+        return;
+
+    if (writable)
+        pt[pti] |= 0x2;
+    else
+        pt[pti] &= ~0x2;
+
+    __asm__ volatile("invlpg (%0)" :: "r"((uint32_t)vaddr) : "memory");
+}
+
+void arch_mm_unmap_user_range(struct task_struct *task, uintptr_t start, uintptr_t end)
+{
+    uint32_t a = (uint32_t)start & ~0xFFF;
+    uint32_t e = (uint32_t)end;
+
+    while (a < e) {
+        uint32_t pdi = a >> 22;
+        uint32_t pti = (a >> 12) & 0x3FF;
+
+        uint32_t *pt = task->mm.arch.page_tables[pdi];
+        if (pt && (pt[pti] & 0x1)) {
+            pt[pti] = 0;
+            __asm__ volatile("invlpg (%0)" :: "r"(a) : "memory");
+        }
+        a += PAGE_SIZE;
+    }
 }

@@ -36,14 +36,10 @@ typedef struct {
  * ========================================================================= */
 
 typedef struct mm_struct {
-    /* Page directory (embedded, aligned to 4KB) */
-    uint32_t pgdir[1024] __attribute__((aligned(4096)));
-    
-    /* Page tables for user space (allocated on-demand)
-     * Indices 0-767 map to 3GB user space (0x00000000 - 0xBFFFFFFF)
-     * Indices 768-1023 are kernel space (copied from kernel_page_table) */
-    uint32_t *page_tables[768];
-    
+    /* Architecture-specific MMU state (page tables etc.).  Generic code
+     * must only access it through the arch_mm_* API in arch/paging.h. */
+    arch_mm_t arch;
+
     /* Memory regions (legacy, for compatibility) */
     uint32_t code_start;       /* Code segment start (e.g., 0x08000000) */
     uint32_t code_end;         /* Code segment end */

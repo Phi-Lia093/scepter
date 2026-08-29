@@ -73,17 +73,9 @@ static int allocate_page(task_struct_t *task, uint32_t fault_addr, vma_t *vma)
         uint32_t dev_phys = vma->vm_phys_base + file_off;
         uint32_t pte_flags = vma_flags_to_pte(vma->vm_flags);
 
-        if (map_page(task->mm.pgdir, vaddr, dev_phys, pte_flags) < 0) {
+        if (arch_mm_map_user(task, vaddr, dev_phys, pte_flags) < 0) {
             printk("[PAGEFAULT] Failed to map device page\n");
             return -1;
-        }
-
-        /* Keep task->mm.page_tables[] in sync (see comment below). */
-        uint32_t pdi = vaddr >> 22;
-        if (task->mm.page_tables[pdi] == NULL) {
-            uint32_t pde = task->mm.pgdir[pdi];
-            task->mm.page_tables[pdi] =
-                (uint32_t *)((pde & ~0xFFF) + KERNEL_VMA);
         }
         return 0;
     }
@@ -113,21 +105,13 @@ static int allocate_page(task_struct_t *task, uint32_t fault_addr, vma_t *vma)
     /* Convert VMA flags to PTE flags */
     uint32_t pte_flags = vma_flags_to_pte(vma->vm_flags);
     
-    /* Map page in user's page directory */
-    if (map_page(task->mm.pgdir, vaddr, page_phys, pte_flags) < 0) {
+    /* Map page in the task's page directory (also keeps the arch_mm
+     * page-table cache in sync, which check_user_range()/copy_to_user()
+     * walk for user-range checks). */
+    if (arch_mm_map_user(task, vaddr, page_phys, pte_flags) < 0) {
         printk("[PAGEFAULT] Failed to map page\n");
         page_free(page_virt);
         return -1;
-    }
-
-    /* Keep task->mm.page_tables[] in sync: map_page() only writes the
-     * physical PDE in pgdir[], but check_user_range()/copy_to_user() walk
-     * page_tables[] (kernel-virtual page table pointers).  Without this,
-     * user-range checks on demand-paged mmap regions fail with EFAULT. */
-    uint32_t pdi = vaddr >> 22;
-    if (task->mm.page_tables[pdi] == NULL) {
-        uint32_t pde = task->mm.pgdir[pdi];
-        task->mm.page_tables[pdi] = (uint32_t *)((pde & ~0xFFF) + KERNEL_VMA);
     }
     
     return 0;

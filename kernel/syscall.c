@@ -437,35 +437,6 @@ static int sys_brk(uint32_t addr)
  * @return Mapped address on success, -1 on error
  */
 /**
- * task_get_pte - Resolve a PTE in a specific task's page directory.
- * Unlike get_pte() (which walks boot_page_directory), this works for
- * user mappings while the task's own pgdir is active in CR3.
- */
-static uint32_t *task_get_pte(task_struct_t *task, uint32_t virt_addr)
-{
-    uint32_t pde_idx = virt_addr >> 22;
-    uint32_t pte_idx = (virt_addr >> 12) & 0x3FF;
-
-    uint32_t pde = task->mm.pgdir[pde_idx];
-    if (!(pde & 0x1))
-        return NULL;
-    uint32_t *pt = (uint32_t *)((pde & ~0xFFF) + KERNEL_VMA);
-    return &pt[pte_idx];
-}
-
-/** Unmap a range of user pages in the current task's page directory. */
-static void user_unmap_range(uint32_t virt_start, uint32_t virt_end)
-{
-    for (uint32_t a = virt_start & ~0xFFF; a < virt_end; a += 0x1000) {
-        uint32_t *pte = task_get_pte(current, a);
-        if (pte && (*pte & 0x1)) {
-            *pte = 0;
-            asm volatile("invlpg (%0)" :: "r"(a) : "memory");
-        }
-    }
-}
-
-/**
  * sys_mmap - Map memory.
  */
 static int sys_mmap(uint32_t addr, size_t length, int prot, int flags,
@@ -556,16 +527,10 @@ static int sys_mprotect(uint32_t addr, size_t length, int prot)
     /* Preserve shared/growsdown attributes. */
     vma->vm_flags = (vma->vm_flags & (VM_SHARED | VM_GROWSDOWN)) | vm_flags;
 
-    /* Update PTEs for already-mapped pages. */
+    /* Update PTEs for already-mapped pages (arch walks the page tables). */
     for (uint32_t a = start; a < end; a += 0x1000) {
-        uint32_t *pte = task_get_pte(task, a);
-        if (pte && (*pte & 0x1)) {
-            if (vm_flags & VM_WRITE)
-                *pte |= 0x2;       /* R/W */
-            else
-                *pte &= ~0x2;      /* read-only */
-            asm volatile("invlpg (%0)" :: "r"(a) : "memory");
-        }
+        if (arch_mm_user_present(task, a))
+            arch_mm_set_user_writable(task, a, (vm_flags & VM_WRITE) != 0);
     }
 
     return 0;
@@ -601,8 +566,7 @@ static int sys_munmap(uint32_t addr, size_t length)
                     !(vma->vm_flags & VM_IO)) {
                     for (uint32_t a = vma->vm_start; a < vma->vm_end;
                          a += 0x1000) {
-                        uint32_t *pte = task_get_pte(task, a);
-                        if (pte && (*pte & 0x1)) {
+                        if (arch_mm_user_present(task, a)) {
                             uint32_t file_off =
                                 vma->vm_file_off + (a - vma->vm_start);
                             char page[0x1000];
@@ -613,7 +577,7 @@ static int sys_munmap(uint32_t addr, size_t length)
                 }
 
                 /* Unmap pages in this region (in the task's own pgdir) */
-                user_unmap_range(vma->vm_start, vma->vm_end);
+                arch_mm_unmap_user_range(task, vma->vm_start, vma->vm_end);
                 
                 /* vma_destroy unlinks from the list AND frees the VMA.
                  * (vma_remove must NOT be called first: its list_del

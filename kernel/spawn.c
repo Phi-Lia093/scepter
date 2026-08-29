@@ -28,35 +28,7 @@ static int map_user_page(task_struct_t *task, uint32_t vaddr, uint32_t phys, uin
         return -1;
     }
     
-    /* Check if page table exists */
-    if (!task->mm.page_tables[pdi]) {
-        /* Allocate new page table (from direct-mapped region) */
-        uint32_t *pt = (uint32_t*)page_alloc(PAGE_SIZE);
-        if (!pt) {
-            printk("[SPAWN] Failed to allocate page table\n");
-            return -1;
-        }
-        
-        /* Clear page table */
-        memset(pt, 0, PAGE_SIZE);
-        
-        /* Store in mm structure */
-        task->mm.page_tables[pdi] = pt;
-        
-        /* Install in page directory */
-        uint32_t pt_phys = VIRT_TO_PHYS((uint32_t)pt);
-        task->mm.pgdir[pdi] = pt_phys | 0x7;  /* Present | RW | User */
-        
-    }
-    
-    /* Get page table and index */
-    uint32_t *pt = task->mm.page_tables[pdi];
-    uint32_t pti = (vaddr >> 12) & 0x3FF;
-    
-    /* Install PTE */
-    pt[pti] = phys | flags;
-    
-    return 0;
+    return arch_mm_map_user(task, vaddr, phys, flags);
 }
 
 /* ============================================================================
@@ -266,8 +238,7 @@ int spawn_init(const char *path)
     add_task(task);
     
     printk("[SPAWN] Init process created: PID %u, entry=0x%08x, CR3=0x%08x\n\n",
-           task->pid, USER_TEXT_START,
-           VIRT_TO_PHYS((uint32_t)&task->mm.pgdir[0]));
+           task->pid, USER_TEXT_START, arch_mm_get_pgd_phys(task));
     
     return 0;
 }

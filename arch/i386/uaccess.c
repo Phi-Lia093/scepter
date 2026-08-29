@@ -54,7 +54,7 @@ static int check_user_range(const void *ptr, size_t len, int need_write)
         if (pdi >= 768) {
             return 0;   /* above 3GB is kernel space */
         }
-        uint32_t *pt = task->mm.page_tables[pdi];
+        uint32_t *pt = task->mm.arch.page_tables[pdi];
         if (!pt) {
             return 0;   /* no page table for this 4MB region */
         }

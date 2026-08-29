@@ -18,7 +18,7 @@ include $(ARCH_DIR)/arch.mk
 # Compiler and flags
 CC      = gcc
 CFLAGS  = -c -ffreestanding -nostdlib -fno-builtin -fno-stack-protector \
-          -O100 -Wall -Wextra $(ARCH_CFLAGS)
+          -O100 -Wall -Wextra -MMD -MP $(ARCH_CFLAGS)
 
 LDFLAGS = -T $(ARCH_DIR)/linker.ld -ffreestanding -nostdlib -fno-builtin \
           -fno-stack-protector -O100 -Wall -Wextra $(ARCH_LDFLAGS)

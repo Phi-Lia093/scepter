@@ -70,34 +70,14 @@ void do_exit(int status)
     list_for_each_safe(pos, tmp, &task->mm.vma_list) {
         vma_t *vma = list_entry(pos, vma_t, list);
         
-        /* Free all pages in this VMA by directly accessing physical addresses */
-        for (uint32_t addr = vma->vm_start; addr < vma->vm_end; addr += PAGE_SIZE) {
-            uint32_t pdi = addr >> 22;
-            uint32_t pti = (addr >> 12) & 0x3FF;
-            
-            /* Page tables are stored as kernel virtual addresses (direct-mapped) */
-            uint32_t *pt = task->mm.page_tables[pdi];
-            if (pt) {
-                uint32_t pte = pt[pti];
-                
-                if (pte & 0x1) {  /* Present */
-                    uint32_t phys = pte & ~0xFFF;
-                    void *virt = (void *)PHYS_TO_VIRT(phys);
-                    page_free(virt);
-                }
-            }
-        }
+        /* Free all pages mapped in this VMA (arch walks the page tables) */
+        arch_mm_free_user_pages(task, vma->vm_start, vma->vm_end);
         
         vma_destroy(vma);  /* vma_destroy handles list_del internally */
     }
     
-    /* Free page tables (these are already kernel virtual addresses) */
-    for (int i = 0; i < 768; i++) {
-        if (task->mm.page_tables[i]) {
-            page_free(task->mm.page_tables[i]);
-            task->mm.page_tables[i] = NULL;
-        }
-    }
+    /* Free the user page tables (also clears the user half of pgdir) */
+    arch_mm_free_user_tables(task);
     
     /* Reparent children to init (PID 1) or auto-reap them */
     if (!list_empty(&task->children)) {
@@ -278,8 +258,7 @@ int sys_fork(registers_t *regs)
         list_add_tail(&cfd->node, &child->files);
     }
     
-    /* Duplicate memory: VMAs and page tables */
-    
+    /* Duplicate memory: VMAs (metadata) */
     list_for_each(pos, &parent->mm.vma_list) {
         vma_t *pvma = list_entry(pos, vma_t, list);
         
@@ -296,62 +275,13 @@ int sys_fork(registers_t *regs)
         cvma->vm_shared   = pvma->vm_shared;
         
         vma_insert(child, cvma);
-        
-        /* Copy all pages in this VMA */
-        int pages_copied = 0;
-        for (uint32_t addr = pvma->vm_start; addr < pvma->vm_end; addr += PAGE_SIZE) {
-            uint32_t pdi = addr >> 22;
-            uint32_t pti = (addr >> 12) & 0x3FF;
-            
-            /* Check if parent has this page mapped */
-            if (!parent->mm.page_tables[pdi]) {
-                continue;
-            }
-            
-            uint32_t *parent_pt = parent->mm.page_tables[pdi];
-            uint32_t parent_pte = parent_pt[pti];
-            
-            if (!(parent_pte & 0x1)) {  /* Not present */
-                continue;
-            }
-            
-            /* Allocate page table for child if needed */
-            if (!child->mm.page_tables[pdi]) {
-                uint32_t *pt = (uint32_t *)page_alloc(PAGE_SIZE);
-                if (!pt) {
-                    printk("[PROCESS] Fork failed: could not allocate page table\n");
-                    fork_cleanup_failed(child);
-                    return -1;
-                }
-                memset(pt, 0, PAGE_SIZE);
-                child->mm.page_tables[pdi] = pt;
-                
-                uint32_t pt_phys = VIRT_TO_PHYS((uint32_t)pt);
-                child->mm.pgdir[pdi] = pt_phys | 0x7;  /* P | RW | U */
-            }
-            
-            /* Allocate new physical page for child */
-            void *child_page = page_alloc(PAGE_SIZE);
-            if (!child_page) {
-                printk("[PROCESS] Fork failed: could not allocate page\n");
-                fork_cleanup_failed(child);
-                return -1;
-            }
-            
-            /* Copy page content from parent */
-            uint32_t parent_phys = parent_pte & ~0xFFF;
-            void *parent_page = (void *)PHYS_TO_VIRT(parent_phys);
-            memcpy(child_page, parent_page, PAGE_SIZE);
-            
-            /* Install PTE in child */
-            uint32_t *child_pt = child->mm.page_tables[pdi];
-            uint32_t child_phys = VIRT_TO_PHYS((uint32_t)child_page);
-            uint32_t flags = parent_pte & 0xFFF;  /* Copy flags */
-            child_pt[pti] = child_phys | flags;
-            pages_copied++;
-        }
-        
-        (void)pages_copied;  /* Suppress unused variable warning */
+    }
+    
+    /* Duplicate page tables + pages (eager copy, arch-specific layout). */
+    if (arch_mm_copy_user(parent, child) < 0) {
+        printk("[PROCESS] Fork failed: out of memory copying pages\n");
+        fork_cleanup_failed(child);
+        return -1;
     }
     
     /* Copy memory region info */
@@ -770,33 +700,14 @@ static int do_exec(const char *user_path, char **user_argv, char **user_envp)
     list_for_each_safe(pos, tmp, &task->mm.vma_list) {
         vma_t *vma = list_entry(pos, vma_t, list);
         
-        /* Free all pages in this VMA */
-        for (uint32_t addr = vma->vm_start; addr < vma->vm_end; addr += PAGE_SIZE) {
-            uint32_t pdi = addr >> 22;
-            uint32_t pti = (addr >> 12) & 0x3FF;
-            
-            uint32_t *pt = task->mm.page_tables[pdi];
-            if (pt) {
-                uint32_t pte = pt[pti];
-                if (pte & 0x1) {  /* Present */
-                    uint32_t phys = pte & ~0xFFF;
-                    void *virt = (void *)PHYS_TO_VIRT(phys);
-                    page_free(virt);
-                }
-            }
-        }
+        /* Free all pages mapped in this VMA (arch walks the page tables) */
+        arch_mm_free_user_pages(task, vma->vm_start, vma->vm_end);
         
         vma_destroy(vma);
     }
     
-    /* Free all page tables */
-    for (int i = 0; i < 768; i++) {
-        if (task->mm.page_tables[i]) {
-            page_free(task->mm.page_tables[i]);
-            task->mm.page_tables[i] = NULL;
-            task->mm.pgdir[i] = 0;
-        }
-    }
+    /* Free all user page tables (also clears the user half of pgdir) */
+    arch_mm_free_user_tables(task);
     
     /* Reset memory regions */
     task->mm.code_start = USER_TEXT_START;
@@ -853,28 +764,11 @@ static int do_exec(const char *user_path, char **user_argv, char **user_envp)
         /* Map into user space */
         uint32_t vaddr = USER_TEXT_START + (i * PAGE_SIZE);
         uint32_t phys = VIRT_TO_PHYS((uint32_t)page_virt);
-        
-        /* Allocate page table if needed */
-        uint32_t pdi = vaddr >> 22;
-        uint32_t pti = (vaddr >> 12) & 0x3FF;
-        
-        if (!task->mm.page_tables[pdi]) {
-            uint32_t *pt = (uint32_t *)page_alloc(PAGE_SIZE);
-            if (!pt) {
-                printk("[EXEC] Failed to allocate page table\n");
-                fs_close(fd);
-                return -ENOMEM;
-            }
-            memset(pt, 0, PAGE_SIZE);
-            task->mm.page_tables[pdi] = pt;
-            
-            uint32_t pt_phys = VIRT_TO_PHYS((uint32_t)pt);
-            task->mm.pgdir[pdi] = pt_phys | 0x7;  /* P | RW | U */
+        if (arch_mm_map_user(task, vaddr, phys, 0x7) < 0) {
+            printk("[EXEC] Failed to map page %u\n", i);
+            fs_close(fd);
+            return -ENOMEM;
         }
-        
-        /* Install PTE */
-        uint32_t *pt = task->mm.page_tables[pdi];
-        pt[pti] = phys | 0x7;  /* P | RW | U */
     }
     
     fs_close(fd);
@@ -901,24 +795,8 @@ static int do_exec(const char *user_path, char **user_argv, char **user_envp)
     uint32_t stack_vaddr = USER_STACK_TOP - 2 * PAGE_SIZE;
     uint32_t stack_phys = VIRT_TO_PHYS((uint32_t)stack_pages);
     
-    uint32_t pdi = stack_vaddr >> 22;
-    
-    if (!task->mm.page_tables[pdi]) {
-        uint32_t *pt = (uint32_t *)page_alloc(PAGE_SIZE);
-        if (!pt) {
-            printk("[EXEC] Failed to allocate stack page table\n");
-            return -ENOMEM;
-        }
-        memset(pt, 0, PAGE_SIZE);
-        task->mm.page_tables[pdi] = pt;
-        
-        uint32_t pt_phys = VIRT_TO_PHYS((uint32_t)pt);
-        task->mm.pgdir[pdi] = pt_phys | 0x7;
-    }
-    
-    uint32_t *pt = task->mm.page_tables[pdi];
-    pt[(stack_vaddr >> 12) & 0x3FF] = stack_phys | 0x7;
-    pt[((stack_vaddr + PAGE_SIZE) >> 12) & 0x3FF] = (stack_phys + PAGE_SIZE) | 0x7;
+    arch_mm_map_user(task, stack_vaddr, stack_phys, 0x7);
+    arch_mm_map_user(task, stack_vaddr + PAGE_SIZE, stack_phys + PAGE_SIZE, 0x7);
     
     /* Create stack VMA */
     vma_t *stack_vma = vma_create(task->mm.stack_start, task->mm.stack_end,
@@ -939,7 +817,7 @@ static int do_exec(const char *user_path, char **user_argv, char **user_envp)
     fs_close_on_exec();
 
     /* Switch to the task's page directory */
-    uint32_t cr3 = VIRT_TO_PHYS((uint32_t)&task->mm.pgdir[0]);
+    uint32_t cr3 = arch_mm_get_pgd_phys(task);
     
     /* This will never return - it directly jumps to userspace */
     enter_userspace(cr3, USER_TEXT_START, user_esp);
