@@ -230,11 +230,14 @@ void arch_mm_free_user_pages(struct task_struct *task, uintptr_t start, uintptr_
                     if (*pde2 & PTE_PRESENT) {
                         if (*pde2 & PTE_HUGE) {
                             page_free(PHYS_TO_VIRT((uintptr_t)(*pde2 & ~0x1FFFFFULL)));
+                            *pde2 = 0;   /* clear the PDE */
                         } else {
                             uint64_t *pt = pt_virt(*pde2 & ~0xFFFULL);
                             uint64_t pte = *pt_slot(pt, a);
-                            if (pte & PTE_PRESENT)
+                            if (pte & PTE_PRESENT) {
+                                *pt_slot(pt, a) = 0;   /* clear the PTE */
                                 page_free(PHYS_TO_VIRT((uintptr_t)(pte & ~0xFFFULL)));
+                            }
                         }
                     }
                 }

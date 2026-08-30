@@ -3,37 +3,51 @@
 
 #include <stdint.h>
 
+/* Forward declaration (kernel/sched.h) */
+struct task_struct;
+
 /* ============================================================================
- * Flat Binary Format
- * 
- * Simple executable format with no complex segments.
- * Everything is loaded as a single RWX section at USER_BASE.
+ * Loaded image description (result of load_binary())
  * ============================================================================ */
 
-/* Flat binary header (16 bytes) */
 typedef struct {
-    uint32_t magic;        /* 0x464C4154 "FLAT" */
-    uint32_t entry;        /* Entry point offset from USER_BASE */
-    uint32_t text_size;    /* Size of code/data (everything after header) */
-    uint32_t reserved;     /* Reserved for future use */
-} flat_header_t;
+    uintptr_t entry;        /* user-space entry point (EIP/RIP)      */
+    uintptr_t code_start;   /* lowest loaded address                 */
+    uintptr_t code_end;     /* highest loaded address (page-aligned) */
+    uintptr_t brk_start;    /* heap start (>= code_end)              */
+} exec_image_t;
 
-#define FLAT_MAGIC 0x464C4154  /* "FLAT" */
-#define USER_BASE  0x08000000  /* Load address: 128MB */
+/* ============================================================================
+ * Binary Loader (kernel/elf.c)
+ *
+ * Primary format:  ELF  (ELF32 on i386, ELF64 on x86_64)
+ * Legacy format:   flat (header-less RWX blob at USER_TEXT_START)
+ * ============================================================================ */
+
+/**
+ * Load an executable image into a task's freshly-cleared user address space.
+ * Maps all segments/pages, creates the VMAs and fills *img.
+ * @param task       Target task (page tables already initialized)
+ * @param fd         Open file descriptor, positioned at offset 0
+ * @param file_size  File size in bytes
+ * @param img        Out: entry + memory region bounds
+ * @return 0 on success, -errno (ENOEXEC/ENOMEM/EIO) on failure
+ */
+int load_binary(struct task_struct *task, int fd, uint32_t file_size,
+                exec_image_t *img);
+
+/**
+ * Cheap pre-flight check that the file at fd is a loadable executable.
+ * ELF headers are validated; legacy flat images always pass.  Call this
+ * BEFORE tearing down the old process image, so a bad executable returns an
+ * error without destroying the caller's memory.
+ * @return 0 if loadable, -errno otherwise
+ */
+int exec_format_check(int fd, uint32_t file_size);
 
 /* ============================================================================
  * Functions
  * ============================================================================ */
-
-/**
- * Load and execute a flat binary
- * @param path Path to binary file
- * @return 0 on success, -1 on error
- * 
- * Note: This function does NOT return on success!
- * It switches to userspace and never comes back.
- */
-int exec_flat(const char *path);
 
 /**
  * Spawn init process (PID 1) from a binary file

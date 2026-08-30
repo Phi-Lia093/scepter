@@ -107,60 +107,30 @@ int spawn_init(const char *path)
     
     uint32_t file_size = (uint32_t)file_size_tmp;
     
-    /* Calculate pages needed */
-    uint32_t num_pages = (file_size + PAGE_SIZE - 1) / PAGE_SIZE;
-    
-    /* Load binary into user space (non-premapped region) */
-    uint32_t bytes_loaded = 0;
-    for (uint32_t i = 0; i < num_pages; i++) {
-        /* Allocate physical page (from direct-mapped region) */
-        void *page_virt = page_alloc(PAGE_SIZE);
-        if (!page_virt) {
-            printk("[SPAWN] Failed to allocate page\n");
-            fs_close(fd);
-            free_task(task);
-            return -1;
-        }
-        
-        /* Read binary data into page */
-        uint32_t bytes_to_read = PAGE_SIZE;
-        if (bytes_loaded + bytes_to_read > file_size) {
-            bytes_to_read = file_size - bytes_loaded;
-        }
-        
-        char *page_buf = (char*)page_virt;
-        uint32_t offset = 0;
-        while (offset < bytes_to_read) {
-            int n = fs_read(fd, page_buf + offset, bytes_to_read - offset);
-            if (n <= 0) break;
-            offset += n;
-        }
-        bytes_loaded += offset;
-        
-        /* Zero rest of page */
-        if (offset < PAGE_SIZE) {
-            memset(page_buf + offset, 0, PAGE_SIZE - offset);
-        }
-        
-        /* Map into user space (non-premapped region) */
-        uint32_t vaddr = USER_TEXT_START + (i * PAGE_SIZE);
-        uint32_t phys = VIRT_TO_PHYS((uintptr_t)page_virt);
-        
-        if (map_user_page(task, vaddr, phys, 0x7) < 0) {  /* P | RW | U */
-            printk("[SPAWN] Failed to map page\n");
-            fs_close(fd);
-            free_task(task);
-            return -1;
-        }
-        
+    /* Pre-flight format check (ELF or legacy flat). */
+    if (exec_format_check(fd, file_size) < 0) {
+        printk("[SPAWN] Not a loadable executable: %s\n", path);
+        fs_close(fd);
+        free_task(task);
+        return -1;
     }
     
+    /* Load the new image (ELF or legacy flat).  The loader maps all
+     * pages/segments and creates the code VMAs. */
+    exec_image_t img;
+    if (load_binary(task, fd, file_size, &img) < 0) {
+        printk("[SPAWN] Failed to load image: %s\n", path);
+        fs_close(fd);
+        free_task(task);
+        return -1;
+    }
     fs_close(fd);
     
     /* Update memory regions */
-    task->mm.code_end = USER_TEXT_START + file_size;
-    task->mm.brk_start = (task->mm.code_end + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
-    task->mm.brk_end = task->mm.brk_start;
+    task->mm.code_start = img.code_start;
+    task->mm.code_end   = img.code_end;
+    task->mm.brk_start  = img.brk_start;
+    task->mm.brk_end    = img.brk_start;
     
     /* Allocate user stack (2 pages: [0xBFFFE000, 0xC0000000)) */
     void *stack_pages = page_alloc(2 * PAGE_SIZE);
@@ -208,12 +178,9 @@ int spawn_init(const char *path)
         return -1;
     }
     
-    /* Create VMAs for the loaded process */
-    vma_t *code_vma = vma_create(USER_TEXT_START, task->mm.code_end,
-                                  VM_READ | VM_EXEC, VMA_CODE);
-    if (code_vma) {
-        vma_insert(task, code_vma);
-    }
+    /* Create VMAs for the loaded process.
+     * The code VMAs (per segment / single flat region) were created by
+     * load_binary(); here we only add the stack VMA. */
     
     /* Create stack VMA (read + write + grows down) */
     vma_t *stack_vma = vma_create(task->mm.stack_start, task->mm.stack_end,
@@ -228,7 +195,7 @@ int spawn_init(const char *path)
      * arch/i386/context.c).  The arch builds the popa/popfl frame + a
      * ring-3 IRET frame so first_entry_trampoline() can iret to init.
      */
-    arch_setup_first_stack(task, USER_TEXT_START, user_esp, NULL);
+    arch_setup_first_stack(task, img.entry, user_esp, NULL);
     
     /* Set the ring-0 stack for ring3→ring0 transitions (TSS.esp0) */
     arch_set_kernel_stack(task->kernel_stack + KERNEL_STACK_SIZE);
@@ -238,7 +205,7 @@ int spawn_init(const char *path)
     add_task(task);
     
     printk("[SPAWN] Init process created: PID %u, entry=0x%08x, CR3=0x%08x\n\n",
-           task->pid, USER_TEXT_START, arch_mm_get_pgd_phys(task));
+           task->pid, (uint32_t)img.entry, (uint32_t)arch_mm_get_pgd_phys(task));
     
     return 0;
 }

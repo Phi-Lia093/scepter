@@ -106,6 +106,25 @@ QEMU is the only emulator used.  `make debug` runs QEMU paused with a GDB
 stub on `tcp::1234` (attach with `gdb build-<arch>/kernel.elf`, `target
 remote :1234`).
 
+## Executable formats
+
+Userspace programs are **ELF** executables, loaded by the arch-neutral loader
+in `kernel/elf.c` (`load_binary()` → `load_elf()`):
+
+- i386  → ELF32 ET_EXEC
+- x86_64 → ELF64 ET_EXEC
+
+Programs link at `0x08000000` (`USER_TEXT_START`) with two PT_LOAD segments:
+a R+X text segment (`.text`/`.rodata`) and a R+W data segment (`.data`/`.bss`,
+NOBITS).  The loader maps each segment with its permission bits and
+zero-fills `.bss`.  `make -C crt ARCH=<arch>` installs these ELF files as
+`/init` and `/bin/*`.
+
+**Legacy flat binaries** (the old header-less RWX blob loaded at
+`USER_TEXT_START`) remain supported as a fallback: files not starting with
+the ELF magic are loaded by the flat loader.  `make -C crt flat` builds the
+legacy flat images into `crt/build/rootflat/` for testing that path.
+
 ## Booting x86_64 (EFI)
 
 i386 boots the classic way: GRUB multiboot from `root.img` on the first

@@ -1,6 +1,8 @@
 # Build output directory (objects, binaries)
 build/
 build-*/
+crt/build/
+crt/build64/
 .vscode/
 *.sym
 # Disk/CD images

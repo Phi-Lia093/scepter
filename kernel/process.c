@@ -5,6 +5,7 @@
 #include "kernel/process.h"
 #include "kernel/syscall.h"
 #include "kernel/sched.h"
+#include "kernel/exec.h"
 #include "arch/cpu.h"
 #include "arch/paging.h"
 #include "arch/timer.h"
@@ -695,6 +696,15 @@ static int do_exec(const char *user_path, char **user_argv, char **user_envp)
     fs_seek(fd, 0, SEEK_SET);
     uint32_t file_size = (uint32_t)file_size_tmp;
     
+    /* Pre-flight format check BEFORE tearing down the old image, so a bad
+     * executable (malformed ELF, wrong class, ...) fails cleanly without
+     * destroying the caller's memory. */
+    if (exec_format_check(fd, file_size) < 0) {
+        printk("[EXEC] Not a loadable executable: %s\n", kernel_path);
+        fs_close(fd);
+        return -ENOEXEC;
+    }
+    
     /* Switch to kernel page tables before freeing user memory */
     __asm__ volatile("mov %0, %%cr3" : : "r"(arch_kernel_pgdir_phys()));
     
@@ -712,12 +722,6 @@ static int do_exec(const char *user_path, char **user_argv, char **user_envp)
     /* Free all user page tables (also clears the user half of pgdir) */
     arch_mm_free_user_tables(task);
     
-    /* Reset memory regions */
-    task->mm.code_start = USER_TEXT_START;
-    task->mm.code_end = USER_TEXT_START;
-    task->mm.brk_start = USER_HEAP_START;
-    task->mm.brk_end = USER_HEAP_START;
-    
     /* exec resets signal state (POSIX): handlers back to default, no
      * pending signals, no handler in flight.  Credentials, process group
      * and session are preserved across exec. */
@@ -731,60 +735,21 @@ static int do_exec(const char *user_path, char **user_argv, char **user_envp)
     task->stop_reported = 0;
     task->continued  = 0;
     
-    /* Load new binary into memory */
-    uint32_t num_pages = (file_size + PAGE_SIZE - 1) / PAGE_SIZE;
-    uint32_t bytes_loaded = 0;
-    
-    for (uint32_t i = 0; i < num_pages; i++) {
-        /* Allocate physical page */
-        void *page_virt = page_alloc(PAGE_SIZE);
-        if (!page_virt) {
-            printk("[EXEC] Failed to allocate page\n");
-            fs_close(fd);
-            return -ENOMEM;
-        }
-        
-        /* Read binary data into page */
-        uint32_t bytes_to_read = PAGE_SIZE;
-        if (bytes_loaded + bytes_to_read > file_size) {
-            bytes_to_read = file_size - bytes_loaded;
-        }
-        
-        char *page_buf = (char*)page_virt;
-        uint32_t offset = 0;
-        while (offset < bytes_to_read) {
-            int n = fs_read(fd, page_buf + offset, bytes_to_read - offset);
-            if (n <= 0) break;
-            offset += n;
-        }
-        bytes_loaded += offset;
-        
-        /* Zero rest of page */
-        if (offset < PAGE_SIZE) {
-            memset(page_buf + offset, 0, PAGE_SIZE - offset);
-        }
-        
-        /* Map into user space */
-        uint32_t vaddr = USER_TEXT_START + (i * PAGE_SIZE);
-        uint32_t phys = VIRT_TO_PHYS((uintptr_t)page_virt);
-        if (arch_mm_map_user(task, vaddr, phys, 0x7) < 0) {
-            printk("[EXEC] Failed to map page %u\n", i);
-            fs_close(fd);
-            return -ENOMEM;
-        }
+    /* Load the new image (ELF or legacy flat).  The loader maps all
+     * pages/segments and creates the code VMAs. */
+    exec_image_t img;
+    if (load_binary(task, fd, file_size, &img) < 0) {
+        printk("[EXEC] Failed to load image: %s\n", kernel_path);
+        fs_close(fd);
+        return -ENOEXEC;
     }
-    
     fs_close(fd);
     
-    /* Update code region */
-    task->mm.code_end = USER_TEXT_START + file_size;
-    
-    /* Create code VMA */
-    vma_t *code_vma = vma_create(USER_TEXT_START, task->mm.code_end,
-                                  VM_READ | VM_EXEC, VMA_CODE);
-    if (code_vma) {
-        vma_insert(task, code_vma);
-    }
+    /* Update memory regions from the loader result. */
+    task->mm.code_start = img.code_start;
+    task->mm.code_end   = img.code_end;
+    task->mm.brk_start  = img.brk_start;
+    task->mm.brk_end    = img.brk_start;
     
     /* Allocate new user stack (2 pages: [0xBFFFE000, 0xC0000000)).
      * The top page holds the argc/argv/envp block; the lower page gives
@@ -824,7 +789,7 @@ static int do_exec(const char *user_path, char **user_argv, char **user_envp)
     printk("[EXEC] pid %d: %s\n", (int)task->pid, task->name);
     
     /* This will never return - it directly jumps to userspace */
-    enter_userspace(cr3, USER_TEXT_START, user_esp);
+    enter_userspace(cr3, img.entry, user_esp);
     
     /* Should never reach here */
     return -1;

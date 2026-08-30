@@ -24,7 +24,7 @@ BUILD_DIR      = build
 endif
 
 CFLAGS = -c -ffreestanding -nostdlib -fno-builtin -fno-stack-protector \
-         -O2 -Wall -Wextra -fomit-frame-pointer \
+         -O2 -Wall -Wextra -fomit-frame-pointer -fno-common \
          $(ABI_FLAGS) -I ./include
 ASFLAGS = -c -ffreestanding -nostdlib -fno-builtin -fno-stack-protector \
           -O2 -Wall -Wextra \
@@ -117,24 +117,60 @@ $(BUILD_DIR)/%.o: %.c | $(BUILD_DIR)
 	@$(CC) $(CFLAGS) -c $< -o $@
 
 # ============================================================================
-# Programs: generic link rule for /bin/<name>, special rule for /init
+# Programs
+#
+# Default: link a static non-PIE ELF (ELF32/ELF64 per arch) and install it
+# directly as /init and /bin/<name>.  The kernel's ELF loader runs these.
+#
+# Legacy flat format: 'make -C crt flat' additionally builds the old
+# objcopy -O binary blobs into $(BUILD_DIR)/rootflat/, for exercising the
+# kernel's flat binary fallback path.
 # ============================================================================
 
-$(BIN_DIR)/%: $(CRT0) $(LIBC) coreutil/%.c | $(BUILD_DIR)
+# Keep the linked .elf files around (the flat target needs them); without
+# this make deletes them as "intermediate" files.
+.SECONDARY:
+
+$(BUILD_DIR)/coreutil/%.elf: $(CRT0) $(LIBC) coreutil/%.c | $(BUILD_DIR)
 	@echo "  CC      coreutil/$*.c"
 	@$(CC) $(CFLAGS) -c coreutil/$*.c -o $(BUILD_DIR)/coreutil/$*.o
-	@echo "  LD      $(BUILD_DIR)/coreutil/$*.elf"
-	@$(LD) $(LDFLAGS) -o $(BUILD_DIR)/coreutil/$*.elf $(CRT0) $(BUILD_DIR)/coreutil/$*.o $(LIBC)
-	@$(OBJCOPY) -O binary $(BUILD_DIR)/coreutil/$*.elf $@
-	@echo "built: $@"
+	@echo "  LD      $@"
+	@$(LD) $(LDFLAGS) -o $@ $(CRT0) $(BUILD_DIR)/coreutil/$*.o $(LIBC)
 
-$(INIT_BIN): $(CRT0) $(LIBC) coreutil/init.c | $(BUILD_DIR)
+$(BUILD_DIR)/init.elf: $(CRT0) $(LIBC) coreutil/init.c | $(BUILD_DIR)
 	@echo "  CC      coreutil/init.c"
 	@$(CC) $(CFLAGS) -c coreutil/init.c -o $(BUILD_DIR)/coreutil/init.o
-	@echo "  LD      $(BUILD_DIR)/coreutil/init.elf"
-	@$(LD) $(LDFLAGS) -o $(BUILD_DIR)/coreutil/init.elf $(CRT0) $(BUILD_DIR)/coreutil/init.o $(LIBC)
-	@$(OBJCOPY) -O binary $(BUILD_DIR)/coreutil/init.elf $@
+	@echo "  LD      $@"
+	@$(LD) $(LDFLAGS) -o $@ $(CRT0) $(BUILD_DIR)/coreutil/init.o $(LIBC)
+
+$(BIN_DIR)/%: $(BUILD_DIR)/coreutil/%.elf
+	@mkdir -p $(BIN_DIR)
+	@cp $< $@
 	@echo "built: $@"
+
+$(INIT_BIN): $(BUILD_DIR)/init.elf
+	@cp $< $@
+	@echo "built: $@"
+
+# ============================================================================
+# Legacy flat binaries (kernel fallback testing)
+# ============================================================================
+
+FLAT_ROOT = $(BUILD_DIR)/rootflat
+
+.PHONY: flat
+
+flat: $(FLAT_ROOT)/init $(addprefix $(FLAT_ROOT)/bin/, $(COREUTILS))
+
+$(FLAT_ROOT)/bin/%: $(BUILD_DIR)/coreutil/%.elf
+	@mkdir -p $(FLAT_ROOT)/bin
+	@$(OBJCOPY) -O binary $< $@
+	@echo "built (flat): $@"
+
+$(FLAT_ROOT)/init: $(BUILD_DIR)/init.elf
+	@mkdir -p $(FLAT_ROOT)
+	@$(OBJCOPY) -O binary $< $@
+	@echo "built (flat): $@"
 
 # ============================================================================
 # Install / clean

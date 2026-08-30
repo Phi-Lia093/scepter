@@ -3,7 +3,7 @@
 # ============================================================================
 
 # Source files (arch-specific code lives in arch/, not here)
-SRCS_C = kernel.c panic.c sched.c exec.c syscall.c spawn.c process.c signal.c syscall_new.c kmsg.c syscalls_net.c
+SRCS_C = kernel.c panic.c sched.c elf.c syscall.c spawn.c process.c signal.c syscall_new.c kmsg.c syscalls_net.c
 
 # Object files (in build directory)
 OBJS = $(addprefix $(BUILD_DIR)/, $(SRCS_C:.c=.o))

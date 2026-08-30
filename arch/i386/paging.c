@@ -305,6 +305,7 @@ void arch_mm_free_user_pages(struct task_struct *task, uintptr_t start, uintptr_
         uint32_t *pt = task->mm.arch.page_tables[pdi];
         if (pt && (pt[pti] & 0x1)) {
             uint32_t phys = pt[pti] & ~0xFFF;
+            pt[pti] = 0;                       /* clear the PTE */
             page_free(PHYS_TO_VIRT(phys));
         }
         a += PAGE_SIZE;
